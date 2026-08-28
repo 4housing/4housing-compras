@@ -240,6 +240,8 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -422,6 +424,7 @@ const ICO={
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17.2V20z"/><path d="M13.5 6.5l4 4"/></svg>',
   del:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
+  pdf:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v6h6"/></svg>',
 };
 
 /* ===== color de badges por texto de estado (genérico y editable) ===== */
@@ -2097,6 +2100,7 @@ async function renderCompras(){
         +'<td style="min-width:110px">'+pbar(ogAcumPct(o.id))+'</td>'
         +'<td>'+badge(ogEstado(o))+'</td>'
         +'<td><div class="row-actions">'
+        +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="Ver / editar OG" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
         +'</div></td></tr>';
@@ -2688,6 +2692,83 @@ function exportAsientoTango(ogId){
   toast('Asiento (formato Tango) generado');
 }
 window.asientoTangoSheets=asientoTangoSheets; window.exportAsientoTango=exportAsientoTango;
+
+/* ===== Emisión de la Orden de Compra en PDF (para enviar al proveedor) ===== */
+function exportOG_OC(ogId){
+  if(typeof window.jspdf==='undefined'){ toast('No se pudo cargar el generador de PDF. Verificá tu conexión e intentá de nuevo.'); return; }
+  const o=ogById(ogId); if(!o){ toast('No encontré la OG.'); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+  const pageW=doc.internal.pageSize.getWidth();
+  const marginR=pageW-14;
+  const prov=(DIC.proveedores||[]).find(p=>p.codigo===o.proveedor_cod)||{};
+  const monSym=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const money=n=>(+n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const clasifTxt=o.clasif_og?(o.clasif_og+((clasifDesc(o.clasif_og)&&clasifDesc(o.clasif_og)!==o.clasif_og)?' — '+clasifDesc(o.clasif_og):'')):'—';
+
+  let y=16;
+  doc.setFontSize(16); doc.setFont(undefined,'bold');
+  doc.text('ORDEN DE COMPRA', 14, y);
+  doc.setFontSize(12);
+  doc.text('N° '+(o.numero||''), marginR, y, {align:'right'});
+  y+=9;
+
+  doc.setFontSize(9.5);
+  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+34,yy); };
+  campo(14,y,'Proveedor:', o.proveedor||'—');
+  campo(160,y,'Fecha emisión:', fmtDate(o.fecha));
+  y+=6;
+  campo(14,y,'Domicilio:', (prov.domicilio||'—')+(prov.cod_postal?' (CP '+prov.cod_postal+')':''));
+  campo(160,y,'Condición de compra:', o.condicion||'—');
+  y+=6;
+  campo(14,y,'Teléfono:', prov.tel||prov.tel2||'—');
+  campo(160,y,'Centro de costo:', clasifTxt);
+  y+=10;
+
+  const items=(o.items&&o.items.length)?o.items:[{cod_art:'',articulo:o.objeto||'(sin renglones)',hito:'',cant:1,um:'',precio_unit:o.monto_total||0,bonif_pct:0,fecha_entrega:'',deposito:''}];
+  const body=items.map(it=>{
+    const dep=it.deposito?(it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' — '+depositoDesc(it.deposito):'')):'—';
+    return [
+      it.cod_art||'—',
+      (it.articulo||'')+(it.hito?('\n'+it.hito):''),
+      fmtNum(it.cant,2),
+      it.um||'—',
+      monSym+money(it.precio_unit),
+      it.bonif_pct?(fmtNum(it.bonif_pct,2)+'%'):'—',
+      it.fecha_entrega?fmtDate(it.fecha_entrega):'—',
+      dep,
+      monSym+money(itemTotal(it)),
+    ];
+  });
+  doc.autoTable({
+    startY:y,
+    margin:{left:14,right:14},
+    head:[['Cód.','Descripción','Cant.','U.M.','P. Unit.','Bonif.','Entrega','Depósito','Importe']],
+    body,
+    styles:{fontSize:8, cellPadding:2.2, valign:'middle'},
+    headStyles:{fillColor:[95,122,78], textColor:255},
+    columnStyles:{1:{cellWidth:78}, 8:{halign:'right'}, 4:{halign:'right'}},
+  });
+
+  let yy=doc.lastAutoTable.finalY+8;
+  const subtotal=items.reduce((a,it)=>a+itemTotal(it),0);
+  const total=ogTotal(o);
+  doc.setFontSize(10);
+  doc.text('Subtotal: '+monSym+money(subtotal), marginR, yy, {align:'right'});
+  if(+o.bonif_pct){ yy+=6; doc.text('Bonificación OG ('+fmtNum(o.bonif_pct,2)+'%): -'+monSym+money(subtotal-total), marginR, yy, {align:'right'}); }
+  yy+=8; doc.setFont(undefined,'bold'); doc.text('TOTAL: '+monSym+money(total), marginR, yy, {align:'right'}); doc.setFont(undefined,'normal');
+
+  yy+=22;
+  if(yy>doc.internal.pageSize.getHeight()-20) yy=doc.internal.pageSize.getHeight()-20;
+  doc.setFontSize(9.5);
+  doc.text('Recibí conforme:', 14, yy);
+  doc.line(14, yy+16, 90, yy+16);
+  doc.text('Firma y sello', 14, yy+20);
+
+  doc.save('OC_'+(o.numero||'sin_numero')+'.pdf');
+  toast('OC generada');
+}
+window.exportOG_OC=exportOG_OC;
 
 function openPago(ogId){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
