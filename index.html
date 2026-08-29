@@ -2722,11 +2722,11 @@ function exportOG_OC(ogId){
   campo(xL,yL,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+provNombreCorto); yL+=6;
   campo(xR,yR,'Fecha emisión:', fmtDate(o.fecha)); yR+=6;
   campo(xL,yL,'Domicilio:', (prov.domicilio||'—')+(prov.cod_postal?' (CP '+prov.cod_postal+')':'')); yL+=6;
-  campo(xR,yR,'Centro de costo:', clasifTxt); yR+=6;
-  campo(xL,yL,'Localidad / Provincia:', prov.provincia||'—'); yL+=6;
   campo(xR,yR,'Comprador:', o.comprador||'—'); yR+=6;
-  campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
+  campo(xL,yL,'Localidad / Provincia:', prov.provincia||'—'); yL+=6;
   campo(xR,yR,'Certificador:', o.certificador||'—'); yR+=6;
+  campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
+  campo(xR,yR,'Centro de costo:', clasifTxt); yR+=6;
   campo(xL,yL,'Condición de compra:', o.condicion||'—'); yL+=6;
   campo(xR,yR,'SOLP:', o.solp!=null?String(o.solp):'—'); yR+=6;
   campo(xL,yL,'Cotización:', o.tc_pesos!=null?('$ '+fmtNum(o.tc_pesos,2)+' / US$'):'—'); yL+=6;
