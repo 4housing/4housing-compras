@@ -2722,19 +2722,19 @@ function exportOG_OC(ogId){
   campo(xL,yL,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+provNombreCorto); yL+=6;
   campo(xR,yR,'Fecha emisión:', fmtDate(o.fecha)); yR+=6;
   campo(xL,yL,'Domicilio:', (prov.domicilio||'—')+(prov.cod_postal?' (CP '+prov.cod_postal+')':'')); yL+=6;
-  campo(xR,yR,'Condición de compra:', o.condicion||'—'); yR+=6;
-  campo(xL,yL,'Localidad / Provincia:', prov.provincia||'—'); yL+=6;
   campo(xR,yR,'Centro de costo:', clasifTxt); yR+=6;
-  campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
+  campo(xL,yL,'Localidad / Provincia:', prov.provincia||'—'); yL+=6;
   campo(xR,yR,'Comprador:', o.comprador||'—'); yR+=6;
+  campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
   campo(xR,yR,'Certificador:', o.certificador||'—'); yR+=6;
+  campo(xL,yL,'Condición de compra:', o.condicion||'—'); yL+=6;
   campo(xR,yR,'SOLP:', o.solp!=null?String(o.solp):'—'); yR+=6;
-  campo(xR,yR,'Cotización:', o.tc_pesos!=null?('$ '+fmtNum(o.tc_pesos,2)+' / US$'):'—'); yR+=6;
+  campo(xL,yL,'Cotización:', o.tc_pesos!=null?('$ '+fmtNum(o.tc_pesos,2)+' / US$'):'—'); yL+=6;
   y=Math.max(yL,yR)+4;
 
   const items=(o.items&&o.items.length)?o.items:[{cod_art:'',articulo:o.objeto||'(sin renglones)',hito:'',cant:1,um:'',precio_unit:o.monto_total||0,bonif_pct:0,fecha_entrega:'',deposito:''}];
   const body=items.map(it=>{
-    const dep=it.deposito?(it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' — '+depositoDesc(it.deposito):'')):'—';
+    const dep=it.deposito?(it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' - '+depositoDesc(it.deposito):'')):'—';
     return [
       it.cod_art||'—',
       (it.articulo||'')+(it.hito?('\n'+it.hito):''),
@@ -3159,7 +3159,7 @@ function renderOGItems(){
       +'<td><input type="text" inputmode="decimal" value="'+(it.bonif_pct?fmtNum(it.bonif_pct,2):'')+'" placeholder="0" title="Bonificación de este renglón (%)" onfocus="this.value=(OG_ITEMS['+i+'].bonif_pct?String(OG_ITEMS['+i+'].bonif_pct):\'\')" oninput="OG_ITEMS['+i+'].bonif_pct=parseNum(this.value)||0;updateOGTotal()" onblur="this.value=(OG_ITEMS['+i+'].bonif_pct?fmtNum(OG_ITEMS['+i+'].bonif_pct,2):\'\')" style="width:100%;text-align:right;'+inp+'"></td>'
       +'<td id="ogit_'+i+'" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtImporte(itemTotal(it))+'</td>'
       +'<td><input type="date" value="'+esc(it.fecha_entrega||'')+'" oninput="OG_ITEMS['+i+'].fecha_entrega=this.value" style="width:100%;'+inp+'"></td>'
-      +'<td><input id="ogdep_'+i+'" value="'+esc(it.deposito ? (it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' — '+depositoDesc(it.deposito):'')) : '')+'" placeholder="código o nombre…" autocomplete="off" onfocus="comboDeposito('+i+')" oninput="comboDeposito('+i+')" onblur="comboHideDelayed()" style="width:100%;'+inp+'"></td>'
+      +'<td><input id="ogdep_'+i+'" value="'+esc(it.deposito ? (it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' - '+depositoDesc(it.deposito):'')) : '')+'" placeholder="código o nombre…" autocomplete="off" onfocus="comboDeposito('+i+')" oninput="comboDeposito('+i+')" onblur="comboHideDelayed()" style="width:100%;'+inp+'"></td>'
       +'<td><button class="iconbtn del" onclick="delOGItem('+i+')">'+ICO.del+'</button></td></tr>'; }).join('')
     +'</tbody></table><datalist id="ogArtDL">'+artDL+'</datalist><datalist id="ogClasDL">'+clasDL+'</datalist><datalist id="ogModDL">'+modDL+'</datalist>';
   updateOGTotal();
@@ -3277,7 +3277,7 @@ function comboDeposito(i){
   const src=((typeof DIC!=='undefined'&&DIC.depositos)||[]).filter(d=>String(d.inhabilitado||'').toLowerCase()!=='si');
   const items=(q?src.filter(d=>((d.codigo||'')+' '+(d.descripcion||'')).toLowerCase().includes(q)):src).slice(0,80)
     .map(d=>({code:d.codigo, name:d.descripcion||''}));
-  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; OG_ITEMS[i].deposito=it.code; });
+  comboShow(inp, items, it=>{ inp.value=it.code+' - '+it.name; OG_ITEMS[i].deposito=it.code; });
 }
 window.comboDeposito=comboDeposito;
 function comboMod(i){
