@@ -2737,7 +2737,8 @@ function exportOG_OC(ogId){
     const dep=it.deposito?(it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' - '+depositoDesc(it.deposito):'')):'—';
     return [
       it.cod_art||'—',
-      (it.articulo||'')+(it.hito?('\n'+it.hito):''),
+      it.articulo||'—',
+      it.hito||'',
       fmtNum(it.cant,2),
       it.um||'—',
       monSym+money(it.precio_unit),
@@ -2750,11 +2751,14 @@ function exportOG_OC(ogId){
   doc.autoTable({
     startY:y,
     margin:{left:14,right:14},
-    head:[['Cód.','Descripción','Cant.','U.M.','P. Unit.','Bonif.','Entrega','Depósito','Importe']],
+    head:[['Cód.','Artículo','Hito / detalle','Cant.','U.M.','P. Unit.','Bonif.','Entrega','Depósito','Importe']],
     body,
     styles:{fontSize:8, cellPadding:2.2, valign:'middle'},
     headStyles:{fillColor:[95,122,78], textColor:255},
-    columnStyles:{1:{cellWidth:78}, 8:{halign:'right'}, 4:{halign:'right'}},
+    columnStyles:{
+      1:{cellWidth:30}, 2:{cellWidth:48},
+      3:{halign:'right'}, 5:{halign:'right'}, 6:{halign:'right'}, 9:{halign:'right'},
+    },
   });
 
   let yy=doc.lastAutoTable.finalY+8;
@@ -3124,7 +3128,7 @@ function renderOGItems(){
   const artDL=artList.map(a=>{ let v=a.codigo+' — '+a.descripcion; if(a.sinonimo) v+=' — '+a.sinonimo; if(a.desc_adicional) v+=' — '+a.desc_adicional; return '<option value="'+esc(v)+'"></option>'; }).join('');
   const clasDL=CLASIF_RENGLON.map(c=>'<option value="'+esc(c.codigo+' — '+c.desc)+'"></option>').join('');
   const modDL=MODULOS_OPC.map(m=>'<option value="'+esc(m)+'"></option>').join('');
-  box.innerHTML='<table class="grid usub og-items-tbl" style="font-size:11.5px;table-layout:fixed;width:100%"><colgroup><col style="width:100px"><col style="width:15%"><col style="width:15%"><col style="width:13%"><col style="width:130px"><col style="width:82px"><col style="width:64px"><col style="width:54px"><col style="width:120px"><col style="width:60px"><col style="width:120px"><col style="width:110px"><col style="width:130px"><col style="width:36px"></colgroup><thead><tr><th>Cód Art</th><th>Artículo</th><th>Hito</th><th>Clasificación</th><th>Módulo (hasta 5)</th><th>Cant</th><th>UM</th><th>Cert.</th><th>P. unit.</th><th>Bonif.%</th><th>Total</th><th>Entrega</th><th>Depósito</th><th></th></tr></thead><tbody>'
+  box.innerHTML='<table class="grid usub og-items-tbl" style="font-size:11.5px;table-layout:fixed;width:100%"><colgroup><col style="width:100px"><col style="width:13%"><col style="width:24%"><col style="width:10%"><col style="width:95px"><col style="width:82px"><col style="width:64px"><col style="width:54px"><col style="width:120px"><col style="width:60px"><col style="width:120px"><col style="width:110px"><col style="width:130px"><col style="width:36px"></colgroup><thead><tr><th>Cód Art</th><th>Artículo</th><th>Hito / detalle</th><th>Clasificación</th><th>Módulo (hasta 5)</th><th>Cant</th><th>UM</th><th>Cert.</th><th>P. unit.</th><th>Bonif.%</th><th>Total</th><th>Entrega</th><th>Depósito</th><th></th></tr></thead><tbody>'
     +OG_ITEMS.map((it,i)=>{
       if(it._locked){
         const mds=(it.modulos||[]).map(m=>esc(String(m).split(' - ')[0])).join(', ');
@@ -3149,7 +3153,7 @@ function renderOGItems(){
       return '<tr>'
       +'<td><input id="ogart_'+i+'" value="'+esc(it.cod_art||'')+'" placeholder="código o nombre…" autocomplete="off" onfocus="comboArt('+i+')" oninput="comboArt('+i+')" onblur="comboHideDelayed()" style="width:100%;'+inp+'"></td>'
       +'<td><input type="text" value="'+esc(it.articulo||it.descripcion||'')+'" readonly placeholder="se completa al elegir el código" title="Sale del Diccionario: elegí el código a la izquierda" style="width:100%;background:#f3f1e8;color:var(--muted);'+inp+'"></td>'
-      +'<td><input type="text" value="'+esc(it.hito||'')+'" placeholder="alcance / tarea…" oninput="OG_ITEMS['+i+'].hito=this.value" style="width:100%;'+inp+'"></td>'
+      +'<td><textarea rows="2" placeholder="alcance / tarea…" oninput="OG_ITEMS['+i+'].hito=this.value" style="width:100%;resize:vertical;min-height:34px;line-height:1.35;font-family:inherit;'+inp+'">'+esc(it.hito||'')+'</textarea></td>'
       +'<td><input id="ogclas_'+i+'" value="'+esc(it.centro_costos ? (it.centro_costos+((clasifDesc(it.centro_costos)&&clasifDesc(it.centro_costos)!==it.centro_costos)?' — '+clasifDesc(it.centro_costos):'')) : '')+'" placeholder="código o nombre…" autocomplete="off" onfocus="comboClasRen('+i+')" oninput="comboClasRen('+i+')" onblur="comboHideDelayed()" style="width:100%;'+inp+'"></td>'
       +'<td>'+mods+' '+modInput+'</td>'
       +'<td><input type="text" inputmode="decimal" value="'+fmtNum(it.cant,2)+'" onfocus="this.value=(OG_ITEMS['+i+'].cant!=null?String(OG_ITEMS['+i+'].cant):\'\')" oninput="OG_ITEMS['+i+'].cant=parseNum(this.value);updateOGTotal()" onblur="this.value=fmtNum(OG_ITEMS['+i+'].cant,2)" style="width:100%;text-align:right;'+inp+'"></td>'
