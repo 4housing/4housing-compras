@@ -2714,16 +2714,23 @@ function exportOG_OC(ogId){
   y+=9;
 
   doc.setFontSize(9.5);
-  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+34,yy); };
-  campo(14,y,'Proveedor:', o.proveedor||'—');
-  campo(160,y,'Fecha emisión:', fmtDate(o.fecha));
-  y+=6;
-  campo(14,y,'Domicilio:', (prov.domicilio||'—')+(prov.cod_postal?' (CP '+prov.cod_postal+')':''));
-  campo(160,y,'Condición de compra:', o.condicion||'—');
-  y+=6;
-  campo(14,y,'Teléfono:', prov.tel||prov.tel2||'—');
-  campo(160,y,'Centro de costo:', clasifTxt);
-  y+=10;
+  // ancho del campo dinámico según el largo de la etiqueta, así nunca se solapa con el valor
+  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); const w=doc.getTextWidth(label); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+w+2,yy); };
+  const provNombre=o.proveedor||''; const provNombreCorto=provNombre.length>30?provNombre.slice(0,30).trim()+'…':provNombre;
+  const xL=14, xR=160;
+  let yL=y, yR=y;
+  campo(xL,yL,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+provNombreCorto); yL+=6;
+  campo(xR,yR,'Fecha emisión:', fmtDate(o.fecha)); yR+=6;
+  campo(xL,yL,'Domicilio:', (prov.domicilio||'—')+(prov.cod_postal?' (CP '+prov.cod_postal+')':'')); yL+=6;
+  campo(xR,yR,'Condición de compra:', o.condicion||'—'); yR+=6;
+  campo(xL,yL,'Localidad / Provincia:', prov.provincia||'—'); yL+=6;
+  campo(xR,yR,'Centro de costo:', clasifTxt); yR+=6;
+  campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
+  campo(xR,yR,'Comprador:', o.comprador||'—'); yR+=6;
+  campo(xR,yR,'Certificador:', o.certificador||'—'); yR+=6;
+  campo(xR,yR,'SOLP:', o.solp!=null?String(o.solp):'—'); yR+=6;
+  campo(xR,yR,'Cotización:', o.tc_pesos!=null?('$ '+fmtNum(o.tc_pesos,2)+' / US$'):'—'); yR+=6;
+  y=Math.max(yL,yR)+4;
 
   const items=(o.items&&o.items.length)?o.items:[{cod_art:'',articulo:o.objeto||'(sin renglones)',hito:'',cant:1,um:'',precio_unit:o.monto_total||0,bonif_pct:0,fecha_entrega:'',deposito:''}];
   const body=items.map(it=>{
@@ -2759,11 +2766,21 @@ function exportOG_OC(ogId){
   yy+=8; doc.setFont(undefined,'bold'); doc.text('TOTAL: '+monSym+money(total), marginR, yy, {align:'right'}); doc.setFont(undefined,'normal');
 
   yy+=22;
-  if(yy>doc.internal.pageSize.getHeight()-20) yy=doc.internal.pageSize.getHeight()-20;
+  const pageH=doc.internal.pageSize.getHeight();
+  if(yy>pageH-30) yy=pageH-30;
   doc.setFontSize(9.5);
   doc.text('Recibí conforme:', 14, yy);
   doc.line(14, yy+16, 90, yy+16);
   doc.text('Firma y sello', 14, yy+20);
+
+  if((o.alcance||'').trim()){
+    let ay=yy+30;
+    if(ay>pageH-16){ doc.addPage({ orientation:'landscape' }); ay=16; }
+    doc.setFont(undefined,'bold'); doc.text('Alcance del trabajo:', 14, ay);
+    doc.setFont(undefined,'normal');
+    const lines=doc.splitTextToSize(o.alcance.trim(), pageW-28);
+    doc.text(lines, 14, ay+5);
+  }
 
   doc.save('OC_'+(o.numero||'sin_numero')+'.pdf');
   toast('OC generada');
