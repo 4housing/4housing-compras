@@ -2126,12 +2126,14 @@ function certInner(o){
         +'<td>'+pctActual.toFixed(1).replace('.0','')+'%</td><td>'+fmtMoney(m)+'</td><td>'+acum.toFixed(1).replace('.0','')+'%</td>'
         +'<td>'+(c.aprobacion==='SI'?'<span class="badge b-verde">SÍ</span>':'<span class="badge b-rojo">NO</span>')+'</td>'
         +'<td>'+badge(c.estado||'Pendiente')+'</td>'
-        +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openCert('+o.id+','+c.id+')">'+ICO.edit+'</button>'
+        +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir certificación" onclick="exportCert('+o.id+','+c.id+')">'+ICO.pdf+'</button>'
+        +'<button class="iconbtn" title="Editar" onclick="openCert('+o.id+','+c.id+')">'+ICO.edit+'</button>'
         +'<button class="iconbtn del" title="Eliminar" onclick="delCert('+c.id+','+o.id+')">'+ICO.del+'</button></div></td></tr>'; }).join('')
       +'</tbody></table>'
     : '<div style="font-size:13px;color:var(--muted);padding:4px 0 10px">Sin certificados.</div>';
   const rem=100-ogAcumPct(o.id);
   return '<div class="detail-h" style="margin-top:8px"><span>Certificados · resta certificar '+rem.toFixed(1).replace('.0','')+'%</span>'
+    +(certs.length?'<button class="btn ghost sm" onclick="exportCertResumen('+o.id+')">'+ICO.pdf+'Imprimir resumen</button>':'')
     +'<button class="btn ghost sm" onclick="openCert('+o.id+')">'+ICO.plus+'Agregar certificado</button></div>'+rows;
 }
 function ogDetail(o){
@@ -2521,18 +2523,19 @@ function opsView(){
       +'<td style="font-size:11px">'+esc(caja)+'</td>'
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
-      +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td></tr>';
-  }).join('') || '<tr><td colspan="13" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
+      +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
+      +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
+  }).join('') || '<tr><td colspan="14" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="11" style="text-align:right">Total mostrado</td>'
     +'<td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td>'
-    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td></tr>';
+    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td></td></tr>';
   const th=(label,col)=>{ if(!col) return '<th style="white-space:nowrap">'+label+'</th>';
     const opener= col==='fecha' ? 'openOpFechaFilter(event)' : ("openOpFilter('"+col+"',event)");
     return '<th style="white-space:nowrap">'+label+' <button class="opfbtn" onclick="'+opener+'" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(opFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>'; };
   const hayFiltro=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
   const limpiar = hayFiltro ? '<button class="btn ghost sm" style="margin-left:auto" onclick="opFilterClearAll()">Limpiar filtros</button>' : '';
   return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
 function colaView(cola){
@@ -2790,6 +2793,175 @@ function exportOG_OC(ogId){
   toast('OC generada');
 }
 window.exportOG_OC=exportOG_OC;
+
+/* ===== Emisión de la Certificación en PDF (individual) ===== */
+function exportCert(ogId, certId){
+  if(typeof window.jspdf==='undefined'){ toast('No se pudo cargar el generador de PDF. Verificá tu conexión e intentá de nuevo.'); return; }
+  const o=ogById(ogId); if(!o){ toast('No encontré la OG.'); return; }
+  const c=certsOf(ogId).find(x=>String(x.id)===String(certId)); if(!c){ toast('No encontré el certificado.'); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const pageW=doc.internal.pageSize.getWidth(); const marginR=pageW-14;
+  const monSym=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const money=n=>(+n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const clasifTxt=o.clasif_og?(o.clasif_og+((clasifDesc(o.clasif_og)&&clasifDesc(o.clasif_og)!==o.clasif_og)?' — '+clasifDesc(o.clasif_og):'')):'—';
+  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); const w=doc.getTextWidth(label); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+w+2,yy); };
+
+  let y=16;
+  doc.setFontSize(16); doc.setFont(undefined,'bold');
+  doc.text('CERTIFICACIÓN DE AVANCE', 14, y);
+  doc.setFontSize(12);
+  doc.text('Cert. N° '+(c.numero||''), marginR, y, {align:'right'});
+  y+=9;
+  doc.setFontSize(9.5);
+  campo(14,y,'OG N°:', o.numero||'—'); campo(110,y,'Fecha certificación:', fmtDate(c.fecha)); y+=6;
+  campo(14,y,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+(o.proveedor||'—')); y+=6;
+  campo(14,y,'Centro de costo:', clasifTxt); y+=6;
+  campo(14,y,'Aprobación:', c.aprobacion==='SI'?'SÍ':'NO'); campo(110,y,'Estado:', c.estado||'Pendiente'); y+=10;
+
+  const t=ogTotal(o);
+  let body;
+  if(o.items && o.items.length){
+    const av=c.avances||{};
+    body=o.items.map((it,idx)=>{
+      const pct=+av[idx]||0;
+      const monto=itemTotal(it)*pct/100;
+      return [it.cod_art||'—', it.articulo||it.hito||'—', pct?fmtNum(pct,1)+'%':'—', monSym+money(monto)];
+    });
+  } else {
+    body=[['—','OG completa (sin renglones)', fmtNum(+c.pct||0,1)+'%', monSym+money(certMonto(c,o))]];
+  }
+  doc.autoTable({ startY:y, margin:{left:14,right:14},
+    head:[['Cód.','Artículo','% certificado','Monto certificado']],
+    body, styles:{fontSize:9, cellPadding:2.5}, headStyles:{fillColor:[95,122,78], textColor:255},
+    columnStyles:{2:{halign:'right'}, 3:{halign:'right'}} });
+
+  let yy=doc.lastAutoTable.finalY+8;
+  const montoCert=certMonto(c,o);
+  const todos=certsOf(ogId);
+  const idx=todos.findIndex(x=>String(x.id)===String(c.id));
+  const acumMonto=todos.slice(0, idx+1).reduce((a,x)=>a+certMonto(x,o),0);
+  const acumPct=t?acumMonto/t*100:0;
+  doc.setFontSize(10);
+  doc.text('Certificado en esta medición: '+monSym+money(montoCert), marginR, yy, {align:'right'}); yy+=6;
+  doc.text('Acumulado certificado: '+monSym+money(acumMonto)+' ('+fmtNum(acumPct,1)+'% de la OG)', marginR, yy, {align:'right'}); yy+=6;
+  doc.setFont(undefined,'bold');
+  doc.text('Resta por certificar: '+fmtNum(Math.max(0,100-acumPct),1)+'%', marginR, yy, {align:'right'});
+  doc.setFont(undefined,'normal');
+
+  if((c.observaciones||'').trim()){
+    yy+=12;
+    doc.setFont(undefined,'bold'); doc.text('Observaciones:', 14, yy); doc.setFont(undefined,'normal');
+    const lines=doc.splitTextToSize(c.observaciones.trim(), pageW-28);
+    doc.text(lines, 14, yy+5);
+  }
+
+  doc.save('Certificacion_OG'+(o.numero||'')+'_'+(c.numero||'')+'.pdf');
+  toast('Certificación generada');
+}
+window.exportCert=exportCert;
+
+/* ===== Resumen de certificaciones de una OG, en PDF ===== */
+function exportCertResumen(ogId){
+  if(typeof window.jspdf==='undefined'){ toast('No se pudo cargar el generador de PDF. Verificá tu conexión e intentá de nuevo.'); return; }
+  const o=ogById(ogId); if(!o){ toast('No encontré la OG.'); return; }
+  const certs=certsOf(ogId);
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const pageW=doc.internal.pageSize.getWidth(); const marginR=pageW-14;
+  const monSym=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const money=n=>(+n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const clasifTxt=o.clasif_og?(o.clasif_og+((clasifDesc(o.clasif_og)&&clasifDesc(o.clasif_og)!==o.clasif_og)?' — '+clasifDesc(o.clasif_og):'')):'—';
+  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); const w=doc.getTextWidth(label); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+w+2,yy); };
+
+  let y=16;
+  doc.setFontSize(16); doc.setFont(undefined,'bold');
+  doc.text('RESUMEN DE CERTIFICACIONES', 14, y);
+  doc.setFontSize(12);
+  doc.text('OG N° '+(o.numero||''), marginR, y, {align:'right'});
+  y+=9;
+  doc.setFontSize(9.5);
+  campo(14,y,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+(o.proveedor||'—')); y+=6;
+  campo(14,y,'Centro de costo:', clasifTxt); y+=6;
+  campo(14,y,'Total OG:', monSym+money(ogTotal(o))); y+=10;
+
+  let acum=0;
+  const t=ogTotal(o);
+  const body=certs.map(c=>{
+    const m=certMonto(c,o); const pctActual=t?m/t*100:0; acum+=pctActual;
+    return [c.numero||'', fmtDate(c.fecha), fmtNum(pctActual,1)+'%', monSym+money(m), fmtNum(acum,1)+'%', c.aprobacion==='SI'?'SÍ':'NO', c.estado||'Pendiente'];
+  });
+  doc.autoTable({ startY:y, margin:{left:14,right:14},
+    head:[['Cert.','Fecha','% actual','$ actual','% acum.','Aprob.','Estado']],
+    body: body.length?body:[['—','Sin certificados cargados','—','—','—','—','—']],
+    styles:{fontSize:9, cellPadding:2.5}, headStyles:{fillColor:[95,122,78], textColor:255},
+    columnStyles:{2:{halign:'right'}, 3:{halign:'right'}, 4:{halign:'right'}} });
+
+  let yy=doc.lastAutoTable.finalY+8;
+  const rem=Math.max(0,100-acum);
+  doc.setFontSize(10);
+  doc.text('Total certificado: '+monSym+money(ogAcumMonto(o))+' ('+fmtNum(acum,1)+'%)', marginR, yy, {align:'right'}); yy+=6;
+  doc.setFont(undefined,'bold');
+  doc.text('Resta por certificar: '+fmtNum(rem,1)+'%', marginR, yy, {align:'right'});
+  doc.setFont(undefined,'normal');
+
+  doc.save('Resumen_Certificaciones_OG'+(o.numero||'')+'.pdf');
+  toast('Resumen generado');
+}
+window.exportCertResumen=exportCertResumen;
+
+/* ===== Emisión de la Orden de Pago en PDF ===== */
+function exportPagoOP(pagoId){
+  if(typeof window.jspdf==='undefined'){ toast('No se pudo cargar el generador de PDF. Verificá tu conexión e intentá de nuevo.'); return; }
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(pagoId)); if(!p){ toast('No encontré el pago.'); return; }
+  const o=ogById(p.og_id)||{};
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const pageW=doc.internal.pageSize.getWidth(); const marginR=pageW-14;
+  const money=n=>(+n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const clasifTxt=o.clasif_og?(o.clasif_og+((clasifDesc(o.clasif_og)&&clasifDesc(o.clasif_og)!==o.clasif_og)?' — '+clasifDesc(o.clasif_og):'')):'—';
+  const campo=(x,yy,label,val)=>{ doc.setFont(undefined,'bold'); doc.text(label,x,yy); const w=doc.getTextWidth(label); doc.setFont(undefined,'normal'); doc.text(String(val==null||val===''?'—':val),x+w+2,yy); };
+
+  let y=16;
+  doc.setFontSize(16); doc.setFont(undefined,'bold');
+  doc.text('ORDEN DE PAGO', 14, y);
+  doc.setFontSize(12);
+  doc.text('OP N° '+(p.op_numero!=null?p.op_numero:''), marginR, y, {align:'right'});
+  y+=9;
+  doc.setFontSize(9.5);
+  campo(14,y,'Fecha:', fmtDate(p.fecha)); campo(110,y,'OG relacionada:', o.numero||'—'); y+=6;
+  campo(14,y,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+(o.proveedor||'—')); y+=6;
+  campo(14,y,'SOLP:', o.solp!=null&&o.solp!==''?String(o.solp):'—'); campo(110,y,'Comprador:', o.comprador||'—'); y+=6;
+  campo(14,y,'Centro de costo:', clasifTxt); y+=6;
+  const cajaNom=CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:(p.moneda_pago||'—');
+  campo(14,y,'Medio de pago:', p.medio||'—'); campo(110,y,'Caja / cuenta:', cajaNom); y+=6;
+  campo(14,y,'% de la OG:', p.pct!=null?fmtNum(p.pct,1)+'%':'—'); if(p.tc) campo(110,y,'Tipo de cambio:', '$ '+fmtNum(p.tc,2)+' / US$'); y+=10;
+
+  doc.setFontSize(13); doc.setFont(undefined,'bold');
+  doc.text('Importe pagado: '+(p.moneda_pago==='USD'?'US$ ':'$ ')+money(p.importe_pago), 14, y);
+  doc.setFont(undefined,'normal'); doc.setFontSize(9.5);
+  y+=10;
+
+  const leyenda=_leyCaja(o, {[o.id]: p.op_numero});
+  campo(14,y,'Leyenda contable:', leyenda||'—'); y+=10;
+
+  if((p.observaciones||'').trim()){
+    doc.setFont(undefined,'bold'); doc.text('Observaciones:', 14, y); doc.setFont(undefined,'normal');
+    const lines=doc.splitTextToSize(p.observaciones.trim(), pageW-28);
+    doc.text(lines, 14, y+5);
+    y+=5+lines.length*5+8;
+  } else { y+=8; }
+
+  y+=14;
+  doc.setFontSize(9.5);
+  doc.text('Recibí conforme:', 14, y);
+  doc.line(14, y+16, 90, y+16);
+  doc.text('Firma y sello', 14, y+20);
+
+  doc.save('OP_'+(p.op_numero!=null?p.op_numero:'sin_numero')+'.pdf');
+  toast('Orden de pago generada');
+}
+window.exportPagoOP=exportPagoOP;
 
 function openPago(ogId){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
@@ -3503,6 +3675,8 @@ async function saveCert(ogId, id){
   else { if(id==null||id==='null') await sbFetch('/og_certificados',{method:'POST',body:JSON.stringify(obj)}); else await sbFetch('/og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)}); await reloadDB(); }
   OG_EXPANDED.add(ogId);
   closeModal(); toast('Certificado guardado'); renderCompras();
+  const certIdNuevo=(id!=null&&id!=='null')?id:(certsOf(ogId).find(c=>c.numero===obj.numero)||{}).id;
+  if(certIdNuevo!=null && confirm('Certificado guardado.\n¿Querés imprimirlo ahora?')) exportCert(ogId, certIdNuevo);
 }
 window.saveCert=saveCert;
 function delCert(id, ogId){
