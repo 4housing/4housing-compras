@@ -440,6 +440,7 @@ const ESTADO_COLOR={
   'préstamo':'b-azul','alquiler':'b-oliva','reparación':'b-ambar',
   'alquilada':'b-oliva','en reparación':'b-ambar',
   'certificada':'b-verde','en certificación':'b-azul','abierta':'b-gris','liberado':'b-verde','anulada':'b-rojo','cerrada c/saldo':'b-ambar',
+  'vencida':'b-rojo','por vencer':'b-ambar','proyectada':'b-azul','sin fecha':'b-gris','cumplida':'b-verde',
   'desmontaje':'b-ambar','transporte':'b-azul','montaje':'b-verde',
 };
 function badge(v){ const cls=ESTADO_COLOR[String(v||'').toLowerCase()]||'b-gris'; return '<span class="badge '+cls+'">'+esc(v)+'</span>'; }
@@ -484,6 +485,10 @@ const SCHEMAS = {
   tesoreria: {
     title:'Tesorería', sub:'Cola de pagos, arqueo de caja (pesos y dólares) y asiento', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10h19"/><circle cx="12" cy="14.5" r="1.6"/></svg>',
+  },
+  seguimiento: {
+    title:'Seguimiento', sub:'Semáforo de OGs por fecha de entrega: vencidas, por vencer y proyectadas', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="2" width="8" height="20" rx="4"/><circle cx="12" cy="6.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg>',
   },
   deposito: {
     title:'Depósito', sub:'Stock y control de artículos', table:'deposito',
@@ -612,7 +617,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 0 2 2h13"/><path d="M9 7h6M9 11h6"/></svg>',
   },
 };
-const ORDER=['compras','tesoreria','deposito','panol','mantenimiento','logistica','diccionarios'];
+const ORDER=['compras','seguimiento','tesoreria','deposito','panol','mantenimiento','logistica','diccionarios'];
 
 /* ================================================================
    CAPA DE DATOS
@@ -694,22 +699,24 @@ let current='compras';
 /* ===== ROLES ===== */
 let ROLE={comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true};
 let DEMO_ROLE='admin';
+let MI_NOMBRE='';   // nombre del usuario logueado tal como aparece en Comprador/Certificador de las OGs (para "Mi gestión" en Seguimiento)
 const DEMO_ROLES={
-  admin:{comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, lbl:'Admin (todo)'},
-  comprador:{comprador:true, certificador:false, tesorero:false, confidencial:false, admin:false, lbl:'Comprador'},
-  certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, lbl:'Certificador (técnica)'},
-  tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, lbl:'Tesorero'},
+  admin:{comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, lbl:'Admin (todo)', nombre:''},
+  comprador:{comprador:true, certificador:false, tesorero:false, confidencial:false, admin:false, lbl:'Comprador', nombre:'Mendoza, Mario Nicolas'},
+  certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, lbl:'Certificador (técnica)', nombre:'Seoane, Micaela'},
+  tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, lbl:'Tesorero', nombre:''},
 };
-function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin}; }
+function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin}; MI_NOMBRE=r.nombre||''; }
 async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
   ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false};   // por defecto, sin permisos
+  MI_NOMBRE='';
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
     const rows=await sbFetch('/usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
     const u=rows&&rows[0];
-    if(u) ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin};
+    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
@@ -741,6 +748,8 @@ function setHeader(view){
   }else if(view==='compras'){
     document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportOGExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'')+(canEditOG()?'<button class="btn" onclick="openOG()">'+ICO.plus+'Nueva OG</button>':'');
   }else if(view==='diccionarios'){
+    document.getElementById('topActions').innerHTML='';
+  }else if(view==='seguimiento'){
     document.getElementById('topActions').innerHTML='';
   }else{
     document.getElementById('topActions').innerHTML=
@@ -780,6 +789,7 @@ async function render(view){
   const s=SCHEMAS[view];
   if(s.custom && view==='mantenimiento'){ return renderMantShell(); }
   if(view==='compras'){ return renderCompras(); }
+  if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='tesoreria'){ return renderTesoreria(); }
   if(view==='diccionarios'){ return renderDic(); }
   C().innerHTML='<div class="empty">Cargando…</div>';
@@ -2108,7 +2118,7 @@ async function renderCompras(){
       const exp=OG_EXPANDED.has(o.id);
       const nCert=certsOf(o.id).length;
       const nItems=(o.items||[]).length;
-      const head='<tr class="og-head">'
+      const head='<tr class="og-head" id="ogrow-'+o.id+'">'
         +'<td><button class="iconbtn" title="Ver detalle" onclick="toggleOG('+o.id+')" style="margin-right:4px">'+(exp?'▾':'▸')+'</button><strong>'+esc(o.numero||'—')+'</strong></td>'
         +'<td style="font-size:11.5px;color:var(--muted)" title="'+esc(o.comprador||'')+'">'+(o.comprador?esc(ogxName(o.comprador)):'—')+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)" title="'+esc(o.certificador||'')+'">'+(o.certificador?esc(ogxName(o.certificador)):'—')+'</td>'
@@ -2136,6 +2146,104 @@ async function renderCompras(){
   const usdTxt = USD_VENTA ? ' · USD venta $'+USD_VENTA+(USD_FECHA?' ('+USD_FECHA.split('-').reverse().join('/')+')':'') : ' · USD: cargá conexión';
   C().innerHTML=comprasTabs()+'<div class="kpi-grid">'+kpis+'</div>'+filtros+'<div class="card"><div class="card-h"><h3>Órdenes de gasto'+demoTag+'</h3><span class="meta">N° ≥ 2000 = de esta herramienta'+usdTxt+'</span></div>'+body+'</div>';
 }
+
+/* ================================================================
+   SEGUIMIENTO — semáforo de OGs por fecha de entrega (por renglón).
+   Vencida: fecha de entrega ya pasada y aún no cumplida (cert.+cerrado < 100%).
+   Por vencer: fecha de entrega dentro de los próximos SEG_DIAS_POR_VENCER días.
+   Proyectada: fecha de entrega más lejana. Sin fecha: renglón sin fecha cargada.
+   Cumplida: certificado + cerrado = 100% (sin importar la fecha).
+   ================================================================ */
+const SEG_DIAS_POR_VENCER=7;
+let SEG_FILTER=null;        // null = todo lo pendiente (todo menos "cumplida") | 'vencida'|'por_vencer'|'proyectada'|'sin_fecha'|'cumplida'
+let SEG_PERSONA='__mia__';  // '__todas__' | '__mia__' | nombre puntual (solo relevante para admin: no-admin siempre ve la propia)
+const SEG_LBL={vencida:'Vencida', por_vencer:'Por vencer', proyectada:'Proyectada', sin_fecha:'Sin fecha', cumplida:'Cumplida'};
+function segRows(){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const rows=[];
+  (mem.ogs||[]).filter(o=>!o.anulada).forEach(o=>{
+    const items=(o.items&&o.items.length)?o.items:[null];
+    items.forEach((it,idx)=>{
+      const esOG=(it===null);
+      const cert=esOG?ogAcumPct(o.id):itemAcumPct(o,idx);
+      const cerrado=esOG?ogCerradoPct(o):itemCerradoPct(it);
+      const resuelto=(cert+cerrado)>=99.999;
+      const fechaEntrega=esOG?'':(it.fecha_entrega||'');
+      let estado='sin_fecha', dias=null;
+      if(resuelto){ estado='cumplida'; }
+      else if(fechaEntrega){
+        const fe=new Date(fechaEntrega+'T00:00:00');
+        dias=Math.round((fe-hoy)/86400000);
+        estado = dias<0 ? 'vencida' : (dias<=SEG_DIAS_POR_VENCER ? 'por_vencer' : 'proyectada');
+      }
+      const label=esOG?(o.objeto||o.clasif_og||'—'):(it.hito||it.articulo||it.descripcion||('Renglón '+(idx+1)));
+      rows.push({o, it, idx:esOG?null:idx, estado, dias, fechaEntrega, label});
+    });
+  });
+  return rows;
+}
+function segPersonas(){
+  const s=new Set();
+  (mem.ogs||[]).forEach(o=>{ if(o.comprador) s.add(o.comprador); if(o.certificador) s.add(o.certificador); });
+  return [...s].sort((a,b)=>a.localeCompare(b,'es'));
+}
+function setSegFilter(kind){ SEG_FILTER=(SEG_FILTER===kind)?null:kind; renderSeguimiento(); }
+window.setSegFilter=setSegFilter;
+function setSegPersona(v){ SEG_PERSONA=v; renderSeguimiento(); }
+window.setSegPersona=setSegPersona;
+function segIrAOG(ogId){ OG_EXPANDED.add(ogId); go('compras').then(()=>{ const el=document.getElementById('ogrow-'+ogId); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }); }
+window.segIrAOG=segIrAOG;
+function renderSeguimiento(){
+  const soyAdmin=ROLE.admin;
+  const all=segRows();
+  let scope=all;
+  if(soyAdmin){
+    if(SEG_PERSONA==='__mia__' && MI_NOMBRE) scope=scope.filter(r=>r.o.comprador===MI_NOMBRE||r.o.certificador===MI_NOMBRE);
+    else if(SEG_PERSONA!=='__todas__' && SEG_PERSONA!=='__mia__') scope=scope.filter(r=>r.o.comprador===SEG_PERSONA||r.o.certificador===SEG_PERSONA);
+  } else {
+    scope = MI_NOMBRE ? scope.filter(r=>r.o.comprador===MI_NOMBRE||r.o.certificador===MI_NOMBRE) : [];
+  }
+  const counts={vencida:0,por_vencer:0,proyectada:0,sin_fecha:0,cumplida:0};
+  scope.forEach(r=>counts[r.estado]++);
+  const K=(l,kind,tone)=>'<div class="kpi kpi-click'+(SEG_FILTER===kind?' active':'')+'" onclick="setSegFilter(\''+kind+'\')" title="Clic para filtrar la lista"><div class="kpi-label">'+esc(l)+'</div><div class="kpi-value" style="'+(tone?'color:'+tone:'')+'">'+counts[kind]+'</div></div>';
+  const kpis=K('Vencidas','vencida','#b4554e')+K('Por vencer','por_vencer','#b5871f')+K('Proyectadas','proyectada','')+K('Sin fecha de entrega','sin_fecha','')+K('Cumplidas','cumplida','#2f7a4d');
+  let list = SEG_FILTER ? scope.filter(r=>r.estado===SEG_FILTER) : scope.filter(r=>r.estado!=='cumplida');
+  const peso={vencida:0,por_vencer:1,proyectada:2,sin_fecha:3,cumplida:4};
+  list=list.slice().sort((a,b)=> (peso[a.estado]-peso[b.estado]) || ((a.dias==null?9999:a.dias)-(b.dias==null?9999:b.dias)));
+  const diasTxt=r=>{
+    if(r.estado==='cumplida') return '—';
+    if(r.dias==null) return 'Sin fecha cargada';
+    if(r.dias<0) return 'Vencida hace '+(-r.dias)+' día'+(-r.dias===1?'':'s');
+    if(r.dias===0) return 'Vence hoy';
+    return 'Vence en '+r.dias+' día'+(r.dias===1?'':'s');
+  };
+  const rowsHtml = list.map(r=>{
+    const o=r.o;
+    return '<tr><td><strong>'+esc(o.numero||'—')+'</strong></td>'
+      +'<td style="font-size:12px;color:var(--muted)">'+esc(o.proveedor||'—')+'</td>'
+      +'<td style="font-size:12.5px">'+esc(r.label)+'</td>'
+      +'<td style="font-size:11.5px;color:var(--muted)">'+(o.comprador?esc(ogxName(o.comprador)):'—')+'</td>'
+      +'<td style="font-size:11.5px;color:var(--muted)">'+(o.certificador?esc(ogxName(o.certificador)):'—')+'</td>'
+      +'<td style="font-size:12px">'+(r.fechaEntrega?fmtDate(r.fechaEntrega):'—')+'</td>'
+      +'<td>'+badge(SEG_LBL[r.estado])+'</td>'
+      +'<td style="font-size:11.5px;color:var(--muted)">'+esc(diasTxt(r))+'</td>'
+      +'<td><button class="iconbtn" title="Ver OG" onclick="segIrAOG('+o.id+')">'+ICO.edit+'</button></td></tr>';
+  }).join('');
+  const tabla = list.length
+    ? '<div class="dic-scroll"><table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>Proveedor</th><th>Renglón / detalle</th><th>Comprador</th><th>Certificador</th><th>Entrega</th><th>Estado</th><th>Vencimiento</th><th></th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'
+    : '<div class="empty">No hay OGs con este filtro.</div>';
+  const personaSel = soyAdmin
+    ? '<select onchange="setSegPersona(this.value)" style="border:1px solid var(--line-strong);border-radius:9px;padding:8px 10px;font-size:13px;background:#fff">'
+      +'<option value="__todas__"'+(SEG_PERSONA==='__todas__'?' selected':'')+'>Todas las gestiones</option>'
+      +(MI_NOMBRE?'<option value="__mia__"'+(SEG_PERSONA==='__mia__'?' selected':'')+'>Mi gestión ('+esc(MI_NOMBRE)+')</option>':'')
+      +segPersonas().map(n=>'<option value="'+esc(n)+'"'+(SEG_PERSONA===n?' selected':'')+'>'+esc(n)+'</option>').join('')
+      +'</select>'
+    : (MI_NOMBRE?'<span style="font-size:12.5px;color:var(--muted)">Mi gestión: <strong>'+esc(MI_NOMBRE)+'</strong></span>':'<span style="font-size:12.5px;color:#b4554e">Tu usuario no tiene un nombre de comprador/certificador asociado — pedile a un admin que lo cargue en Diccionario de usuarios.</span>');
+  C().innerHTML='<div class="kpi-grid">'+kpis+'</div>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'+personaSel+'<span style="font-size:11.5px;color:var(--muted);margin-left:auto">'+list.length+' de '+scope.length+(SEG_FILTER?'':' pendientes')+'</span></div>'
+    +'<div class="card"><div class="card-h"><h3>'+(SEG_FILTER?SEG_LBL[SEG_FILTER]:'Pendientes de seguimiento')+'</h3><span class="meta">Por vencer = dentro de los próximos '+SEG_DIAS_POR_VENCER+' días</span></div>'+tabla+'</div>';
+}
+window.renderSeguimiento=renderSeguimiento;
 
 function certInner(o){
   const certs=certsOf(o.id); let acum=0;
@@ -5824,11 +5932,11 @@ window.reloadDB=reloadDB;
     // Compras / Órdenes de gasto (ejemplo real: OG 976, proyecto IF4389)
     mem.ogs=[
       {id:1, numero:'2000', fecha:'2026-06-04', proveedor_cod:'3GC', proveedor:'GRUPO 3GC SRL', objeto:'Compra de artefactos de iluminación', condicion:'CONTADO REAL', tipo_contratacion:'CONTADO REAL', moneda:'Corriente', responsable:'NM', comprador:'Mendoza, Mario Nicolas', certificador:'Seoane, Micaela', solp:60, compra_urgente:'No', costeo:'GC ART. ILUMINACION', estructura:'', postventa:'', desvio:'', desvio_txt:'', alcance:'Provisión e instalación de luminarias LED.', observaciones:'', monto_total:0, items:[
-        {cod_art:'GCAEI02001', articulo:'PANEL LED REDONDO EMBUTIR', centro_costos:'MANMOD', modulos:['M00001 - AMBU 200804-1','M00002 - AMFU 845146-8'], cant:10, um:'UNI', precio_unit:12000},
-        {cod_art:'GCAEI02001', articulo:'PANEL LED REDONDO EMBUTIR', centro_costos:'ESTRUC', modulos:[], cant:4, um:'UNI', precio_unit:12000},
+        {cod_art:'GCAEI02001', articulo:'PANEL LED REDONDO EMBUTIR', centro_costos:'MANMOD', modulos:['M00001 - AMBU 200804-1','M00002 - AMFU 845146-8'], cant:10, um:'UNI', precio_unit:12000, fecha_entrega:'2026-06-20'},
+        {cod_art:'GCAEI02001', articulo:'PANEL LED REDONDO EMBUTIR', centro_costos:'ESTRUC', modulos:[], cant:4, um:'UNI', precio_unit:12000, fecha_entrega:'2026-08-15'},
       ]},
       {id:2, numero:'2001', fecha:'2026-04-28', proveedor_cod:'PEPSA', proveedor:'PEPSA SA', objeto:'Mano de obra revestimiento', condicion:'CHEQUE 30 DIAS', tipo_contratacion:'CHEQUE 30 DIAS', moneda:'Corriente', responsable:'NM', comprador:'Bustillo, Ana Julia', certificador:'Spinetto, Pablo', solp:61, compra_urgente:'No', costeo:'GC REVESTIMIENTO', estructura:'', postventa:'', desvio:'', desvio_txt:'', alcance:'', observaciones:'', monto_total:0, items:[
-        {cod_art:'', articulo:'Mano de obra revestimiento', centro_costos:'SUBALQ', cant:1, um:'UNI', precio_unit:1850000},
+        {cod_art:'', articulo:'Mano de obra revestimiento', centro_costos:'SUBALQ', cant:1, um:'UNI', precio_unit:1850000, fecha_entrega:'2026-09-05'},
       ]},
     ];
     mem.ogs.forEach(o=>{ o.monto_total=o.items.reduce((a,it)=>a+it.cant*it.precio_unit,0); });
