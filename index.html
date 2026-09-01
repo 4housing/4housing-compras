@@ -1654,6 +1654,11 @@ window.confirmDelHerr=confirmDelHerr;
    Demo: mem.ogs / mem.certificados.  Producción: tablas ogs / og_certificados.
    ================================================================ */
 const OG_EXPANDED=new Set();
+let OG_VISIBLE_IDS=[];   // ids de las OG mostradas en la última renderCompras() (según filtros activos), para expandir/contraer todas
+function expandAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.add(id)); renderCompras(); }
+function collapseAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.delete(id)); renderCompras(); }
+function expandPendingOG(){ OG_VISIBLE_IDS.forEach(id=>{ const o=ogById(id); if(o && (ogAcumPct(id)+ogCerradoPct(o))<99.999) OG_EXPANDED.add(id); }); renderCompras(); }
+window.expandAllOG=expandAllOG; window.collapseAllOG=collapseAllOG; window.expandPendingOG=expandPendingOG;
 let TES_TAB='proy';
 let OG_FILTRO={comprador:'',certificador:'',proveedor:'',clasifRenglon:'',estado:'todas'};
 let USD_VENTA=null, USD_FECHA='';
@@ -2134,6 +2139,7 @@ async function renderCompras(){
 
   // Filtro tipo Excel por columnas + filtro por indicador (KPI)
   let ogs=ogsAll.filter(o=>ogxPass(o)&&kpiPass(o));
+  OG_VISIBLE_IDS=ogs.map(o=>o.id);
 
   const acc={ARS:{comp:0,cert:0,lib:0,pag:0,cer:0}, USD:{comp:0,cert:0,lib:0,pag:0,cer:0}};
   ogs.forEach(o=>{ const m=ogMonedaCode(o); acc[m].comp+=ogTotal(o); acc[m].cert+=ogAcumMonto(o); acc[m].lib+=ogLiberado(o); acc[m].pag+=ogPagado(o); acc[m].cer+=ogCerradoMonto(o); });
@@ -2148,8 +2154,11 @@ async function renderCompras(){
 
   // barra slim: limpiar filtros + contador (los filtros van en los encabezados)
   const hayFiltroOG=Object.keys(OGX).some(ogxActive)||!!KPI_FILTER;
-  const filtros='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">'
+  const filtros='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
     +(hayFiltroOG?'<button class="btn ghost sm" onclick="clearAllFiltersCompras()">Limpiar filtros</button>':'')
+    +'<button class="btn ghost sm" onclick="expandAllOG()" title="Expandir todas las OG de la lista">Expandir todas</button>'
+    +'<button class="btn ghost sm" onclick="collapseAllOG()" title="Contraer todas las OG de la lista">Contraer todas</button>'
+    +'<button class="btn ghost sm" onclick="expandPendingOG()" title="Expandir solo las que todavía no están 100% certificadas/cerradas">Expandir pendientes</button>'
     +'<span style="font-size:11.5px;color:var(--muted);margin-left:auto">'+ogs.length+' de '+ogsAll.length+' OG</span></div>';
 
   let body;
