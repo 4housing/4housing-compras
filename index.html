@@ -3724,9 +3724,9 @@ function renderOGItems(){
         +'<td style="text-align:right">'+ogMonedaSym()+fmtNum(it.precio_unit,3)+'</td>'
         +'<td style="text-align:right;font-size:10px;color:var(--muted)">'+(it.bonif_pct?fmtNum(it.bonif_pct,2)+'%':'—')+'</td>'
         +'<td id="ogit_'+i+'">'+fmtImporte(itemTotal(it))+'</td>'
-        +'<td style="font-size:10px;color:var(--muted)">'+(it.fecha_entrega?fmtDate(it.fecha_entrega):'—')+'</td>'
-        +'<td style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis">'+(it.deposito?esc(it.deposito):'—')+'</td>'
-        +'<td style="text-align:center"><span title="Renglón ya certificado o con saldo cerrado: no se puede editar ni eliminar" style="font-size:13px;color:var(--muted)">🔒</span></td></tr>';
+        +'<td><input type="date" value="'+esc(it.fecha_entrega||'')+'" oninput="OG_ITEMS['+i+'].fecha_entrega=this.value" title="No afecta lo ya certificado: se puede cargar/corregir igual" style="width:100%;'+inp+'"></td>'
+        +'<td><input id="ogdep_'+i+'" value="'+esc(it.deposito ? (it.deposito+((depositoDesc(it.deposito)&&depositoDesc(it.deposito)!==it.deposito)?' - '+depositoDesc(it.deposito):'')) : '')+'" placeholder="código o nombre…" autocomplete="off" onfocus="comboDeposito('+i+')" oninput="comboDeposito('+i+')" onblur="comboHideDelayed()" title="No afecta lo ya certificado: se puede cargar/corregir igual" style="width:100%;'+inp+'"></td>'
+        +'<td style="text-align:center"><span title="Renglón ya certificado o con saldo cerrado: código, cantidad, precio y clasificación no se pueden tocar. Entrega y Depósito sí." style="font-size:13px;color:var(--muted)">🔒</span></td></tr>';
       }
       const mods=(it.modulos||[]).map((m,j)=>'<span style="display:inline-flex;align-items:center;gap:3px;background:#eceae1;border-radius:6px;padding:1px 5px;margin:1px;font-size:10.5px">'+esc(String(m).split(' - ')[0])+' <span onclick="ogDelModulo('+i+','+j+')" style="cursor:pointer;font-weight:700">×</span></span>').join('');
       const modInput=(it.modulos||[]).length>=5?'<span style="font-size:10px;color:var(--muted)">máx 5</span>':'<input id="ogmod_'+i+'" placeholder="+ módulo" autocomplete="off" onfocus="comboMod('+i+')" oninput="comboMod('+i+')" onblur="comboHideDelayed()" style="width:100%;'+inp+'">';
