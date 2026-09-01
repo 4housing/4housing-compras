@@ -2309,18 +2309,20 @@ function certInner(o){
 function ogDetail(o){
   const items=o.items||[];
   const reng = items.length
-    ? '<table class="grid usub"><thead><tr><th>Cód Art</th><th>Artículo</th><th>Centro de costos</th><th>Módulo</th><th>Cant</th><th>Total</th><th>Avance</th><th>Cerrado</th><th></th></tr></thead><tbody>'
+    ? '<table class="grid usub" style="font-size:11px"><thead><tr><th>Cód Art</th><th>Artículo</th><th>Centro de costos</th><th>Módulo</th><th>Cant</th><th>Total</th><th>Entrega</th><th>Avance</th><th>Cerrado</th><th></th></tr></thead><tbody>'
       +items.map((it,idx)=>{ const ac=itemAcumPct(o,idx); const cz=itemCerradoPct(it); const disp=Math.max(0,100-ac-cz); const mods=(it.modulos||[]).map(m=>esc(String(m).split(' - ')[0])).join(', ');
         const czTxt = cz>0.01 ? (fmtNum((+it.cant||0)*cz/100,2)+' '+esc(it.um||'')+' <span style="color:var(--muted)">('+cz.toFixed(1).replace('.0','')+'%)</span>') : '—';
         const czBtn = (puedeEditarOG(o)&&!o.anulada&&disp>0.01) ? '<button class="iconbtn" title="Cerrar saldo de este renglón" onclick="openCierre('+o.id+','+idx+')">'+ICO.ban+'</button>' : '';
-        return '<tr><td><span style="font-size:11.5px;color:var(--muted)">'+esc(it.cod_art||'—')+'</span></td>'
+        const entregaTxt = it.fecha_entrega ? fmtDate(it.fecha_entrega) : '<span style="color:#b5871f;font-weight:700">Sin fecha</span>';
+        return '<tr><td style="white-space:nowrap"><span style="color:var(--muted)">'+esc(it.cod_art||'—')+'</span></td>'
           +'<td>'+esc(it.articulo||it.descripcion||'—')+'</td>'
           +'<td>'+(it.centro_costos?'<strong>'+esc(it.centro_costos)+'</strong>'+(clasifDesc(it.centro_costos)&&clasifDesc(it.centro_costos)!==it.centro_costos?' · '+esc(clasifDesc(it.centro_costos)):''):'—')+'</td>'
-          +'<td style="font-size:11px">'+(mods||'—')+'</td>'
-          +'<td>'+(it.cant||0)+' '+esc(it.um||'')+'</td>'
-          +'<td>'+fmtMoney(itemTotal(it))+'</td>'
-          +'<td>'+ac.toFixed(1).replace('.0','')+'%</td>'
-          +'<td style="font-size:11px">'+czTxt+'</td>'
+          +'<td>'+(mods||'—')+'</td>'
+          +'<td style="white-space:nowrap">'+(it.cant||0)+' '+esc(it.um||'')+'</td>'
+          +'<td style="white-space:nowrap">'+fmtMoney(itemTotal(it))+'</td>'
+          +'<td style="white-space:nowrap">'+entregaTxt+'</td>'
+          +'<td style="white-space:nowrap">'+ac.toFixed(1).replace('.0','')+'%</td>'
+          +'<td>'+czTxt+'</td>'
           +'<td>'+czBtn+'</td></tr>'; }).join('')
       +'</tbody></table>'
     : '<div style="font-size:12.5px;color:var(--muted);padding:2px 0">Sin renglones — se certifica a nivel OG por el monto total.'
