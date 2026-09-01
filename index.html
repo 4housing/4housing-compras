@@ -2003,8 +2003,8 @@ function comprasResumenView(ogsAll){
   const pf=v=>v.toFixed(1).replace('.0','')+'%';
   const rows=ogs.map(o=>{
     const mon=ogMonedaCode(o); const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
-    const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o);
-    const noCert=Math.max(0,total-cert), certNoLib=Math.max(0,cert-lib), libNoPag=Math.max(0,lib-pag);
+    const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
+    const noCert=Math.max(0,total-cert-cerrado), certNoLib=Math.max(0,cert-lib), libNoPag=Math.max(0,lib-pag);
     const p=x=>total?x/total*100:0;
     let tARS,tUSD;
     if(mon==='USD'){ tUSD=total; tARS= tc!=null? total*tc : null; } else { tARS=total; tUSD= tc!=null? total/tc : null; }
@@ -2018,10 +2018,11 @@ function comprasResumenView(ogsAll){
       +'<td style="text-align:right">'+pf(p(noCert))+'</td>'
       +'<td style="text-align:right">'+pf(p(certNoLib))+'</td>'
       +'<td style="text-align:right">'+pf(p(libNoPag))+'</td>'
-      +'<td style="text-align:right">'+pf(p(pag))+'</td></tr>';
-  }).join('') || '<tr><td colspan="9" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+      +'<td style="text-align:right">'+pf(p(pag))+'</td>'
+      +'<td style="text-align:right">'+(cerrado?pf(p(cerrado)):'—')+'</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="3" style="text-align:right">Total mostrado</td>'
-    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td><td colspan="4"></td></tr>';
+    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td><td colspan="5"></td></tr>';
   const th=(label,col)=>'<th style="white-space:nowrap">'+label+(col?' <button class="resfbtn" onclick="openResFilter(\''+col+'\',event)" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(resFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button>':'')+'</th>';
   const hay=['clasif','prov','og'].some(resFilterActive);
   const limpiar=hay?'<button class="btn ghost sm" style="margin-left:auto" onclick="resFilterClearAll()">Limpiar filtros</button>':'';
@@ -2029,7 +2030,7 @@ function comprasResumenView(ogsAll){
     +'<table class="grid" style="font-size:12px"><thead><tr>'
     +th('Clasificación','clasif')+th('Proveedor','prov')+th('OG','og')
     +'<th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th>'
-    +'<th style="text-align:right">% pend. cert.</th><th style="text-align:right">% cert. no lib.</th><th style="text-align:right">% lib. no pag.</th><th style="text-align:right">% pagado</th>'
+    +'<th style="text-align:right">% pend. cert.</th><th style="text-align:right">% cert. no lib.</th><th style="text-align:right">% lib. no pag.</th><th style="text-align:right">% pagado</th><th style="text-align:right">% Cerrado</th>'
     +'</tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
@@ -2531,11 +2532,84 @@ function renderTesoreria(){
 function setTesTab(t){ TES_TAB=t; renderTesoreria(); }
 window.setTesTab=setTesTab; window.renderTesoreria=renderTesoreria;
 
+/* ===== Filtro tipo Excel genérico (reutilizable por namespace) =====
+   Se usa en Proyectado / Cola de pagos / Arqueo de caja: mismo look & feel
+   que el filtro de Órdenes de gasto (ogx*) y Órdenes de pago (op*), pero
+   sin repetir el bloque de ~30 líneas por cada solapa nueva. */
+const XLF_STORE={}; const XLF_DATE={}; const XLF_DEF={};
+function xlfRegister(ns, def){ XLF_DEF[ns]=def; XLF_STORE[ns]=XLF_STORE[ns]||{}; }
+function xlfActive(ns,col){ if(col==='__fecha__') return !!(XLF_DATE[ns]&&(XLF_DATE[ns].desde||XLF_DATE[ns].hasta)); return !!(XLF_STORE[ns][col]&&XLF_STORE[ns][col].length); }
+function xlfHasAny(ns){ return Object.keys(XLF_STORE[ns]||{}).length>0 || !!(XLF_DATE[ns]&&(XLF_DATE[ns].desde||XLF_DATE[ns].hasta)); }
+function xlfPass(ns,row){
+  const def=XLF_DEF[ns], f=XLF_STORE[ns]||{};
+  if(def.dateVal && XLF_DATE[ns]){ const d=def.dateVal(row)||''; if(XLF_DATE[ns].desde && d<XLF_DATE[ns].desde) return false; if(XLF_DATE[ns].hasta && d>XLF_DATE[ns].hasta) return false; }
+  return Object.keys(f).every(col=>{ const allow=f[col]; if(!allow||!allow.length) return true; return allow.includes(def.val(row,col)); });
+}
+function xlfUnique(ns,col){ const s=new Set(); XLF_DEF[ns].rows().forEach(row=>{ const v=XLF_DEF[ns].val(row,col); if(v) s.add(v); }); return [...s].sort((a,b)=>String(a).localeCompare(String(b),'es',{numeric:true})); }
+function xlfTh(ns,label,col){
+  const opener = col==='__fecha__' ? ("xlfOpenDate('"+ns+"',event)") : ("xlfOpen('"+ns+"','"+col+"',event)");
+  return '<th style="white-space:nowrap">'+esc(label)+' <button class="xlfbtn" onclick="'+opener+'" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(xlfActive(ns,col)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>';
+}
+function xlfClearAllBtn(ns){ return xlfHasAny(ns) ? '<button class="btn ghost sm" style="margin-left:auto" onclick="xlfClearAll(\''+ns+'\')">Limpiar filtros</button>' : ''; }
+function xlfClose(){ const p=document.getElementById('xlfPop'); if(p) p.remove(); document.removeEventListener('mousedown', xlfOutside, true); }
+function xlfOutside(e){ const p=document.getElementById('xlfPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.xlfbtn'))) xlfClose(); }
+function xlfOpen(ns,col,ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; xlfClose();
+  const vals=xlfUnique(ns,col); const sel = XLF_STORE[ns][col] ? new Set(XLF_STORE[ns][col]) : new Set(vals);
+  const item=v=>'<label class="xlfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer"><input type="checkbox" class="xlfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+esc(v)+'</label>';
+  const pop=document.createElement('div'); pop.id='xlfPop'; pop.dataset.ns=ns; pop.dataset.col=col;
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="xlfSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="xlfToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="xlfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="xlfApply()">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="xlfClearCol()">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', xlfOutside, true),0);
+}
+function xlfSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#xlfList .xlfitem').forEach(el=>{ el.style.display=el.getAttribute('data-v').toLowerCase().includes(q)?'flex':'none'; }); }
+function xlfToggleAll(ck){ document.querySelectorAll('#xlfList .xlfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.xlfchk'); if(c) c.checked=ck; } }); }
+function xlfApply(){
+  const pop=document.getElementById('xlfPop'); if(!pop) return; const ns=pop.dataset.ns, col=pop.dataset.col;
+  const all=[...document.querySelectorAll('#xlfList .xlfchk')]; const chk=all.filter(c=>c.checked).map(c=>c.value);
+  if(chk.length===all.length){ delete XLF_STORE[ns][col]; } else { XLF_STORE[ns][col]=chk; }
+  xlfClose(); XLF_DEF[ns].onChange();
+}
+function xlfClearCol(){ const pop=document.getElementById('xlfPop'); if(!pop) return; delete XLF_STORE[pop.dataset.ns][pop.dataset.col]; xlfClose(); XLF_DEF[pop.dataset.ns].onChange(); }
+function xlfClearAll(ns){ XLF_STORE[ns]={}; delete XLF_DATE[ns]; XLF_DEF[ns].onChange(); }
+function xlfOpenDate(ns,ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; xlfClose();
+  const cur=XLF_DATE[ns]||{desde:'',hasta:''};
+  const pop=document.createElement('div'); pop.id='xlfPop'; pop.dataset.ns=ns;
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;min-width:200px;font-size:12.5px';
+  pop.innerHTML='<div style="font-weight:700;margin-bottom:6px">Rango de fechas</div>'
+    +'<label style="display:block;font-size:11px;color:var(--muted)">Desde</label><input type="date" id="xlfDesde" value="'+esc(cur.desde||'')+'" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:block;font-size:11px;color:var(--muted)">Hasta</label><input type="date" id="xlfHasta" value="'+esc(cur.hasta||'')+'" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;font-size:12.5px">'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="xlfDateApply()">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="xlfDateClear()">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-240)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', xlfOutside, true),0);
+}
+function xlfDateApply(){ const pop=document.getElementById('xlfPop'); if(!pop) return; const ns=pop.dataset.ns; XLF_DATE[ns]={desde:(document.getElementById('xlfDesde').value||''), hasta:(document.getElementById('xlfHasta').value||'')}; xlfClose(); XLF_DEF[ns].onChange(); }
+function xlfDateClear(){ const pop=document.getElementById('xlfPop'); if(!pop) return; delete XLF_DATE[pop.dataset.ns]; xlfClose(); XLF_DEF[pop.dataset.ns].onChange(); }
+window.xlfOpen=xlfOpen; window.xlfSearch=xlfSearch; window.xlfToggleAll=xlfToggleAll; window.xlfApply=xlfApply; window.xlfClearCol=xlfClearCol; window.xlfClearAll=xlfClearAll;
+window.xlfOpenDate=xlfOpenDate; window.xlfDateApply=xlfDateApply; window.xlfDateClear=xlfDateClear;
+
 /* ---- Vista Proyectado: cuánto falta pagar, por situación y moneda ---- */
 function proyectadoView(){
+  xlfRegister('proy', { rows:()=>(mem.ogs||[]).filter(o=>!o.anulada), onChange:renderTesoreria,
+    val:(o,col)=>{
+      if(col==='og') return o.numero?String(o.numero):'(sin N°)';
+      if(col==='prov') return o.proveedor_cod||o.proveedor||'(sin proveedor)';
+      if(col==='clasif') return o.clasif_og||'(sin clasificación)';
+      if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
+      return '';
+    } });
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const mfmt=(mon,v)=>(mon==='USD'?'US$ ':'$ ')+fmt2(v);
-  const ogs=(mem.ogs||[]).filter(o=>!o.anulada);
+  const ogs=(mem.ogs||[]).filter(o=>!o.anulada).filter(o=>xlfPass('proy',o));
   const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
   const detail=[];
   ogs.forEach(o=>{
@@ -2547,7 +2621,7 @@ function proyectadoView(){
     detail.push({o,mon,sc,cl,lp});
   });
   const totalUSD=tot.USD.sc+tot.USD.cl+tot.USD.lp, totalARS=tot.ARS.sc+tot.ARS.cl+tot.ARS.lp;
-  if(!detail.length) return '<div class="card"><div class="empty">No hay OG con saldo pendiente de pago.</div></div>';
+  if(!detail.length) return '<div class="card"><div class="empty">'+(xlfHasAny('proy')?'Ninguna OG coincide con los filtros.':'No hay OG con saldo pendiente de pago.')+'</div>'+(xlfHasAny('proy')?'<div style="padding:0 16px 16px"><button class="btn ghost sm" onclick="xlfClearAll(\'proy\')">Limpiar filtros</button></div>':'')+'</div>';
   const COL={sc:'#c9c49f', cl:'#5f7a4e', lp:'#37432c'};   // colores de las 3 situaciones
   // Torta SVG dibujada a mano (sin librería). Devuelve '' si no hay total.
   function donut(sc,cl,lp){
@@ -2576,7 +2650,8 @@ function proyectadoView(){
   // Detalle por OG
   const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''))).map(d=>{
     const o=d.o, mon=d.mon;
-    return '<tr><td><strong>'+esc(o.numero||'')+'</strong><div style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||'')+'</div></td>'
+    return '<tr><td><strong>'+esc(o.numero||'')+'</strong></td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+esc(o.clasif_og||'')+'</td>'
       +'<td>'+badge(mon==='USD'?'USD':'Pesos')+'</td>'
       +'<td style="text-align:right">'+(d.sc?mfmt(mon,d.sc):'—')+'</td>'
@@ -2584,8 +2659,8 @@ function proyectadoView(){
       +'<td style="text-align:right">'+(d.lp?mfmt(mon,d.lp):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+mfmt(mon,d.sc+d.cl+d.lp)+'</strong></td></tr>';
   }).join('');
-  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG.</span></div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>Clasif.</th><th>Moneda</th><th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody></table></div>';
+  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾.</span>'+xlfClearAllBtn('proy')+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody></table></div>';
   return resumen+detalle;
 }
 window.proyectadoView=proyectadoView;
@@ -2695,8 +2770,19 @@ function opsView(){
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
-function colaView(cola){
-  if(!cola.length) return '<div class="card"><div class="empty">No hay pagos pendientes. Todo lo liberado está pagado.</div></div>';
+function colaView(colaAll){
+  if(!colaAll.length) return '<div class="card"><div class="empty">No hay pagos pendientes. Todo lo liberado está pagado.</div></div>';
+  xlfRegister('cola', { rows:()=>colaAll, onChange:renderTesoreria,
+    val:(o,col)=>{
+      if(col==='og') return o.numero?String(o.numero):'(sin N°)';
+      if(col==='prov') return o.proveedor_cod||o.proveedor||'(sin proveedor)';
+      if(col==='clasif') return o.clasif_og||'(sin clasificación)';
+      if(col==='certificador') return o.certificador||'(sin certificador)';
+      if(col==='condicion') return o.condicion||'(sin condición)';
+      if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
+      return '';
+    } });
+  const cola=colaAll.filter(o=>xlfPass('cola',o));
   const demoTag=DEMO_MODE?'<span class="demo-tag">DATOS DE EJEMPLO</span>':'';
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const rows=cola.map(o=>{
@@ -2708,7 +2794,8 @@ function colaView(cola){
     if(mon==='USD'){ mUSD=pend; mARS = tc? pend*tc : null; }
     else { mARS=pend; mUSD = tc? pend/tc : null; }
     return '<tr>'
-      +'<td><strong>'+esc(o.numero)+'</strong><div style="font-size:11px;color:var(--muted)">'+esc(o.proveedor||'')+'</div></td>'
+      +'<td><strong>'+esc(o.numero)+'</strong></td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+(o.clasif_og?esc(o.clasif_og):esc(o.objeto||''))+'</td>'
       +'<td>'+ogLiberadoPct(o).toFixed(0)+'% liberado'+(pagadoPct>0?'<div style="font-size:11px;color:var(--muted)">'+pagadoPct.toFixed(0)+'% pagado</div>':'')+'</td>'
       +'<td>'+esc(o.certificador||'—')+'</td>'
@@ -2720,9 +2807,9 @@ function colaView(cola){
       +'<td><div class="row-actions"><button class="btn ghost sm" onclick="verRespaldo('+o.id+')">Ver respaldo</button>'
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
       +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
-  }).join('');
-  return '<div class="card"><div class="card-h"><h3>Cola de pagos'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. El Monto ARS es estimado con el TC de la OG.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button></div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>Clasif.</th><th>Estado</th><th>Certificó</th><th>Cond. compra</th><th>Moneda OG</th><th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }).join('') || '<tr><td colspan="11" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+  return '<div class="card"><div class="card-h"><h3>Cola de pagos'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. El Monto ARS es estimado con el TC de la OG. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda OG','moneda')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 function verRespaldo(ogId){
@@ -3221,23 +3308,32 @@ async function confirmDelPago(id){
 window.askDelPago=askDelPago; window.confirmDelPago=confirmDelPago;
 
 function arqueoView(){
-  const card=(mon)=>{ const c=CAJAS[mon]; const cc=CAJAS_CONF[mon]; const ini=(mem.caja&&mem.caja[mon+'_ini'])||0;
-    const pagos=cajaMovs(mon); const ings=cajaIngresos(mon);
+  const movsOf=mon=>{ const cc=CAJAS_CONF[mon];
+    return [].concat(
+      cajaIngresos(mon).map(i=>({tipo:'ing', fecha:i.fecha, det:'Reposición ← '+cc.cod, medio:i.observaciones||'', imp:+i.importe||0, id:i.id})),
+      cajaMovs(mon).map(p=>({tipo:'pag', fecha:p.fecha, det:'OG '+(p.numero||''), medio:p.medio||'', imp:-(+p.importe_pago||0), id:p.id}))
+    ).sort((a,b)=>(a.fecha<b.fecha?1:-1));
+  };
+  xlfRegister('arqueo', { rows:()=>movsOf('ARS').concat(movsOf('USD')), onChange:renderTesoreria, dateVal:m=>m.fecha||'',
+    val:(m,col)=>{
+      if(col==='medio') return m.medio||'(sin medio)';
+      if(col==='tipo') return m.tipo==='ing'?'Ingreso':'Pago';
+      return '';
+    } });
+  const card=(mon)=>{ const c=CAJAS[mon]; const ini=(mem.caja&&mem.caja[mon+'_ini'])||0;
+    const pagos=cajaMovs(mon), ings=cajaIngresos(mon);
     const egresos=pagos.reduce((a,p)=>a+(+p.importe_pago||0),0);
     const repuesto=ings.reduce((a,i)=>a+(+i.importe||0),0);
     const saldo=ini+repuesto-egresos;
     const simb=mon==='USD'?'US$ ':'$ '; const fmt=v=>simb+(+v||0).toLocaleString('es-AR',{maximumFractionDigits:2});
-    const movs=[].concat(
-      ings.map(i=>({tipo:'ing', fecha:i.fecha, det:'Reposición ← '+cc.cod, medio:i.observaciones||'', imp:+i.importe||0, id:i.id})),
-      pagos.map(p=>({tipo:'pag', fecha:p.fecha, det:'OG '+(p.numero||''), medio:p.medio||'', imp:-(+p.importe_pago||0), id:p.id}))
-    ).sort((a,b)=>(a.fecha<b.fecha?1:-1));
+    const movs=movsOf(mon).filter(m=>xlfPass('arqueo',m));   // el saldo/egresos/reposiciones de arriba siempre son sobre TODO (no se filtran); el filtro solo acota qué movimientos se listan abajo
     const rows=movs.length?movs.map(m=>{
       const pos=m.imp>=0; const col=pos?'#1a7a3a':'var(--bad)';
       const acc = m.tipo==='ing'
         ? '<button class="btn ghost sm" title="Asiento de transferencia (Tango)" onclick="exportAsientoReposicion('+m.id+')">Asiento</button>'+((canPago()&&m.id!=null)?' <button class="iconbtn del" title="Eliminar reposición" onclick="askDelIngreso('+m.id+')">'+ICO.del+'</button>':'')
         : ((canPago()&&m.id!=null)?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+m.id+')">'+ICO.del+'</button>':'');
       return '<tr><td>'+esc(fmtDate(m.fecha))+'</td><td>'+esc(m.det)+'</td><td>'+esc(m.medio)+'</td><td style="text-align:right;color:'+col+'">'+(pos?'+':'-')+fmt(Math.abs(m.imp))+'</td><td style="text-align:right">'+acc+'</td></tr>';
-    }).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin movimientos</td></tr>';
+    }).join(''):'<tr><td colspan="5" style="color:var(--muted)">'+(xlfHasAny('arqueo')?'Ningún movimiento coincide con los filtros.':'Sin movimientos')+'</td></tr>';
     const btnIng = canPago()? '<button class="btn sm" onclick="openIngresoCaja(\''+mon+'\')">+ Ingresar fondos</button>' : '';
     return '<div class="card" style="margin-bottom:16px"><div class="card-h" style="display:flex;justify-content:space-between;align-items:center"><h3>'+c.nombre+' <span style="font-size:12px;color:var(--muted);font-weight:400">'+c.cod+'</span></h3>'+btnIng+'</div>'
       +'<div style="display:flex;gap:22px;flex-wrap:wrap;padding:4px 4px 12px">'
@@ -3245,9 +3341,9 @@ function arqueoView(){
       +'<div><div style="font-size:11.5px;color:var(--muted)">Reposiciones</div><div style="font-size:18px;font-weight:700;color:#1a7a3a">+'+fmt(repuesto)+'</div></div>'
       +'<div><div style="font-size:11.5px;color:var(--muted)">Egresos (pagos)</div><div style="font-size:18px;font-weight:700;color:var(--bad)">-'+fmt(egresos)+'</div></div>'
       +'<div><div style="font-size:11.5px;color:var(--muted)">Saldo disponible</div><div style="font-size:18px;font-weight:700">'+fmt(saldo)+'</div></div></div>'
-      +'<table class="grid"><thead><tr><th>Fecha</th><th>Detalle</th><th>Medio / motivo</th><th style="text-align:right">Importe</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      +'<table class="grid"><thead><tr>'+xlfTh('arqueo','Fecha','__fecha__')+'<th>Detalle</th>'+xlfTh('arqueo','Medio / motivo','medio')+'<th style="text-align:right">Importe</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   };
-  return '<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Saldo disponible de cada caja PROY = saldo inicial + reposiciones − pagos. Las reposiciones se cargan desde la caja confidencial y generan su asiento de transferencia para Tango.</div>'+card('ARS')+card('USD');
+  return '<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Saldo disponible de cada caja PROY = saldo inicial + reposiciones − pagos (siempre sobre el total). El filtro con ▾ solo acota qué movimientos se listan abajo.'+(xlfHasAny('arqueo')?' <button class="btn ghost sm" onclick="xlfClearAll(\'arqueo\')">Limpiar filtros</button>':'')+'</div>'+card('ARS')+card('USD');
 }
 async function setSaldoIni(mon,val){
   mem.caja=mem.caja||{}; mem.caja[mon+'_ini']=+val||0;
