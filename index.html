@@ -432,7 +432,7 @@ const ICO={
 const ESTADO_COLOR={
   'solicitada':'b-gris','aprobada':'b-ambar','recibida':'b-verde','cancelada':'b-rojo',
   'disponible':'b-verde','prestada':'b-azul','baja':'b-gris','reparación':'b-ambar',
-  'pendiente':'b-gris','en proceso':'b-azul','cerrada':'b-verde',
+  'pendiente':'b-gris','en proceso':'b-azul','cerrada':'b-verde','registrado':'b-verde',
   'programado':'b-gris','en tránsito':'b-azul','completado':'b-verde',
   'ok':'b-verde','bajo mínimo':'b-rojo','sin stock':'b-rojo',
   'preventivo':'b-oliva','correctivo':'b-ambar',
@@ -2797,6 +2797,7 @@ function opColVal(p,col){
   if(col==='comprador') return o.comprador||'';
   if(col==='medio') return p.medio||'';
   if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
+  if(col==='asiento') return (p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente';
   return '';
 }
 function opUniqueVals(col){ const s=new Set(); (mem.pagos||[]).forEach(p=>{ const v=opColVal(p,col); if(v!=='') s.add(v); }); return [...s].sort((a,b)=>String(a).localeCompare(String(b),'es',{numeric:true})); }
@@ -2876,18 +2877,19 @@ function opsView(){
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
+      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')+' <input type="text" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento" title="N° de asiento en Tango, una vez importado y corregidos los auxiliares" onblur="guardarAsientoOP('+p.id+',this.value)" onkeydown="if(event.key===\'Enter\') this.blur()" style="width:78px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px;margin-top:2px;display:block"></td>'
       +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="14" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
+  }).join('') || '<tr><td colspan="15" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="11" style="text-align:right">Total mostrado</td>'
     +'<td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td>'
-    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td></td></tr>';
+    +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td></td><td></td></tr>';
   const th=(label,col)=>{ if(!col) return '<th style="white-space:nowrap">'+label+'</th>';
     const opener= col==='fecha' ? 'openOpFechaFilter(event)' : ("openOpFilter('"+col+"',event)");
     return '<th style="white-space:nowrap">'+label+' <button class="opfbtn" onclick="'+opener+'" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(opFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>'; };
   const hayFiltro=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
   const limpiar = hayFiltro ? '<button class="btn ghost sm" style="margin-left:auto" onclick="opFilterClearAll()">Limpiar filtros</button>' : '';
-  return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
+  return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Cargá el N° de asiento de Tango una vez que lo corregiste e importaste, para llevar el control de qué quedó realmente asentado. Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
 function colaView(colaAll){
@@ -3415,6 +3417,20 @@ async function savePago(ogId){
   closeModal(); toast('Pago registrado'); renderTesoreria();
 }
 window.savePago=savePago;
+/* N° de asiento Tango de cada OP: se carga a mano después de importar el asiento en Tango y corregir
+   los auxiliares (Tango no los importa bien), para tener registro de que ese pago ya quedó asentado. */
+async function guardarAsientoOP(id, valor){
+  if(!canPago()){ toast('Solo Tesorería/Admin puede cargar el N° de asiento.'); return; }
+  valor=(valor||'').trim();
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(id)); if(!p) return;
+  if(p.asiento_num===valor) return;   // sin cambios
+  try{
+    if(DEMO_MODE){ p.asiento_num=valor; }
+    else { await sbFetch('/pagos?id=eq.'+id,{method:'PATCH',body:JSON.stringify({asiento_num:valor})}); p.asiento_num=valor; }
+    toast(valor?'N° de asiento guardado':'N° de asiento borrado'); renderTesoreria();
+  }catch(e){ toast('No se pudo guardar: '+(e&&e.message?e.message:e)); }
+}
+window.guardarAsientoOP=guardarAsientoOP;
 function askDelPago(id){
   openModal('Eliminar pago','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo.</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelPago('+id+')">Eliminar</button>');
