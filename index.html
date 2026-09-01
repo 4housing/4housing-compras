@@ -722,6 +722,15 @@ async function loadRole(){
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
 function canCert(){ return ROLE.certificador||ROLE.admin; }
 function canPago(){ return ROLE.tesorero||ROLE.admin; }
+/* Restricciones por usuario: cada comprador/certificador solo actúa sobre lo que tiene asignado.
+   El admin no tiene esta restricción (puede actuar "como cualquiera"). */
+function puedeCrearOG(){ return ROLE.admin||ROLE.comprador; }
+function puedeEditarOG(o){ if(!o) return puedeCrearOG(); return ROLE.admin || (ROLE.comprador && !!MI_NOMBRE && o.comprador===MI_NOMBRE); }
+function puedeCertificarOG(o){ return ROLE.admin || (ROLE.certificador && !!MI_NOMBRE && o && o.certificador===MI_NOMBRE); }
+function puedeLiberarOG(o){ return puedeEditarOG(o); } // liberar a pago = comprador dueño de la OG (o admin)
+// Cabecera (Proveedor/Fecha/Condición/Moneda/Cotización) bloqueada una vez que la OG tiene algo certificado o cerrado.
+// El admin puede seguir editándola igual (para corregir errores); el resto, no.
+function ogCabeceraBloqueada(o){ return !ROLE.admin && o && ((ogAcumPct(o.id)+ogCerradoPct(o))>0.001); }
 function setDemoRole(v){ DEMO_ROLE=v; applyDemoRole(); buildNav(); go((current==='tesoreria' && !ROLE.tesorero)?'compras':current); }
 window.setDemoRole=setDemoRole;
 
@@ -2163,8 +2172,8 @@ async function renderCompras(){
         +'<td>'+badge(ogEstado(o))+'</td>'
         +'<td><div class="row-actions">'
         +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
-        +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="Ver / editar OG" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
-        +((canEditOG()&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
+        +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
+        +((puedeEditarOG(o)&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
         +'</div></td></tr>';
       return head+(exp?ogDetail(o):'');
     }).join('');
@@ -2287,15 +2296,15 @@ function certInner(o){
         +'<td>'+(c.aprobacion==='SI'?'<span class="badge b-verde">SÍ</span>':'<span class="badge b-rojo">NO</span>')+'</td>'
         +'<td>'+badge(c.estado||'Pendiente')+'</td>'
         +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir certificación" onclick="exportCert('+o.id+','+c.id+')">'+ICO.pdf+'</button>'
-        +'<button class="iconbtn" title="Editar" onclick="openCert('+o.id+','+c.id+')">'+ICO.edit+'</button>'
-        +'<button class="iconbtn del" title="Eliminar" onclick="delCert('+c.id+','+o.id+')">'+ICO.del+'</button></div></td></tr>'; }).join('')
+        +(puedeCertificarOG(o)?('<button class="iconbtn" title="Editar" onclick="openCert('+o.id+','+c.id+')">'+ICO.edit+'</button>'
+        +'<button class="iconbtn del" title="Eliminar" onclick="delCert('+c.id+','+o.id+')">'+ICO.del+'</button>'):'')+'</div></td></tr>'; }).join('')
       +'</tbody></table>'
     : '<div style="font-size:13px;color:var(--muted);padding:4px 0 10px">Sin certificados.</div>';
   const rem=Math.max(0,100-ogAcumPct(o.id)-ogCerradoPct(o));
   const cerradoOG=ogCerradoPct(o);
   return '<div class="detail-h" style="margin-top:8px"><span>Certificados · resta certificar '+rem.toFixed(1).replace('.0','')+'%'+(cerradoOG>0.01?(' · cerrado '+cerradoOG.toFixed(1).replace('.0','')+'%'):'')+'</span>'
     +(certs.length?'<button class="btn ghost sm" onclick="exportCertResumen('+o.id+')">'+ICO.pdf+'Imprimir resumen</button>':'')
-    +'<button class="btn ghost sm" onclick="openCert('+o.id+')">'+ICO.plus+'Agregar certificado</button></div>'+rows;
+    +(puedeCertificarOG(o)?'<button class="btn ghost sm" onclick="openCert('+o.id+')">'+ICO.plus+'Agregar certificado</button>':'')+'</div>'+rows;
 }
 function ogDetail(o){
   const items=o.items||[];
@@ -2303,7 +2312,7 @@ function ogDetail(o){
     ? '<table class="grid usub"><thead><tr><th>Cód Art</th><th>Artículo</th><th>Centro de costos</th><th>Módulo</th><th>Cant</th><th>Total</th><th>Avance</th><th>Cerrado</th><th></th></tr></thead><tbody>'
       +items.map((it,idx)=>{ const ac=itemAcumPct(o,idx); const cz=itemCerradoPct(it); const disp=Math.max(0,100-ac-cz); const mods=(it.modulos||[]).map(m=>esc(String(m).split(' - ')[0])).join(', ');
         const czTxt = cz>0.01 ? (fmtNum((+it.cant||0)*cz/100,2)+' '+esc(it.um||'')+' <span style="color:var(--muted)">('+cz.toFixed(1).replace('.0','')+'%)</span>') : '—';
-        const czBtn = (canEditOG()&&!o.anulada&&disp>0.01) ? '<button class="iconbtn" title="Cerrar saldo de este renglón" onclick="openCierre('+o.id+','+idx+')">'+ICO.ban+'</button>' : '';
+        const czBtn = (puedeEditarOG(o)&&!o.anulada&&disp>0.01) ? '<button class="iconbtn" title="Cerrar saldo de este renglón" onclick="openCierre('+o.id+','+idx+')">'+ICO.ban+'</button>' : '';
         return '<tr><td><span style="font-size:11.5px;color:var(--muted)">'+esc(it.cod_art||'—')+'</span></td>'
           +'<td>'+esc(it.articulo||it.descripcion||'—')+'</td>'
           +'<td>'+(it.centro_costos?'<strong>'+esc(it.centro_costos)+'</strong>'+(clasifDesc(it.centro_costos)&&clasifDesc(it.centro_costos)!==it.centro_costos?' · '+esc(clasifDesc(it.centro_costos)):''):'—')+'</td>'
@@ -2316,7 +2325,7 @@ function ogDetail(o){
       +'</tbody></table>'
     : '<div style="font-size:12.5px;color:var(--muted);padding:2px 0">Sin renglones — se certifica a nivel OG por el monto total.'
       +(ogCerradoPct(o)>0.01?(' · Cerrado '+fmtMoney(ogCerradoMonto(o))+' ('+ogCerradoPct(o).toFixed(1).replace('.0','')+'%)'):'')
-      +((canEditOG()&&!o.anulada&&(100-ogAcumPct(o.id)-ogCerradoPct(o))>0.01)?' <button class="btn ghost sm" onclick="openCierre('+o.id+',null)">'+ICO.ban+'Cerrar saldo</button>':'')
+      +((puedeEditarOG(o)&&!o.anulada&&(100-ogAcumPct(o.id)-ogCerradoPct(o))>0.01)?' <button class="btn ghost sm" onclick="openCierre('+o.id+',null)">'+ICO.ban+'Cerrar saldo</button>':'')
       +'</div>';
   return '<tr class="detail-row"><td colspan="11"><div class="detail-wrap">'
     +'<div class="detail-h"><span>Renglones de OG '+esc(o.numero||'')+(o.proveedor?' · '+esc((o.proveedor_cod?o.proveedor_cod+' — ':'')+o.proveedor):'')+'</span>'
@@ -2692,9 +2701,78 @@ function proyectadoView(){
   }).join('');
   const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾.</span>'+xlfClearAllBtn('proy')+'</div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody></table></div>';
-  return resumen+detalle;
+  return resumen+detalle+proyeccionSemanalHtml(ogs);
 }
 window.proyectadoView=proyectadoView;
+
+/* ---- Previsión de caja semana a semana (según Fecha de entrega de cada renglón, corte los viernes) ---- */
+function fridayOf(d){ const f=new Date(d); const dow=f.getDay(); f.setDate(f.getDate()+(5-dow+7)%7); return f; }
+function proyeccionSemanal(ogs){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const buckets={};
+  const add=(key,mon,monto)=>{ buckets[key]=buckets[key]||{ARS:0,USD:0}; buckets[key][mon]+=monto; };
+  ogs.forEach(o=>{
+    const mon=ogMonedaCode(o);
+    const items=(o.items&&o.items.length)?o.items:null;
+    if(!items){
+      const pend=ogTotal(o)*Math.max(0,100-ogAcumPct(o.id)-ogCerradoPct(o))/100;
+      if(pend>0.5) add('sinfecha', mon, pend);
+      return;
+    }
+    items.forEach((it,idx)=>{
+      const pend=itemTotal(it)*Math.max(0,100-itemAcumPct(o,idx)-itemCerradoPct(it))/100;
+      if(pend<=0.5) return;
+      const fe=it.fecha_entrega;
+      if(!fe){ add('sinfecha', mon, pend); return; }
+      const d=new Date(fe+'T00:00:00');
+      if(d<hoy){ add('atrasado', mon, pend); return; }
+      add(fridayOf(d).toISOString().slice(0,10), mon, pend);
+    });
+  });
+  return buckets;
+}
+function proyeccionSemanalHtml(ogs){
+  const buckets=proyeccionSemanal(ogs);
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const HORIZONTE=8; // semanas hacia adelante antes de agrupar en "Más adelante"
+  const semanas=[]; let f=fridayOf(hoy);
+  for(let i=0;i<HORIZONTE;i++){ semanas.push(f.toISOString().slice(0,10)); f=new Date(f); f.setDate(f.getDate()+7); }
+  Object.keys(buckets).forEach(k=>{   // lo que caiga más allá del horizonte se agrupa en "Más adelante"
+    if(k==='atrasado'||k==='sinfecha'||semanas.includes(k)) return;
+    buckets.masadelante=buckets.masadelante||{ARS:0,USD:0};
+    buckets.masadelante.ARS+=buckets[k].ARS; buckets.masadelante.USD+=buckets[k].USD;
+    delete buckets[k];
+  });
+  const claves=['atrasado', ...semanas, 'masadelante', 'sinfecha'];
+  const hayAlgo=claves.some(k=>{ const b=buckets[k]; return b&&(b.ARS>0.5||b.USD>0.5); });
+  if(!hayAlgo) return '';
+  const maxARS=Math.max(1,...claves.map(k=>(buckets[k]||{}).ARS||0));
+  const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const lbl=k=>{
+    if(k==='atrasado') return 'Atrasado (pagar ya)';
+    if(k==='sinfecha') return 'Sin fecha estimada';
+    if(k==='masadelante') return 'Más adelante (+'+HORIZONTE+' sem.)';
+    return 'Semana al viernes '+fmtDate(k);
+  };
+  let acumARS=0, acumUSD=0;
+  const rows=claves.map(k=>{
+    const b=buckets[k]||{ARS:0,USD:0};
+    if(b.ARS<=0.5 && b.USD<=0.5) return '';
+    const esAtrasado=(k==='atrasado');
+    const acumula=(k!=='sinfecha'&&k!=='masadelante');
+    if(acumula){ acumARS+=b.ARS; acumUSD+=b.USD; }
+    const bar=b.ARS>0.5?('<div style="background:#e6e3d5;border-radius:4px;height:7px;overflow:hidden;margin-top:3px"><div style="background:'+(esAtrasado?'#b4554e':'#5f7a4e')+';height:100%;width:'+Math.max(2,Math.min(100,b.ARS/maxARS*100))+'%"></div></div>'):'';
+    return '<tr'+(esAtrasado?' style="background:#fdece9"':'')+'>'
+      +'<td style="font-size:12px'+(esAtrasado?';color:#b4554e;font-weight:700':'')+'">'+lbl(k)+'</td>'
+      +'<td style="text-align:right">'+(b.ARS>0.5?'$ '+fmt2(b.ARS):'—')+bar+'</td>'
+      +'<td style="text-align:right">'+(b.USD>0.5?'US$ '+fmt2(b.USD):'—')+'</td>'
+      +'<td style="text-align:right;color:var(--muted);font-size:11.5px">'+(acumula?('$ '+fmt2(acumARS)+(acumUSD>0.5?' · US$ '+fmt2(acumUSD):'')):'—')+'</td></tr>';
+  }).join('');
+  return '<div class="card" style="margin-top:14px"><div class="card-h"><h3>Previsión semana a semana</h3><span class="meta">Según la Fecha de entrega de cada renglón · corte los viernes (día de pago)</span></div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Semana</th><th style="text-align:right">Necesita en pesos</th><th style="text-align:right">Necesita en dólares</th><th style="text-align:right">Acumulado</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<div style="font-size:11px;color:var(--muted);padding:10px 15px">Se calcula sobre lo que cada renglón todavía tiene sin certificar ni cerrar (lo cerrado nunca se paga). "Sin fecha estimada" son renglones sin Fecha de entrega cargada y OGs sin renglones — no se pueden ubicar en el calendario todavía.</div></div>';
+}
+window.proyeccionSemanalHtml=proyeccionSemanalHtml;
 
 /* ===== Filtro tipo Excel para Órdenes de pago ===== */
 let OP_FILTRO={};   // { col: [valores permitidos] }  · ausente = sin filtro
@@ -3481,11 +3559,17 @@ window.exportOGExcel=exportOGExcel;
 
 /* ---- Panel del certificador: ve sus OG pendientes y certifica ---- */
 function openCertPanel(){
-  const cur=OG_FILTRO.certificador||'';
-  const opts='<option value="">— elegí tu nombre —</option>'+nombresCert().map(n=>'<option'+(n===cur?' selected':'')+'>'+esc(n)+'</option>').join('');
-  const body='<div class="field"><label>Certificador</label><select id="cp_cert" onchange="renderCertPanel()">'+opts+'</select></div>'
-    +'<div style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">Elegí tu nombre y vas a ver las OG que tenés asignadas y que faltan certificar. Tocá “Certificar” para cargar el avance.</div>'
-    +'<div id="cpList"></div>';
+  let campoCert;
+  if(ROLE.admin){
+    const cur=OG_FILTRO.certificador||'';
+    const opts='<option value="">— elegí un nombre —</option>'+nombresCert().map(n=>'<option'+(n===cur?' selected':'')+'>'+esc(n)+'</option>').join('');
+    campoCert='<div class="field"><label>Certificador</label><select id="cp_cert" onchange="renderCertPanel()">'+opts+'</select></div>'
+      +'<div style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">Como admin podés ver las OG de cualquier certificador. Elegí un nombre para ver sus pendientes.</div>';
+  }else{
+    campoCert='<input id="cp_cert" type="hidden" value="'+esc(MI_NOMBRE||'')+'">'
+      +'<div style="font-size:11.5px;color:var(--muted);margin:0 0 12px">Certificador: <strong>'+esc(MI_NOMBRE||'(tu usuario no tiene un nombre de certificador asociado)')+'</strong> · vas a ver las OG que tenés asignadas y que faltan certificar.</div>';
+  }
+  const body=campoCert+'<div id="cpList"></div>';
   openModal('Certificar OGs', body, '<button class="btn ghost" onclick="closeModal()">Cerrar</button>');
   renderCertPanel();
 }
@@ -3494,6 +3578,7 @@ window.openCertPanel=openCertPanel;
 function liberarRows(){
   const rows=[];
   (mem.ogs||[]).forEach(o=>{ if(o.anulada) return;
+    if(!puedeLiberarOG(o)) return;   // cada comprador solo ve/libera las OG que él/ella creó (admin ve todas)
     certsOf(o.id).forEach(c=>{
       if(c.aprobacion==='SI' && c.estado==='Liberado') return;   // ya liberado
       rows.push('<tr><td><strong>'+esc(o.numero||'')+'</strong></td><td>'+esc(c.numero||'')+'</td><td>'+fmtDate(c.fecha)+'</td><td style="font-size:11px">'+esc(o.proveedor_cod||'')+'</td><td style="text-align:right">'+fmtMoney(certMonto(c,o))+'</td><td style="text-align:right"><button class="btn sm" onclick="liberarCert('+o.id+','+c.id+')">Liberar</button></td></tr>');
@@ -3512,7 +3597,7 @@ function openLiberarPanel(){
 }
 window.openLiberarPanel=openLiberarPanel;
 async function liberarCert(ogId, id){
-  if(!canEditOG()){ toast('Solo el comprador (o admin) puede liberar pagos.'); return; }
+  if(!puedeLiberarOG(ogById(ogId))){ toast('Esta OG no es tuya: no la podés liberar a pago.'); return; }
   const patch={ aprobacion:'SI', estado:'Liberado', liberado_por:(AUTH_USER&&AUTH_USER.email)||'', liberado_fecha:new Date().toISOString().slice(0,10) };
   try{
     if(DEMO_MODE){ const r=mem.certificados.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,patch); }
@@ -3540,6 +3625,9 @@ window.renderCertPanel=renderCertPanel;
 /* ---- Alta / edición de OG ---- */
 function openOG(id){
   const o = id!=null ? ogById(id) : null; const cur=o||{};
+  if(!o && !puedeCrearOG()){ toast('No tenés permiso para crear una OG.'); return; }
+  const soloLectura = !!o && !puedeEditarOG(o);
+  const bloqCabecera = ogCabeceraBloqueada(o);
   OG_ITEMS = (cur.items||[]).map((it,idx)=>({...it, _locked: o ? (itemAcumPct(o, idx)>0 || itemCerradoPct(it)>0) : false}));
   const nextNum = String(Math.max(1999,...(mem.ogs||[]).map(x=>+x.numero||0))+1);
   const optSel=(arr,val)=>'<option value="">— elegí —</option>'+arr.map(x=>'<option'+(x===val?' selected':'')+'>'+esc(x)+'</option>').join('');
@@ -3548,7 +3636,8 @@ function openOG(id){
   const provDL=(typeof DIC!=='undefined'?DIC.proveedores:[]).map(v=>'<option value="'+esc(v.codigo+' — '+(v.razon||v.comercial))+'"></option>').join('');
   const provVal = cur.proveedor_cod ? (cur.proveedor_cod+' — '+(cur.proveedor||'')) : '';
   const certOpts=optSel(nombresCert(),cur.certificador);
-  const compOpts=optSel(nombresComp(),cur.comprador);
+  // Comprador: cada usuario no-admin solo puede figurar como sí mismo (tanto al crear como al editar lo suyo).
+  const compOpts = ROLE.admin ? optSel(nombresComp(),cur.comprador) : '<option selected>'+esc(MI_NOMBRE||cur.comprador||'(sin nombre asociado)')+'</option>';
   const condOpts=optSel(CONDICION_OPC,cur.condicion);
   const monOpts=optSel(MONEDA_OPC,cur.moneda);
   const costeoOpts=optSelNA(COSTEO_OPC,cur.costeo);
@@ -3561,15 +3650,18 @@ function openOG(id){
   const antShow = (cur.condicion==='CON ANTICIPO');
   const metVal=cur.anticipo_metodo||'';
   const metOpts='<option value="">— elegí —</option><option value="A"'+(metVal==='A'?' selected':'')+'>A · proporcional a lo certificado</option><option value="B"'+(metVal==='B'?' selected':'')+'>B · recupera el anticipo primero</option>';
-  const body='<div class="frow c2"><div class="field"><label>N° OG</label><input id="og_numero" type="text" readonly value="'+esc(cur.numero || (DEMO_MODE?nextNum:''))+'" placeholder="Se asigna al guardar" style="background:#f3f1e8"><div style="font-size:11px;color:var(--muted);margin-top:4px">'+(cur.numero?'N° asignado.':'Se asigna solo al guardar (correlativo desde 2000).')+'</div></div>'
-    +'<div class="field"><label>Fecha de creación</label><input id="og_fecha" type="date" value="'+esc(cur.fecha||hoy)+'" onchange="ogFechaChanged()"></div></div>'
-    +'<div class="field"><label>Proveedor</label><input id="og_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProv()" oninput="comboProv()" onblur="comboHideDelayed()"><div style="font-size:11px;color:var(--muted);margin-top:4px">Escribí código o nombre y elegí de la lista.</div></div>'
+  const bloqNota = bloqCabecera ? '<div style="font-size:11.5px;color:#8a6d1e;background:#fdf3d9;border:1px solid #e0c46c;border-radius:8px;padding:8px 10px;margin-bottom:10px">Esta OG ya tiene algo certificado o cerrado: Proveedor, Fecha, Condición de compra, Moneda y Cotización quedan fijos. Solo se pueden modificar los renglones que no estén certificados.</div>' : '';
+  const dis = bloqCabecera ? ' disabled style="background:#f3f1e8"' : '';
+  const disSel = bloqCabecera ? ' disabled' : '';
+  const body=bloqNota+'<div class="frow c2"><div class="field"><label>N° OG</label><input id="og_numero" type="text" readonly value="'+esc(cur.numero || (DEMO_MODE?nextNum:''))+'" placeholder="Se asigna al guardar" style="background:#f3f1e8"><div style="font-size:11px;color:var(--muted);margin-top:4px">'+(cur.numero?'N° asignado.':'Se asigna solo al guardar (correlativo desde 2000).')+'</div></div>'
+    +'<div class="field"><label>Fecha de creación</label><input id="og_fecha" type="date" value="'+esc(cur.fecha||hoy)+'" onchange="ogFechaChanged()"'+dis+'></div></div>'
+    +'<div class="field"><label>Proveedor</label><input id="og_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProv()" oninput="comboProv()" onblur="comboHideDelayed()"'+dis+'><div style="font-size:11px;color:var(--muted);margin-top:4px">Escribí código o nombre y elegí de la lista.</div></div>'
     +'<div class="field"><label>Clasificación (OG)</label><input id="og_clasif" value="'+esc(clasOGVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboClasOG()" oninput="comboClasOG()" onblur="comboHideDelayed()"><div style="font-size:11px;color:var(--muted);margin-top:4px">Se copia por defecto a cada renglón nuevo; podés cambiarla por renglón.</div></div>'
-    +'<div class="frow c2"><div class="field"><label>Comprador (crea la OG)</label><select id="og_comprador">'+compOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Comprador (crea la OG)</label><select id="og_comprador"'+(ROLE.admin?'':' disabled')+'>'+compOpts+'</select></div>'
     +'<div class="field"><label>Certifica la OG</label><select id="og_certificador">'+certOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Condición de compra</label><select id="og_condicion" onchange="ogCondChanged()">'+condOpts+'</select></div>'
-    +'<div class="field"><label>Moneda</label><select id="og_moneda">'+monOpts+'</select></div></div>'
-    +'<div class="field"><label>Tipo de cambio (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:((tcDiaAnterior(cur.fecha||hoy)||{}).venta!=null?tcDiaAnterior(cur.fecha||hoy).venta:(USD_VENTA||'')))+'"><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
+    +'<div class="frow c2"><div class="field"><label>Condición de compra</label><select id="og_condicion" onchange="ogCondChanged()"'+disSel+'>'+condOpts+'</select></div>'
+    +'<div class="field"><label>Moneda</label><select id="og_moneda"'+disSel+'>'+monOpts+'</select></div></div>'
+    +'<div class="field"><label>Tipo de cambio (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:((tcDiaAnterior(cur.fecha||hoy)||{}).venta!=null?tcDiaAnterior(cur.fecha||hoy).venta:(USD_VENTA||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
     +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"></div>'
     +'<div class="field"><label>Método de anticipo</label><select id="og_antmet">'+metOpts+'</select></div></div></div>'
     +'<div class="field"><label>Observaciones</label><textarea id="og_obs" rows="2" style="font-size:13px;min-height:36px;line-height:1.4" placeholder="Detalle de la condición (plazos, % de anticipo, aclaraciones)…">'+esc(cur.observaciones||'')+'</textarea></div>'
@@ -3589,9 +3681,20 @@ function openOG(id){
     +'<div class="frow c2"><div class="field"><label>Desvío</label><select id="og_desvio">'+desvOpts+'</select></div>'
     +'<div class="field"><label>Desvío (otro, texto libre)</label><input id="og_desvio_txt" type="text" value="'+esc(cur.desvio_txt||'')+'"></div></div>'
     +'<div class="field"><label>Alcance del trabajo</label><textarea id="og_alcance">'+esc(cur.alcance||'')+'</textarea></div>';
-  openModal(id!=null?'Editar OG':'Nueva OG', body,
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="saveOG('+(id!=null?id:'null')+')">Guardar</button>', 'xwide');
+  const foot = soloLectura
+    ? '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
+    : '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="saveOG('+(id!=null?id:'null')+')">Guardar</button>';
+  openModal(soloLectura?('Ver OG (solo lectura)'):(id!=null?'Editar OG':'Nueva OG'), body, foot, 'xwide');
   renderOGItems();
+  if(soloLectura){
+    const box=document.getElementById('modalBody');
+    box.querySelectorAll('input,select,textarea').forEach(el=>{ el.disabled=true; });
+    box.querySelectorAll('button').forEach(btn=>{ btn.style.display='none'; });
+    const note=document.createElement('div');
+    note.style.cssText='font-size:12.5px;color:#8a6d1e;background:#fdf3d9;border:1px solid #e0c46c;border-radius:8px;padding:9px 11px;margin-bottom:12px';
+    note.textContent='Esta OG es de solo lectura: la creó '+(o.comprador||'otro comprador')+'. Solo esa persona (o un admin) puede editarla.';
+    box.insertBefore(note, box.firstChild);
+  }
 }
 window.openOG=openOG;
 function renderOGItems(){
@@ -3838,6 +3941,9 @@ function addOGItem(){
 function delOGItem(i){ if(OG_ITEMS[i]&&OG_ITEMS[i]._locked){ toast('Ese renglón ya está certificado o tiene saldo cerrado: no se puede eliminar.'); return; } OG_ITEMS.splice(i,1); renderOGItems(); }
 window.addOGItem=addOGItem; window.delOGItem=delOGItem; window.updateOGTotal=updateOGTotal;
 async function saveOG(id){
+  const isNew=(id==null||id==='null');
+  if(isNew){ if(!puedeCrearOG()){ toast('No tenés permiso para crear una OG.'); return; } }
+  else { if(!puedeEditarOG(ogById(id))){ toast('Esta OG no es tuya: no podés editarla.'); return; } }
   // El Diccionario es la única fuente de verdad: proveedor y artículos tienen que existir ahí
   // (cargados a mano en Diccionario, o sincronizados desde Tango) antes de poder usarse en una OG.
   const provRaw=(document.getElementById('og_proveedor').value||'').trim();
@@ -3876,7 +3982,6 @@ async function saveOG(id){
     desvio:gv('og_desvio'), desvio_txt:gv('og_desvio_txt'), alcance:gv('og_alcance'), observaciones:gv('og_obs'),
     items };
   obj.monto_total = items.length ? items.reduce((a,it)=>a+(it.cant*it.precio_unit),0) : (gv('og_monto')===''?null:+gv('og_monto'));
-  const isNew=(id==null||id==='null');
   try{
     if(DEMO_MODE){
       if(isNew){ obj.id=Math.max(0,...mem.ogs.map(r=>+r.id||0))+1; obj.numero=String(Math.max(1999,...(mem.ogs||[]).map(x=>+x.numero||0))+1); mem.ogs.unshift(obj); }
@@ -3895,6 +4000,7 @@ async function saveOG(id){
 window.saveOG=saveOG;
 function askAnularOG(id){
   const o=ogById(id);
+  if(!puedeEditarOG(o)){ toast('Esta OG no es tuya: no la podés anular.'); return; }
   if(pagosOf(id).length>0){ toast('No se puede anular: la OG tiene pagos. El tesorero debe eliminarlos primero.'); return; }
   openModal('Anular OG '+esc(o.numero),
     '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">La OG <strong>no se borra</strong>: queda registrada como <strong>Anulada</strong> (se mantiene la numeración consecutiva). ¿Confirmás?</p>',
@@ -3919,7 +4025,9 @@ window.confirmDelOG=confirmDelOG;
 
 /* ---- Certificados ---- */
 function openCert(ogId, id){
-  const o=ogById(ogId); const c = id!=null ? certsOf(ogId).find(x=>String(x.id)===String(id)) : null; const cur=c||{};
+  const o=ogById(ogId);
+  if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
+  const c = id!=null ? certsOf(ogId).find(x=>String(x.id)===String(id)) : null; const cur=c||{};
   const num = cur.numero || nextCertNum(o);
   const hoy=new Date().toISOString().slice(0,10);
   const hasItems = o && o.items && o.items.length;
@@ -3965,10 +4073,11 @@ window.openCert=openCert;
 function certUnidPreview(idx,cant){ const el=document.getElementById('ctav_'+idx), lab=document.getElementById('ctpct_'+idx); if(!el||!lab) return; const u=+el.value||0; const pct=cant?(u/cant*100):0; lab.textContent='= '+pct.toFixed(1).replace('.0','')+'%'; }
 window.certUnidPreview=certUnidPreview;
 async function saveCert(ogId, id){
-  if(!canCert()){ toast('No tenés permiso para cargar/editar certificados.'); return; }
+  const o=ogById(ogId);
+  if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
   const editando=(id!=null&&id!=='null');
   if(editando && pagosOf(ogId).length>0){ toast('La OG tiene pagos: no se puede editar el certificado. El tesorero debe eliminar el pago primero.'); return; }
-  const o=ogById(ogId); const hasItems = o && o.items && o.items.length;
+  const hasItems = o && o.items && o.items.length;
   const obj={ og_id:ogId, numero:document.getElementById('ct_num').value, fecha:document.getElementById('ct_fecha').value,
     observaciones:document.getElementById('ct_obs').value };
   if(id==null||id==='null') obj.numero = nextCertNum(o);   // recalcula al guardar (evita colisiones)
@@ -4000,13 +4109,14 @@ async function saveCert(ogId, id){
 }
 window.saveCert=saveCert;
 function delCert(id, ogId){
-  if(!canCert()){ toast('No tenés permiso para eliminar certificados.'); return; }
+  if(!puedeCertificarOG(ogById(ogId))){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
   if(pagosOf(ogId).length>0){ toast('La OG tiene pagos registrados. El tesorero debe eliminar el pago antes de tocar los certificados.'); return; }
   openModal('Eliminar certificado','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este certificado? (no queda registro)</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelCert('+id+','+ogId+')">Eliminar</button>');
 }
 window.delCert=delCert;
 async function confirmDelCert(id, ogId){
+  if(!puedeCertificarOG(ogById(ogId))){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
   if(pagosOf(ogId).length>0){ toast('La OG tiene pagos; no se puede eliminar el certificado.'); return; }
   if(DEMO_MODE){ mem.certificados=mem.certificados.filter(c=>String(c.id)!==String(id)); }
   else { await sbFetch('/og_certificados?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
@@ -4020,8 +4130,8 @@ window.confirmDelCert=confirmDelCert;
    No es costo: se excluye de lo pendiente de certificar/pagar y del informe de Seguimiento,
    pero NO se resta del total original de la OG (queda como referencia histórica). */
 function openCierre(ogId, idx){
-  if(!canEditOG()){ toast('Solo el comprador (o admin) puede cerrar saldo.'); return; }
   const o=ogById(ogId); if(!o) return;
+  if(!puedeEditarOG(o)){ toast('Esta OG no es tuya: no podés cerrar saldo.'); return; }
   idx = (idx==null||idx==='null') ? null : +idx;
   const it = idx!=null ? o.items[idx] : null;
   const hoy=new Date().toISOString().slice(0,10);
@@ -4057,9 +4167,9 @@ function openCierre(ogId, idx){
 }
 window.openCierre=openCierre;
 async function saveCierre(ogId, idx){
-  if(!canEditOG()){ toast('Solo el comprador (o admin) puede cerrar saldo.'); return; }
   idx = (idx==null||idx==='null') ? null : +idx;
   const o=ogById(ogId); if(!o) return;
+  if(!puedeEditarOG(o)){ toast('Esta OG no es tuya: no podés cerrar saldo.'); return; }
   const it = idx!=null ? o.items[idx] : null;
   const motivo=(document.getElementById('cz_motivo').value||'').trim();
   if(!motivo){ toast('Elegí un motivo de cierre'); return; }
@@ -4098,9 +4208,9 @@ async function saveCierre(ogId, idx){
 }
 window.saveCierre=saveCierre;
 async function delCierre(ogId, idx, k){
-  if(!canEditOG()){ toast('Solo el comprador (o admin) puede eliminar un cierre.'); return; }
   idx = (idx==null||idx==='null') ? null : +idx;
   const o=ogById(ogId); if(!o) return;
+  if(!puedeEditarOG(o)){ toast('Esta OG no es tuya: no podés eliminar un cierre.'); return; }
   try{
     if(idx!=null){
       const items=o.items.map((x,i)=> i===idx ? {...x, cierres:(x.cierres||[]).filter((_,j)=>j!==k)} : x);
