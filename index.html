@@ -1948,7 +1948,11 @@ function cierresOf(o, idx){ return idx!=null ? ((o.items[idx]||{}).cierres||[]) 
 function ogLiberado(og){ return certsOf(og.id).filter(c=>c.aprobacion==='SI' && c.estado==='Liberado').reduce((a,c)=>a+certMonto(c,og),0); }
 /* Pagos reales (tesorería) */
 function pagosOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId)); }
-function ogPagadoPct(og){ return Math.min(100, pagosOf(og.id).reduce((a,p)=>a+(+p.pct||0),0)); }
+// pago.pct es la proporción real de plata que salió de caja (necesaria para que el asiento cierre);
+// si ese pago tuvo redondeo (Small Balance), el % que efectivamente "cierra" del lado de la OG es
+// distinto (mayor si se pagó de menos, menor si de más) — el Small Balance absorbe la diferencia.
+function pagoPctEfectivo(pago, og){ const p=(+pago.pct||0); return pago.ajuste_redondeo ? p-(+pago.ajuste_redondeo/ogTotal(og)*100) : p; }
+function ogPagadoPct(og){ return Math.min(100, pagosOf(og.id).reduce((a,p)=>a+pagoPctEfectivo(p,og),0)); }
 function ogPagado(og){ return ogTotal(og)*ogPagadoPct(og)/100; }
 function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   // moneda en la que se PACTÓ el precio
 // Moneda en la que efectivamente se PAGA (de qué caja sale la plata): la define la Condición de compra
