@@ -2603,7 +2603,7 @@ function asientoRows(ogs, opByOg){
 }
 window.asientoRows=asientoRows;
 function ogsFiltradas(){
-  return (mem.ogs||[]).filter(ogxPass);
+  return (mem.ogs||[]).filter(o=>!o.anulada).filter(ogxPass);
 }
 function exportAsientoExcel(){
   if(typeof XLSX==='undefined'){ toast('Para exportar necesitás conexión (se carga la librería).'); return; }
@@ -2653,7 +2653,7 @@ window.opToggleAll=opToggleAll; window.exportAsientoSelTango=exportAsientoSelTan
 /* ==================== TESORERÍA ==================== */
 function renderTesoreria(){
   const ogs=(mem.ogs||[]).slice();
-  const cola=ogs.filter(o=>ogPendPagoPct(o)>0.01);
+  const cola=ogs.filter(o=>!o.anulada && ogPendPagoPct(o)>0.01);   // anulada: no se paga nada por ella
   const totalAPagar=cola.reduce((a,o)=>a+ (ogTotal(o)*ogPendPagoPct(o)/100), 0);
   const hoyMes=new Date().toISOString().slice(0,7);
   const pagadoMesArs=cajaMovs('ARS').filter(p=>(p.fecha||'').slice(0,7)===hoyMes).reduce((a,p)=>a+(+p.importe_pago||0),0);
@@ -3162,7 +3162,7 @@ function exportAsientoOG(ogId){
 }
 function exportAsientoTodas(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const rows=asientoRows((mem.ogs||[]).slice());
+  const rows=asientoRows((mem.ogs||[]).filter(o=>!o.anulada));
   const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Asiento');
   XLSX.writeFile(wb,'Asiento_OG_'+new Date().toISOString().slice(0,10)+'.xlsx'); toast('Asiento generado');
 }
@@ -3248,7 +3248,7 @@ function asientoTangoSheets(ogs, opByOg){
 }
 function exportAsientoTango(ogId){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const ogs = ogId!=null ? [ogById(ogId)] : (mem.ogs||[]).filter(ogxPass);
+  const ogs = ogId!=null ? [ogById(ogId)] : (mem.ogs||[]).filter(o=>!o.anulada).filter(ogxPass);
   if(!ogs.length){ toast('No hay OG para exportar.'); return; }
   const s=asientoTangoSheets(ogs);
   const wb=XLSX.utils.book_new();
