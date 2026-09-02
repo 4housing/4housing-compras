@@ -3565,6 +3565,7 @@ function openPago(ogId){
     +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="pg_lugar_pago_txt" type="text" value="'+esc(o.lugar_pago==='Otra'?(o.lugar_pago_txt||''):'')+'" placeholder="Escribí la ubicación…"></div></div>'
     +'<div class="field" id="pg_tcField"><label>Tipo de cambio comprador (pesos por USD)</label><input id="pg_tc" type="number" step="0.01" value="'+esc(tc)+'" oninput="pgCalc()"><div id="pg_tcNote" style="font-size:11px;color:var(--muted);margin-top:3px">'+tcNoteInner(hoy,'pgUsarTcSugerido')+' Editable; se guarda para tener el equivalente en pesos del pago.</div></div>'
     +'<div id="pg_result" style="background:#eef2e6;border-radius:10px;padding:12px;font-size:13px;margin-top:6px"></div>'
+    +'<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;font-weight:600;color:var(--ink)"><input type="checkbox" id="pg_redondear" checked onchange="pgCalc()"> Redondear (si hay una diferencia chica, cerrar la OG y ajustar la caja) — si lo destildás, se registra como pago parcial y el resto queda pendiente</label>'
     +'<div class="field" style="margin-top:12px"><label>Observaciones</label><input id="pg_obs" type="text"></div>';
   openModal('Registrar pago · OG '+esc(o.numero), body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="savePago('+ogId+')">Registrar pago</button>');
@@ -3594,9 +3595,12 @@ function pgCalc(){
   const pct=ogTotal(o)? montoOG/ogTotal(o)*100 : 0;
   const pendMonto=ogPendPagoMonto(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
   const diffPend=montoOG-pendMonto; const tolMonto=ogTotal(o)*0.01;
+  const redondear=(document.getElementById('pg_redondear')||{}).checked;
   let ajusteTxt='';
   if(Math.abs(diffPend)>0.01 && Math.abs(diffPend)<=tolMonto){
-    ajusteTxt='<br><span style="color:var(--olive-deep)">Redondeo de caja: pagás '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{maximumFractionDigits:2})+' '+(diffPend>0?'de más':'de menos')+' respecto de lo pendiente — se carga como <strong>Small Balance</strong> contra Gastos varios Taller (52000005).</span>';
+    ajusteTxt = redondear
+      ? '<br><span style="color:var(--olive-deep)">Redondeo de caja: pagás '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{maximumFractionDigits:2})+' '+(diffPend>0?'de más':'de menos')+' respecto de lo pendiente — se carga como <strong>Small Balance</strong> contra Gastos varios Taller (52000005) y la OG queda saldada.</span>'
+      : '<br><span style="color:var(--olive-deep)">Pago parcial: quedan '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{maximumFractionDigits:2})+' pendientes para un pago posterior (no se ajusta la caja).</span>';
   } else if(diffPend>tolMonto){
     ajusteTxt='<br><span style="color:#b4554e">Supera lo pendiente en más del 1% de la OG — no se va a poder registrar así.</span>';
   }
@@ -3613,7 +3617,10 @@ async function savePago(ogId){
   const diffPend=montoOG-pendMonto;               // + = pagó de más, - = pagó de menos
   const tolMonto=ogTotal(o)*0.01;                 // tolerancia de redondeo de caja: 1% de la OG
   if(diffPend>tolMonto){ toast('El importe supera lo pendiente en más del 1% de la OG ('+(monOG==='USD'?'US$ ':'$ ')+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+')'); return; }
-  const ajusteRedondeo = Math.abs(diffPend)>0.01 ? diffPend : 0;   // dentro de tolerancia: se registra el monto real, con el ajuste aparte
+  const redondear=(document.getElementById('pg_redondear')||{}).checked;
+  // Dentro de tolerancia: si el tesorero tildó "Redondear", se registra el monto real con el ajuste aparte
+  // (Small Balance) y la OG queda saldada; si no, es un pago parcial genuino y el resto queda pendiente.
+  const ajusteRedondeo = (redondear && Math.abs(diffPend)>0.01) ? diffPend : 0;
   const pct=ogTotal(o)? montoOG/ogTotal(o)*100 : 0;
   const monPago=document.getElementById('pg_moneda').value;
   const tc=+document.getElementById('pg_tc').value||0;
