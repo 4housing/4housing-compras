@@ -74,10 +74,14 @@ a{color:var(--olive-deep);}
 .card-h h3{margin:0;font-size:15px;font-weight:700;}
 .card-h .meta{font-size:12px;color:var(--muted);font-weight:600;}
 table.grid{width:100%;border-collapse:collapse;}
-table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;}
+table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;position:relative;}
 table.grid td{padding:12px 16px;border-bottom:1px solid var(--line);font-size:10.5px;vertical-align:middle;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr:hover{background:#fbfaf3;}
+/* Columnas redimensionables (colResize, todas las tablas .grid): tirá del borde derecho de un encabezado. */
+table.grid th .col-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:3;}
+table.grid th .col-resizer:hover,table.grid th .col-resizer.active{background:rgba(95,122,78,.25);}
+table.grid.grid-fixed th{overflow:hidden;text-overflow:ellipsis;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
 .iconbtn{background:none;border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;color:var(--muted);display:inline-flex;}
 .iconbtn svg{width:15px;height:15px;}
@@ -445,6 +449,67 @@ const ESTADO_COLOR={
   'usd':'b-verde','pesos':'b-azul','compensación':'b-gris',
 };
 function badge(v){ const cls=ESTADO_COLOR[String(v||'').toLowerCase()]||'b-gris'; return '<span class="badge '+cls+'">'+esc(v)+'</span>'; }
+
+/* ===== Columnas redimensionables, para toda tabla <table class="grid"> de la app =====
+   La app re-renderiza cada vista reemplazando el HTML entero (no hay tablas persistentes),
+   así que en vez de cablear esto en cada render, un MutationObserver detecta cualquier tabla
+   .grid que aparezca en el DOM y le agrega los tiradores. El ancho de cada columna se guarda
+   en localStorage por "firma" de la tabla (sus encabezados), así se restaura solo la próxima
+   vez que se abra esa misma vista/pestaña (y sobrevive a recargar la página). */
+let COLRESIZE_DRAG=null;
+function colResizeSig(table){
+  const ths=[...table.querySelectorAll('thead th')].map(th=>(th.textContent||'').trim()).join('|');
+  let h=0; for(let i=0;i<ths.length;i++) h=(h*31+ths.charCodeAt(i))|0;
+  return 'colw:'+ths.length+':'+h;
+}
+function colResizeApplySaved(table){
+  let saved=null; try{ saved=JSON.parse(localStorage.getItem(colResizeSig(table))||'null'); }catch(e){}
+  if(!saved) return;
+  const ths=[...table.querySelectorAll('thead th')];
+  table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
+  ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+'px'; });
+}
+function colResizeSave(table, ths){
+  const widths={}; ths.forEach((th,i)=>{ const w=parseInt(th.style.width,10); if(w) widths[i]=w; });
+  try{ localStorage.setItem(colResizeSig(table), JSON.stringify(widths)); }catch(e){}
+}
+function colResizeInit(table){
+  if(table.dataset.colresizeInit) return; table.dataset.colresizeInit='1';
+  const ths=[...table.querySelectorAll('thead th')];
+  if(ths.length<2) return;
+  colResizeApplySaved(table);
+  ths.forEach(th=>{
+    const r=document.createElement('span');
+    r.className='col-resizer';
+    r.onmousedown=(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      if(table.style.tableLayout!=='fixed'){
+        ths.forEach(t=>{ t.style.width=t.getBoundingClientRect().width+'px'; });
+        table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
+      }
+      r.classList.add('active');
+      COLRESIZE_DRAG={ th, r, table, ths, startX:e.clientX, startW:th.getBoundingClientRect().width };
+      document.body.style.cursor='col-resize'; document.body.style.userSelect='none';
+    };
+    th.appendChild(r);
+  });
+}
+document.addEventListener('mousemove', e=>{
+  if(!COLRESIZE_DRAG) return;
+  const w=Math.max(32, COLRESIZE_DRAG.startW+(e.clientX-COLRESIZE_DRAG.startX));
+  COLRESIZE_DRAG.th.style.width=w+'px';
+});
+document.addEventListener('mouseup', ()=>{
+  if(!COLRESIZE_DRAG) return;
+  const {table, ths, r}=COLRESIZE_DRAG;
+  colResizeSave(table, ths);
+  r.classList.remove('active');
+  COLRESIZE_DRAG=null; document.body.style.cursor=''; document.body.style.userSelect='';
+});
+const colResizeObserver=new MutationObserver(()=>{
+  document.querySelectorAll('table.grid').forEach(t=>{ if(!t.dataset.colresizeInit) colResizeInit(t); });
+});
+colResizeObserver.observe(document.body, {childList:true, subtree:true});
 
 /* ================================================================
    ESQUEMAS DE LAS 5 VISTAS
@@ -2921,6 +2986,7 @@ function opsView(){
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
+let COLA_ROWS=[];   // última lista renderizada en "Pagos pendientes" (og + montos ya calculados), para el total marcado y el export por proveedor
 function colaView(colaAll){
   if(!colaAll.length) return '<div class="card"><div class="empty">No hay pagos pendientes. Todo lo liberado está pagado.</div></div>';
   xlfRegister('cola', { rows:()=>colaAll, onChange:renderTesoreria,
@@ -2939,17 +3005,23 @@ function colaView(colaAll){
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   // Tinte de fila según de qué caja sale la plata (no la moneda pactada): así el tesorero distingue de un vistazo.
   const TINTE={USD:'#f0f8f0', ARS:'#eef3fa'};
-  const rows=cola.map(o=>{
+  COLA_ROWS=cola.map(o=>{
     const mon=ogMonedaCode(o); const pend=ogTotal(o)*ogPendPagoPct(o)/100;
     const monPago=ogMonedaPagoCode(o);
-    const pagadoPct=ogPagadoPct(o);
     const tc=(o.tc_pesos!=null && o.tc_pesos!=='')?+o.tc_pesos:null;
     // Pendiente en cada moneda (equivalencia informativa). ARS estimado con el TC de la OG (el tesorero puede cambiarlo al pagar).
     let mUSD=null, mARS=null;
     if(mon==='USD'){ mUSD=pend; mARS = tc? pend*tc : null; }
     else { mARS=pend; mUSD = tc? pend/tc : null; }
+    return {o, mon, monPago, tc, mUSD, mARS};
+  });
+  const rows=COLA_ROWS.map(({o,mon,monPago,tc,mUSD,mARS})=>{
+    const pagadoPct=ogPagadoPct(o);
     const trStyle = monPago && TINTE[monPago] ? ' style="background:'+TINTE[monPago]+'"' : '';
+    // Monto que efectivamente sale de la caja (en la moneda de pago) — el que suma al total a erogar.
+    const montoPago = monPago==='USD'?mUSD:monPago==='ARS'?mARS:null;
     return '<tr'+trStyle+'>'
+      +'<td><input type="checkbox" class="colachk" value="'+o.id+'" data-monpago="'+(monPago||'')+'" data-monto="'+(montoPago!=null?montoPago:'')+'" checked onchange="colaRecalcTotal()"></td>'
       +'<td><strong>'+esc(o.numero)+'</strong></td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+(o.clasif_og?esc(o.clasif_og):esc(o.objeto||''))+'</td>'
@@ -2964,10 +3036,70 @@ function colaView(colaAll){
       +'<td><div class="row-actions"><button class="btn ghost sm" onclick="verRespaldo('+o.id+')">Ver respaldo</button>'
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
       +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="12" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
-  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }).join('') || '<tr><td colspan="13" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<div id="colaTotalBar" style="padding:14px 20px;border-top:1px solid var(--line);background:#f8f7f1;font-size:13px">'+colaTotalBarInner()+'</div></div>';
 }
+function colaToggleAll(cb){ document.querySelectorAll('.colachk').forEach(c=>{ c.checked=cb.checked; }); colaRecalcTotal(); }
+window.colaToggleAll=colaToggleAll;
+// Arma el texto del total a erogar a partir de una lista de {monpago, monto}. nTot = cantidad total de filas (marcadas o no).
+function colaTotalHtml(items, nTot){
+  let ars=0, usd=0, sinTc=0;
+  items.forEach(it=>{
+    if(!it.monpago) return;                          // compensación: no mueve caja
+    if(it.monto==null){ sinTc++; return; }            // sin TC cargado: no se puede convertir, se avisa aparte
+    if(it.monpago==='USD') usd+=(+it.monto||0); else if(it.monpago==='ARS') ars+=(+it.monto||0);
+  });
+  return '<strong>Total a erogar (marcados '+items.length+' de '+nTot+'):</strong> $ '+ars.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' · US$ '+usd.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})
+    +(sinTc?' · <span style="color:#b0584f">'+sinTc+' sin cotización cargada (no entra en el total)</span>':'');
+}
+// Total inicial (todo tildado por default): se calcula directo de COLA_ROWS, sin depender del DOM.
+function colaTotalBarInner(){
+  const items=COLA_ROWS.map(r=>({ monpago:r.monPago, monto:r.monPago==='USD'?r.mUSD:r.monPago==='ARS'?r.mARS:null }));
+  return colaTotalHtml(items, COLA_ROWS.length);
+}
+// Recalcula el total a erogar sumando lo tildado (lee el DOM directo, sin re-renderizar toda la tabla).
+function colaRecalcTotal(){
+  const bar=document.getElementById('colaTotalBar'); if(!bar) return;
+  const chks=[...document.querySelectorAll('.colachk')];
+  const items=chks.filter(c=>c.checked).map(c=>({ monpago:c.dataset.monpago, monto:c.dataset.monto===''?null:+c.dataset.monto }));
+  bar.innerHTML=colaTotalHtml(items, chks.length);
+}
+window.colaRecalcTotal=colaRecalcTotal;
+// Excel por proveedor: cada OP marcada, agrupada por proveedor con subtotal, para armar los sobres de pago.
+function exportColaPorProveedor(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  const ids=Array.from(document.querySelectorAll('.colachk:checked')).map(c=>c.value);
+  if(!ids.length){ toast('Tildá al menos una OG.'); return; }
+  const marcadas=COLA_ROWS.filter(r=>ids.includes(String(r.o.id)));
+  const byProv={};
+  marcadas.forEach(r=>{
+    const key=r.o.proveedor_cod||r.o.proveedor||'(sin proveedor)';
+    (byProv[key]=byProv[key]||{nombre:r.o.proveedor||key, rows:[]}).rows.push(r);
+  });
+  const r2=x=>Math.round((+x||0)*100)/100;
+  const aoa=[['Proveedor','OG','Clasificación','Condición de compra','Se paga en','Monto ARS','Monto USD']];
+  let totArs=0, totUsd=0;
+  Object.keys(byProv).sort((a,b)=>a.localeCompare(b,'es')).forEach(key=>{
+    const g=byProv[key]; let subArs=0, subUsd=0;
+    g.rows.forEach(r=>{
+      const montoArs = r.monPago==='ARS' ? r2(r.mARS) : null;
+      const montoUsd = r.monPago==='USD' ? r2(r.mUSD) : null;
+      if(montoArs) subArs+=montoArs; if(montoUsd) subUsd+=montoUsd;
+      aoa.push([g.nombre, r.o.numero||'', r.o.clasif_og||'', r.o.condicion||'', r.monPago==='USD'?'Dólares':r.monPago==='ARS'?'Pesos':'Compensación', montoArs||'', montoUsd||'']);
+    });
+    aoa.push(['Subtotal '+g.nombre, '', '', '', '', r2(subArs)||'', r2(subUsd)||'']);
+    aoa.push([]);
+    totArs+=subArs; totUsd+=subUsd;
+  });
+  aoa.push(['TOTAL GENERAL', '', '', '', '', r2(totArs)||'', r2(totUsd)||'']);
+  const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pagos por proveedor');
+  XLSX.writeFile(wb, 'Pagos_por_proveedor_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  toast('Excel generado: '+marcadas.length+' OG, '+Object.keys(byProv).length+' proveedores');
+}
+window.exportColaPorProveedor=exportColaPorProveedor;
 
 function verRespaldo(ogId){
   const o=ogById(ogId); const cs=certsOf(ogId);
