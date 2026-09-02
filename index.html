@@ -82,6 +82,7 @@ table.grid tbody tr:hover{background:#fbfaf3;}
 table.grid th .col-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:3;}
 table.grid th .col-resizer:hover,table.grid th .col-resizer.active{background:rgba(95,122,78,.25);}
 table.grid.grid-fixed th{overflow:hidden;text-overflow:ellipsis;}
+.tbl-hscroll{overflow-x:auto;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
 .iconbtn{background:none;border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;color:var(--muted);display:inline-flex;}
 .iconbtn svg{width:15px;height:15px;}
@@ -473,8 +474,17 @@ function colResizeSave(table, ths){
   const widths={}; ths.forEach((th,i)=>{ const w=parseInt(th.style.width,10); if(w) widths[i]=w; });
   try{ localStorage.setItem(colResizeSig(table), JSON.stringify(widths)); }catch(e){}
 }
+// Envuelve la tabla en un contenedor con scroll horizontal si todavía no lo tiene (ej. las que ya
+// traían ".dic-scroll" del Diccionario quedan como estaban). Sin esto, una tabla más ancha que la
+// card queda recortada sin forma de llegar a las últimas columnas (.card tiene overflow:hidden).
+function tblEnsureHScroll(table){
+  if(table.closest('.dic-scroll,.tbl-hscroll')) return;
+  const w=document.createElement('div'); w.className='tbl-hscroll';
+  table.parentNode.insertBefore(w, table); w.appendChild(table);
+}
 function colResizeInit(table){
   if(table.dataset.colresizeInit) return; table.dataset.colresizeInit='1';
+  tblEnsureHScroll(table);
   const ths=[...table.querySelectorAll('thead th')];
   if(ths.length<2) return;
   colResizeApplySaved(table);
