@@ -1938,6 +1938,7 @@ function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   
 // + el tilde "pago_usd", no la Moneda de la OG (se puede pactar en dólares y pagar su equivalente en pesos, o al revés).
 // null = la condición no mueve caja (compensación): no hay "moneda de pago".
 function ogMonedaPagoCode(og){ return COND_SIN_CAJA.includes(og.condicion) ? null : (og.pago_usd ? 'USD' : 'ARS'); }
+function ogLugarPago(og){ return (og.lugar_pago||og.lugar_pago_txt||'').trim(); }   // texto libre "prevalece" solo si no hay opción elegida (mismo criterio que Desvío)
 function ogLiberadoPct(og){ const t=ogTotal(og); return t? ogLiberado(og)/t*100 : 0; }
 /* Anticipo y tope pagable */
 function ogAnticipoMonto(og){ if(og.condicion!=='CON ANTICIPO') return 0; return ogTotal(og)*((+og.anticipo_pct||0)/100); }
@@ -2890,6 +2891,7 @@ function opColVal(p,col){
   if(col==='clasif') return o.clasif_og||'';
   if(col==='solp') return (o.solp!=null&&o.solp!=='')?String(o.solp):'(sin SOLP)';
   if(col==='comprador') return o.comprador||'';
+  if(col==='lugar') return ogLugarPago(o)||'(sin lugar)';
   if(col==='medio') return p.medio||'';
   if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
   if(col==='asiento') return (p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente';
@@ -2967,6 +2969,7 @@ function opsView(){
       +'<td>'+esc(o.clasif_og||'')+'</td>'
       +'<td>'+esc(o.solp!=null&&o.solp!==''?o.solp:'—')+'</td>'
       +'<td style="font-size:11px">'+esc(o.comprador||'')+'</td>'
+      +'<td style="font-size:11px">'+esc(ogLugarPago(o)||'—')+'</td>'
       +'<td>'+esc(p.medio||'')+'</td>'
       +'<td style="font-size:11px">'+esc(caja)+'</td>'
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
@@ -2974,8 +2977,8 @@ function opsView(){
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
       +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')+' <input type="text" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento" title="N° de asiento en Tango, una vez importado y corregidos los auxiliares" onblur="guardarAsientoOP('+p.id+',this.value)" onkeydown="if(event.key===\'Enter\') this.blur()" style="width:78px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px;margin-top:2px;display:block"></td>'
       +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="15" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
-  const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="11" style="text-align:right">Total mostrado</td>'
+  }).join('') || '<tr><td colspan="16" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
+  const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="12" style="text-align:right">Total mostrado</td>'
     +'<td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td>'
     +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td></td><td></td></tr>';
   const th=(label,col)=>{ if(!col) return '<th style="white-space:nowrap">'+label+'</th>';
@@ -2984,7 +2987,7 @@ function opsView(){
   const hayFiltro=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
   const limpiar = hayFiltro ? '<button class="btn ghost sm" style="margin-left:auto" onclick="opFilterClearAll()">Limpiar filtros</button>' : '';
   return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Cargá el N° de asiento de Tango una vez que lo corregiste e importaste, para llevar el control de qué quedó realmente asentado. Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Lugar de pago','lugar')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
 
 let COLA_ROWS=[];   // última lista renderizada en "Pagos pendientes" (og + montos ya calculados), para el total marcado y el export por proveedor
@@ -2999,6 +3002,7 @@ function colaView(colaAll){
       if(col==='condicion') return o.condicion||'(sin condición)';
       if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
       if(col==='monpago'){ const mp=ogMonedaPagoCode(o); return mp==='USD'?'USD':mp==='ARS'?'Pesos':'Compensación'; }
+      if(col==='lugar') return ogLugarPago(o)||'(sin lugar)';
       return '';
     } });
   const cola=colaAll.filter(o=>xlfPass('cola',o));
@@ -3031,15 +3035,16 @@ function colaView(colaAll){
       +'<td style="font-size:11px">'+esc(o.condicion||'—')+'</td>'
       +'<td>'+badge(mon==='USD'?'USD':'Pesos')+'</td>'
       +'<td>'+(monPago?badge(monPago==='USD'?'USD':'Pesos'):badge('Compensación'))+'</td>'
+      +'<td style="font-size:11px">'+esc(ogLugarPago(o)||'—')+'</td>'
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
       +'<td><div class="row-actions"><button class="btn ghost sm" onclick="verRespaldo('+o.id+')">Ver respaldo</button>'
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
       +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="13" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+  }).join('') || '<tr><td colspan="14" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
   return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+xlfTh('cola','Lugar de pago','lugar')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div id="colaTotalBar" style="padding:14px 20px;border-top:1px solid var(--line);background:#f8f7f1;font-size:13px">'+colaTotalBarInner()+'</div></div>';
 }
 function colaToggleAll(cb){ document.querySelectorAll('.colachk').forEach(c=>{ c.checked=cb.checked; }); colaRecalcTotal(); }
@@ -3080,7 +3085,7 @@ function exportColaPorProveedor(){
     (byProv[key]=byProv[key]||{nombre:r.o.proveedor||key, rows:[]}).rows.push(r);
   });
   const r2=x=>Math.round((+x||0)*100)/100;
-  const aoa=[['Proveedor','OG','Clasificación','Condición de compra','Se paga en','Monto ARS','Monto USD']];
+  const aoa=[['Proveedor','OG','Clasificación','Condición de compra','Se paga en','Lugar de pago','Monto ARS','Monto USD']];
   let totArs=0, totUsd=0;
   Object.keys(byProv).sort((a,b)=>a.localeCompare(b,'es')).forEach(key=>{
     const g=byProv[key]; let subArs=0, subUsd=0;
@@ -3088,13 +3093,13 @@ function exportColaPorProveedor(){
       const montoArs = r.monPago==='ARS' ? r2(r.mARS) : null;
       const montoUsd = r.monPago==='USD' ? r2(r.mUSD) : null;
       if(montoArs) subArs+=montoArs; if(montoUsd) subUsd+=montoUsd;
-      aoa.push([g.nombre, r.o.numero||'', r.o.clasif_og||'', r.o.condicion||'', r.monPago==='USD'?'Dólares':r.monPago==='ARS'?'Pesos':'Compensación', montoArs||'', montoUsd||'']);
+      aoa.push([g.nombre, r.o.numero||'', r.o.clasif_og||'', r.o.condicion||'', r.monPago==='USD'?'Dólares':r.monPago==='ARS'?'Pesos':'Compensación', ogLugarPago(r.o)||'', montoArs||'', montoUsd||'']);
     });
-    aoa.push(['Subtotal '+g.nombre, '', '', '', '', r2(subArs)||'', r2(subUsd)||'']);
+    aoa.push(['Subtotal '+g.nombre, '', '', '', '', '', r2(subArs)||'', r2(subUsd)||'']);
     aoa.push([]);
     totArs+=subArs; totUsd+=subUsd;
   });
-  aoa.push(['TOTAL GENERAL', '', '', '', '', r2(totArs)||'', r2(totUsd)||'']);
+  aoa.push(['TOTAL GENERAL', '', '', '', '', '', r2(totArs)||'', r2(totUsd)||'']);
   const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Pagos por proveedor');
   XLSX.writeFile(wb, 'Pagos_por_proveedor_'+new Date().toISOString().slice(0,10)+'.xlsx');
