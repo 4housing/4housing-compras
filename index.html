@@ -2470,15 +2470,22 @@ function asientoRows(ogs, opByOg){
     const pagosOG=(opByOg&&opByOg[o.id])||[null];   // [null] = sin pago puntual, se toma el 100% de la OG
     pagosOG.forEach(pago=>{
       const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;
-      const ajuste = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos)
-      const pctGasto = ajuste ? pct-(ajuste/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
+      const ajusteAgree = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos), en la moneda pactada
+      const pctGasto = ajusteAgree ? pct-(ajusteAgree/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
       const opByOgLey = pago ? {[o.id]:pago.op_numero} : opByOg;
       const fecha=o.fecha?fmtDate(o.fecha):'';
+      // Moneda del asiento: la que el tesorero indicó al emitir esta OP (pago.moneda_pago), no la moneda pactada de la OG.
+      const pgReal=pago||pagosOf(o.id)[0];
+      const monAgree=ogMonedaCode(o);
+      const monPago=(pgReal&&pgReal.moneda_pago)||ogMonedaPagoCode(o)||monAgree;
+      const tcUsado=(pgReal&&pgReal.tc!=null&&pgReal.tc!=='')?+pgReal.tc:((o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null);
+      const aMonPago=m=>{ if(monAgree===monPago||!tcUsado) return m; return monAgree==='USD'? m*tcUsado : m/tcUsado; };
+      const ajuste=aMonPago(ajusteAgree);
       const items=(o.items&&o.items.length)?o.items:[null];
       items.forEach(it=>{
         const esOG=it===null;
         const im=esOG?{cuenta_cod:'',cuenta:'',eerr:'',aux03:'',aux04:'',aux07:'',aux08:''}:imputacion(it);
-        const imp=(esOG?ogTotal(o):itemTotal(it))*pctGasto/100;
+        const imp=aMonPago((esOG?ogTotal(o):itemTotal(it))*pctGasto/100);
         const r=new Array(ASIENTO_COLS.length).fill('');
         r[0]=fecha; r[1]='EGRESO';
         r[2]=im.cuenta_cod||''; r[3]=im.cuenta||'';
@@ -2505,9 +2512,8 @@ function asientoRows(ogs, opByOg){
         rows.push(ar);
       }
       // contrapartida por OG (caja según la moneda en que se pagó esta OP; si no hay pago, CAJA PESOS 2), por el importe efectivamente pagado
-      const tot=ogTotal(o)*pct/100;
-      const pgReal=pago||pagosOf(o.id)[0];
-      const caja = pgReal ? CAJAS[pgReal.moneda_pago] : {cod:CONTRAPARTIDA.cod, nombre:CONTRAPARTIDA.nombre};
+      const tot=aMonPago(ogTotal(o)*pct/100);
+      const caja = CAJAS[monPago]||{cod:CONTRAPARTIDA.cod, nombre:CONTRAPARTIDA.nombre};
       const cr=new Array(ASIENTO_COLS.length).fill('');
       cr[0]=fecha; cr[1]='EGRESO'; cr[2]=caja.cod; cr[3]=caja.nombre;
       cr[14]=o.proveedor_cod||''; cr[15]=o.proveedor||''; cr[19]=o.numero||'';
@@ -3039,18 +3045,27 @@ function asientoTangoSheets(ogs, opByOg){
     const multi=pagosOG.length>1;                                 // 2+ pagos de la MISMA OG seleccionados juntos: hay que separarlos en asientos distintos
     pagosOG.forEach(pago=>{
       const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;   // % de la OG que cubre ESTE pago (viene de tesorería)
-      const ajuste = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos)
-      const pctGasto = ajuste ? pct-(ajuste/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
+      const ajusteAgree = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos), en la moneda pactada (monAgree)
+      const pctGasto = ajusteAgree ? pct-(ajusteAgree/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
       const id = multi ? (o.numero||o.id)+'-OP'+(pago&&pago.op_numero!=null?pago.op_numero:'') : (o.numero||o.id); // SUPUESTO: si hay 2+ pagos de la misma OG en la misma exportación, se compone el Identificador con "-OP" para no duplicar filas en Tango; confirmar con Axoft si acepta identificador alfanumérico.
       const opByOgLey = pago ? {[o.id]:pago.op_numero} : opByOg;  // para que la leyenda siga mostrando "OP N - ..."
-      const monCode=ogMonedaCode(o)==='USD'?'DOL':'PES';
+      // Moneda del asiento: la que el tesorero indicó al emitir esta OP (pago.moneda_pago), no la moneda pactada de la OG.
+      // Sin pago puntual (preview desde "Ver imputación"): se usa el último pago real de la OG, o si no hay ninguno, la propuesta por default (tilde "Se paga en dólar billete").
+      const pgReal=pago||pagosOf(o.id)[0];
+      const monAgree=ogMonedaCode(o);                                       // moneda en la que están expresados ogTotal/itemTotal
+      const monPago=(pgReal&&pgReal.moneda_pago)||ogMonedaPagoCode(o)||monAgree;
+      const monCode=monPago==='USD'?'DOL':'PES';
+      const tcUsado=(pgReal&&pgReal.tc!=null&&pgReal.tc!=='')?+pgReal.tc:((o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null);
+      // Convierte un monto expresado en monAgree a la moneda real del asiento (monPago). Sin TC: mejor esfuerzo, no convierte.
+      const aMonPago=m=>{ if(monAgree===monPago||!tcUsado) return m; return monAgree==='USD'? m*tcUsado : m/tcUsado; };
+      const ajuste=aMonPago(ajusteAgree);
       let fecha=o.fecha||''; try{ if(/^\d{4}-\d{2}-\d{2}/.test(o.fecha)) fecha=new Date(o.fecha+'T00:00:00'); }catch(e){}
       const concepto=_leyCaja(o,opByOgLey);   // Concepto cabecera: OP - COD PROV - OG (mismo estilo que la leyenda)
       cab.push([id, fecha, ASIENTO_CLASE, ASIENTO_TIPO_CN, ASIENTO_ESTADO_DEF, monCode, concepto, '', (o.solp!=null?o.solp:''), (o.numero||''), '', 'No', '']);
       // renglones de gasto (uno por renglón de la OG, prorrateado por el % efectivamente pagado en esta OP, sin contar el redondeo) → al DEBE
       let nro=0;
       (o.items||[]).forEach(it=>{
-        const im=imputacion(it); const imp=itemTotal(it)*pctGasto/100;
+        const im=imputacion(it); const imp=aMonPago(itemTotal(it)*pctGasto/100);
         nro++;
         const leyenda=_leyRenglon(o,it,opByOgLey);
         ren.push([id, nro, im.cuenta_cod||'', imp, '', fecha, leyenda, '', '', 'No', '']);
@@ -3073,13 +3088,12 @@ function asientoTangoSheets(ogs, opByOg){
         const c=EERR_COD['K) ESTRUCTURA']||''; aux.push([id,nro,'02','EERR',c,'K) ESTRUCTURA',100,ajuste,leyendaAjuste]);
       }
       // contrapartida de caja (según lo efectivamente pagado en esta OP, no el total de la OG) → al HABER
-      const tot=ogTotal(o)*pct/100;
-      const pgReal=pago||pagosOf(o.id)[0];
-      const caja = pgReal&&CAJAS[pgReal.moneda_pago] ? CAJAS[pgReal.moneda_pago] : (monCode==='DOL'?CAJAS.USD:CAJAS.ARS);
+      const tot=aMonPago(ogTotal(o)*pct/100);
+      const caja = CAJAS[monPago]||CAJAS.ARS;
       nro++;
       ren.push([id, nro, caja.cod, '', tot, fecha, _leyCaja(o,opByOgLey), '', '', 'No', '']);
-      // cotización (solo si el asiento es en dólares) → SUPUESTO: usa el TC de la OG
-      if(monCode==='DOL'){ const tc=o.tc_pesos||o.tc||''; cot.push([id,'DOL','COTIZACIÓN',tc,'No','']); }
+      // cotización (solo si el asiento quedó en dólares) → TC efectivamente usado en el pago (o el de la OG si no hay pago puntual)
+      if(monCode==='DOL' && tcUsado){ cot.push([id,'DOL','COTIZACIÓN',tcUsado,'No','']); }
     });
   });
   return {cab,ren,cot,aux};
