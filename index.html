@@ -1956,6 +1956,10 @@ function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   
 // null = la condición no mueve caja (compensación): no hay "moneda de pago".
 function ogMonedaPagoCode(og){ return COND_SIN_CAJA.includes(og.condicion) ? null : (og.pago_usd ? 'USD' : 'ARS'); }
 function ogLugarPago(og){ return (og.lugar_pago==='Otra' ? og.lugar_pago_txt : og.lugar_pago) || og.lugar_pago_txt || og.lugar_pago || ''; }
+// Igual criterio, pero para un pago puntual ya registrado (el tesorero puede confirmar/cambiar el lugar al emitir la OP,
+// distinto del default de la OG si ese pago en particular se hizo en otro lado).
+function pagoLugarPago(p){ return (p.lugar_pago==='Otra' ? p.lugar_pago_txt : p.lugar_pago) || p.lugar_pago_txt || p.lugar_pago || ''; }
+function lugarPagoOpts(sel){ return LUGAR_PAGO_OPC.map(x=>'<option'+(x===sel?' selected':'')+'>'+esc(x)+'</option>').join(''); }
 function ogLiberadoPct(og){ const t=ogTotal(og); return t? ogLiberado(og)/t*100 : 0; }
 /* Anticipo y tope pagable */
 function ogAnticipoMonto(og){ if(og.condicion!=='CON ANTICIPO') return 0; return ogTotal(og)*((+og.anticipo_pct||0)/100); }
@@ -2908,7 +2912,7 @@ function opColVal(p,col){
   if(col==='clasif') return o.clasif_og||'';
   if(col==='solp') return (o.solp!=null&&o.solp!=='')?String(o.solp):'(sin SOLP)';
   if(col==='comprador') return o.comprador||'';
-  if(col==='lugar') return ogLugarPago(o)||'(sin lugar)';
+  if(col==='lugar') return pagoLugarPago(p)||ogLugarPago(o)||'(sin lugar)';   // el que se cargó al registrar ESTE pago; si es viejo y no lo tiene, el default de la OG
   if(col==='medio') return p.medio||'';
   if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
   if(col==='asiento') return (p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente';
@@ -2986,7 +2990,7 @@ function opsView(){
       +'<td>'+esc(o.clasif_og||'')+'</td>'
       +'<td>'+esc(o.solp!=null&&o.solp!==''?o.solp:'—')+'</td>'
       +'<td style="font-size:11px">'+esc(o.comprador||'')+'</td>'
-      +'<td style="font-size:11px">'+esc(ogLugarPago(o)||'—')+'</td>'
+      +'<td style="font-size:11px">'+esc(pagoLugarPago(p)||ogLugarPago(o)||'—')+'</td>'
       +'<td>'+esc(p.medio||'')+'</td>'
       +'<td style="font-size:11px">'+esc(caja)+'</td>'
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
@@ -3505,6 +3509,7 @@ function exportPagoOP(pagoId){
   campo(14,y,'Fecha:', fmtDate(p.fecha)); campo(110,y,'OG relacionada:', o.numero||'—'); y+=6;
   campo(14,y,'Proveedor:', (o.proveedor_cod?o.proveedor_cod+' — ':'')+(o.proveedor||'—')); y+=6;
   campo(14,y,'SOLP:', o.solp!=null&&o.solp!==''?String(o.solp):'—'); campo(110,y,'Comprador:', o.comprador||'—'); y+=6;
+  campo(14,y,'Lugar de pago:', pagoLugarPago(p)||ogLugarPago(o)||'—'); y+=6;
   campo(14,y,'Centro de costo:', clasifTxt); y+=6;
   const cajaNom=CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:(p.moneda_pago||'—');
   campo(14,y,'Medio de pago:', p.medio||'—'); campo(110,y,'Caja / cuenta:', cajaNom); y+=6;
@@ -3552,6 +3557,8 @@ function openPago(ogId){
     +'<div class="field"><label>Fecha de pago</label><input id="pg_fecha" type="date" value="'+hoy+'" onchange="pgFechaChanged()"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Moneda de pago</label><select id="pg_moneda" onchange="pgCalc()"><option value="ARS"'+(monPagoDef==='ARS'?' selected':'')+'>Pesos (CAJA PESOS PROY)</option><option value="USD"'+(monPagoDef==='USD'?' selected':'')+'>Dólares (CAJA DOLARES PROY)</option></select></div>'
     +'<div class="field"><label>Medio de pago</label><select id="pg_medio"><option>Efectivo</option><option>Transferencia</option><option>Cheque</option></select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Lugar de pago</label><select id="pg_lugar_pago">'+lugarPagoOpts(o.lugar_pago||'La Huella')+'</select></div>'
+    +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="pg_lugar_pago_txt" type="text" value="'+esc(o.lugar_pago==='Otra'?(o.lugar_pago_txt||''):'')+'" placeholder="Escribí la ubicación…"></div></div>'
     +'<div class="field" id="pg_tcField"><label>Tipo de cambio comprador (pesos por USD)</label><input id="pg_tc" type="number" step="0.01" value="'+esc(tc)+'" oninput="pgCalc()"><div id="pg_tcNote" style="font-size:11px;color:var(--muted);margin-top:3px">'+tcNoteInner(hoy,'pgUsarTcSugerido')+' Editable; se guarda para tener el equivalente en pesos del pago.</div></div>'
     +'<div id="pg_result" style="background:#eef2e6;border-radius:10px;padding:12px;font-size:13px;margin-top:6px"></div>'
     +'<div class="field" style="margin-top:12px"><label>Observaciones</label><input id="pg_obs" type="text"></div>';
@@ -3613,6 +3620,8 @@ async function savePago(ogId){
     fecha:document.getElementById('pg_fecha').value, pct,
     moneda_og:monOG, moneda_pago:monPago, tc:(tc||null),
     medio:document.getElementById('pg_medio').value, caja_cod:CAJAS[monPago].cod,
+    lugar_pago:document.getElementById('pg_lugar_pago').value,
+    lugar_pago_txt:document.getElementById('pg_lugar_pago_txt').value,
     sin_caja: COND_SIN_CAJA.includes(o.condicion),
     importe_pago:importe, ajuste_redondeo:(ajusteRedondeo||null), observaciones:document.getElementById('pg_obs').value };
   try{
