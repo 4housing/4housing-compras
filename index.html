@@ -442,6 +442,7 @@ const ESTADO_COLOR={
   'certificada':'b-verde','en certificación':'b-azul','abierta':'b-gris','liberado':'b-verde','anulada':'b-rojo','cerrada c/saldo':'b-ambar',
   'vencida':'b-rojo','por vencer':'b-ambar','proyectada':'b-azul','sin fecha':'b-gris','cumplida':'b-verde',
   'desmontaje':'b-ambar','transporte':'b-azul','montaje':'b-verde',
+  'usd':'b-verde','pesos':'b-azul','compensación':'b-gris',
 };
 function badge(v){ const cls=ESTADO_COLOR[String(v||'').toLowerCase()]||'b-gris'; return '<span class="badge '+cls+'">'+esc(v)+'</span>'; }
 
@@ -483,7 +484,7 @@ const SCHEMAS = {
     ],
   },
   tesoreria: {
-    title:'Tesorería', sub:'Cola de pagos, arqueo de caja (pesos y dólares) y asiento', custom:true,
+    title:'Tesorería', sub:'Pagos pendientes, arqueo de caja (pesos y dólares) y asiento', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10h19"/><circle cx="12" cy="14.5" r="1.6"/></svg>',
   },
   seguimiento: {
@@ -1805,8 +1806,16 @@ function dicTh(tabKey, label, col){
 const COSTEO_OPC=["ABERTURAS", "ACERO / HIERRO", "AISLACION / REV", "CERTIFICACION", "CLIMATIZACION", "COCINA", "CONSUMIBLES", "DESVIO", "EQUIPAMIENTO", "EST MODULAR", "ESTRUCTURA", "GC AISLACION", "GC AMOBLAMIENTO", "GC AREN Y PINTU", "GC ARENADO  Y PINTURA", "GC ART SANITARIOS", "GC ART. ILUMINA", "GC ART. ILUMINACION", "GC ASERRADERO", "GC CARPINTERIA", "GC CHAPA", "GC CORRALON", "GC ELECTRODOMES", "GC EQUIPAMIENTO", "GC ESTR MODULAR", "GC ESTRUCT MODULAR", "GC HERRAJES", "GC HERRERIA", "GC HIERROS", "GC HONORARIOS", "GC INS ELECTRIC", "GC INS GAS", "GC INS SANITARI", "GC INS TERMOMEC", "GC INST ELECTRICA", "GC INST GAS", "GC INST SANITARIA", "GC INST TERMOMECANICA", "GC LOGISTICA", "GC MONTAJE", "GC OBRA CIVIL", "GC OBRA SECA", "GC PANELES", "GC PISO", "GC POSVENTA", "GC REVESTIMIENT", "GC REVESTIMIENTO", "GC SANITARIOS", "GC SERVICIOS", "GC VIDRIO Y ESP", "GC VIDRIOS Y ESPEJOS", "INFRAESTRUCTURA", "LOGIST PERSONAL", "LOGISTICA", "LOGISTICA INTER", "MO EQUIPAMIENTO", "MO INST ELECTRI", "MO OBRA CIVIL", "MO REVESTIMIENT", "MONTAJE", "PINTURA", "POLIZA SEGURO", "POST VENTA", "SANITARIO"];
 const ESTRUCTURA_OPC=["ACOPIO", "ALQ CONT 3ROS", "ALQUILERES", "BIENES DE USO", "COTO", "ENERG ELECT", "FOOD&BEV", "GASOIL", "GASTOS DTM", "GC MANTENIMIENT", "GS LIMPIEZA", "GS VAR OFICINA", "GS VAR TALLER", "GTO COMERCIAL", "GTO PUBLICIDAD", "GTOS BANCARIOS", "GTOS MANT MODUL", "GTOS MANT REEFE", "GTOS TRANSP ALQ", "HERRAMIENTAS", "HONOR CONTABLES", "HONOR ESCRIBANO", "HONOR LEGALES", "HONOR OTROS", "INVERSION", "LIBRERIA", "LICENCIAS", "MANTEN BS USO", "MEDIC LAB PREP", "MENSAJERIA", "MOVILIDAD COMBU", "MUEBLES Y UTILE", "PATENTES", "PEAJES", "PROVEEDORES", "RECOL RESIDUOS", "REMISES", "RODADOS", "RRHH", "SEGURIDAD ALARM", "SEGUROS", "SISTEMAS", "STOCK NQN", "TELEFONO"];
 const POSTVENTA_OPC=["ABERTURAS", "ACERO / HIERRO", "AISLACION / REV", "CLIMATIZACION", "CUBIERTA", "DESVIO", "ELECTRICIDAD", "EQUIPAMIENTO", "ESTRUCTURA", "HERRERIA", "INST ELECTRICA", "LOGIST PERSONAL", "LOGISTICA", "MAT OBRA CIVIL", "MO INST CLIMATI", "MO INST ELECTRI", "MO REVESTIMIENT", "MONTAJE", "PINTURA", "PISO", "POST VENTA", "SANITARIO"];
-const CONDICION_OPC=["CON ANTICIPO", "CONTADO ARS", "CONTADO USD", "TRANSFERENCIA", "COMPENSACIÓN CLIENTE", "COMPENSACIÓN PROVEEDORES", "VER OBSERVACIONES"];
+const CONDICION_OPC=["CON ANTICIPO", "CONTADO", "TRANSFERENCIA", "COMPENSACIÓN CLIENTE", "COMPENSACIÓN PROVEEDORES", "VER OBSERVACIONES"];
 const COND_SIN_CAJA=["COMPENSACIÓN CLIENTE","COMPENSACIÓN PROVEEDORES"];  // no mueven caja
+// OGs viejas: "CONTADO ARS"/"CONTADO USD" eran dos condiciones separadas; ahora es una sola "CONTADO"
+// + el tilde "pago_usd" (se paga en dólar billete o no). Normaliza al vuelo lo que venga de la base/seed vieja.
+function ogNormalizeCondicion(o){
+  if(o.condicion==='CONTADO USD'){ o.condicion='CONTADO'; if(o.pago_usd==null) o.pago_usd=true; }
+  else if(o.condicion==='CONTADO ARS'){ o.condicion='CONTADO'; if(o.pago_usd==null) o.pago_usd=false; }
+  if(o.pago_usd==null) o.pago_usd=(o.moneda==='Extranjera');
+  return o;
+}
 const DESVIO_OPC=["Atraso que afecta obra", "Decision comercial", "Error computo costeo", "Error especificación técnica", "Error unidad de medida", "Material dañado", "No presupuestado", "Otros"];
 const MONEDA_OPC=["Corriente","Extranjera"];
 const MODULOS_OPC=["A00001 - GENERICO MODULO", "A00002 - GENERICO REEFER", "A00003 - STOCK BS AS", "A00004 - STOCK NQN", "A00005 - NO APLICA", "A00006 - MODULOS DE 3ROS", "A00007 - IF4346 RE BUILDING TRAILERS", "M00001 - AMBU 200804-1", "M00002 - AMFU 845146-8", "M00003 - AMFU 848078-5", "M00004 - AMFU 849125-0", "M00005 - AMFU 850929-8", "M00006 - AMFU 852102-0", "M00007 - AMFU 884514-2", "M00008 - AMFU 885809-4", "M00009 - AMFU 889877-5", "M00010 - AMZU 838073-9", "M00011 - AWSU 494620-1", "M00012 - CBHU 146645-9", "M00013 - CLHU 442667-6", "M00014 - CLHU 828379-0", "M00015 - CLHU 834894-6", "M00016 - CLHU 859573-5", "M00017 - CLHU 869604-7", "M00018 - CLHU 875113-9", "M00019 - CLHU 340475-4", "M00020 - CLHU812930-0", "M00021 - CLPU 341432-8", "M00022 - CLPU 341576-7", "M00023 - CLPU 350111-9", "M00024 - CMCU 552873-7", "M00025 - CMCU 553481-1", "M00026 - CRXU 174134-6", "M00027 - CSVU 209922-0", "M00028 - DFSU 600893-3", "M00029 - DVRU 134882-1", "M00030 - EMCU 108083-6", "M00031 - EMCU 237708-0", "M00032 - EMCU 247309-9", "M00033 - EMCU 919510-6", "M00034 - FBLU 411323-0", "M00035 - FSCU 402701-4", "M00036 - FSCU 561616-9", "M00037 - FSCU 562329-7", "M00038 - FSCU 644044-9", "M00039 - GATU 060957-3", "M00040 - GATU 076860-0", "M00041 - GATU 804726-1", "M00042 - GSTU 464773-1", "M00043 - GSTU 718552-9", "M00044 - GVCU 510828-0", "M00045 - GVCU 510883-9", "M00046 - GVCU 511941-1", "M00047 - GVCU 521289-0", "M00048 - GVCU 537884-0", "M00049 - HJCU 801916-0", "M00050 - HJCU 812283-6", "M00051 - IF 00000-40", "M00052 - IF 00000-41", "M00053 - IF 00000-42", "M00054 - IF 00000-43", "M00055 - IF 02307-0", "M00056 - IF 02996-1", "M00057 - IF 03003-0", "M00058 - IF 03004-1", "M00059 - IF 03004-5", "M00060 - IF 03061-2", "M00061 - IF 16140-1", "M00062 - INKU 250829-2", "M00063 - INKU 255832-8", "M00064 - INKU 258118-5", "M00065 - ITLU 674480-1", "M00066 - ITLU 821192-1", "M00067 - KLFU 137555-4", "M00068 - LTIU 800345-3", "M00069 - MMMU 410379-0", "M00070 - MSCU 237012-4", "M00071 - MSCU 284871-7", "M00072 - MSCU 329179-7", "M00073 - NEXU 953865-0", "M00074 - NEXU 953981-0", "M00075 - NEXU 954409-8", "M00076 - NOSU 441600-3", "M00077 - NSSC 824416-4", "M00078 - OCCU 40051-5", "M00079 - PCIU 378956-7", "M00080 - PCIU 391655-3", "M00081 - POCU 020418-2", "M00082 - PROTOTIPO", "M00083 - RODA", "M00084 - SARU 001465-1", "M00085 - SUDU 400485-2", "M00086 - SUDU 475050-6", "M00087 - SUDU 475297-8", "M00088 - SUDU 475619-2", "M00089 - SUDU 475716-2", "M00090 - TCKU 934530-2", "M00091 - TCKU 982419-9", "M00092 - TCNU 911341-0", "M00093 - TEXU 204930-7", "M00094 - TEXU 216368-6", "M00095 - TEXU 461265-7", "M00096 - TEXU 484852-9", "M00097 - TEXU 536270-0", "M00098 - TEXU 545777-1", "M00099 - TEXU 556166-2", "M00100 - TEXU 557039-2", "M00101 - TEXU 711037-5", "M00102 - TGHU 419659-0", "M00103 - TGHU 723264-3", "M00104 - TGHU 743569-8", "M00105 - TGHU 747181-7", "M00106 - TGHU 749069-5", "M00107 - TGHU 749671-2", "M00108 - TGHU 755237-5", "M00109 - TGHU 769357-9", "M00110 - TGHU 771934-9", "M00111 - TGHU 948005-8", "M00112 - TGHU 948136-8", "M00113 - TPHU 818736-2", "M00114 - TRIU 596103-0", "M00115 - TRIU 845278-2", "M00116 - TRLU 177537-1", "M00117 - TRLU 196515-5", "M00118 - TRLU 556170-0", "M00119 - TRLU 176809-5", "M00120 - TTNU 321869-5", "M00121 - TTNU 344858-0", "M00122 - TTNU 384524-7", "M00123 - TTNU 477512-3", "M00124 - TTNU 520299-6", "M00125 - TTNU 902965-7", "M00126 - TTNU 943314-4", "M00127 - UESU 470272-3", "M00128 - UESU 501696-5", "M00129 - UESU 517352-1", "M00130 - UETU 500557-9", "M00131 - UETU 500691-3", "M00132 - UGMU 863798-9", "M00133 - WFHU 130895-4", "M00134 - XINU 824048-3", "M00135 - XINU 824054-4", "M00136 - XINU 824097-1", "M00137 - XINU 824110-8", "M00138 - AMFU 890167-3", "M00141 - TRHU 141133-0", "M00142 - TRHU 207304-7", "M00143 - TRHU 184412-9", "M00144 - TRHU 151702-3", "M00145 - TRHU 207226-7", "M00146 - TRHU 207287-9", "M00147 - FT 22114-3", "M00148 - UNDU 101771-0", "M00149 - UNDU 203044-5", "M00151 - IF 04252-1", "M00152 - IF 04252-2", "M00153 - IF 04252-3", "M00154 - IF 04252-4", "M00155 - IF 04252-5", "M00156 - IF 04252-6", "M00157 - IF 04252-7", "M00158 - IF 04252-8", "M00159 - IF 04252-9", "M00160 - IF 04252-10", "M00161 - IF 04252-11", "M00162 - IF 04252-12", "M00163 - IF 04252-13", "M00164 - IF 04252-14", "M00165 - IF 04252-15", "M00166 - IF 04252-16", "M00167 - MNBU 011045-0", "M00168 - WSCU 602190-1", "M00169 - PONU 059786-4", "M00170 - EISU 912965-8", "MODULO - GENERICO MODULO", "NA - NO APLICA", "P00001 - AMFU887623-0", "P00002 - CLHU 406068-0", "P00003 - GLDU 771502-8", "P00004 - GSTU 722789-8", "P00005 - GSTU 968936-5", "P00006 - HKX 000220-0", "P00007 - ICSU 700422-5", "P00008 - IEAU 282811-1", "P00009 - INKU 254076-1", "P00010 - INKU 256089-7", "P00011 - INKU 256944-6", "P00012 - INKU251793-0", "P00013 - ITLU 557307-3", "P00014 - KKFU 701287-1", "P00015 - MLCU 2957588-1", "P00016 - MLCU 2957588-2", "P00017 - MLCU 2957588-3", "P00018 - TGHU 419140-6", "P00019 - TGHU 424684-9", "P00020 - NYKU 360511-8", "P00021 - NYKU 358510-9", "P00022 - NYKU 355565-5", "P00023 - CAIU 271739-5", "P00024 - CAIU 302295-7", "P00025 - CAIU 307304-4", "P00026 - DFSU 680419-1", "P00027 - DFSU 665127-7", "R00001 - CMCU 520124-0", "R00002 - CMCU 520233-4", "R00003 - CMCU 553408-8", "R00004 - CRLU 110562-4", "R00005 - CRLU 516922-6", "R00006 - CRLU 517162-4", "R00007 - CRLU 517322-6", "R00008 - CRLU 517439-3", "R00009 - FSCU 560197-6", "R00010 - FSCU 560476-4", "R00011 - FSCU 561678-6", "R00012 - FSCU 561794-6", "R00013 - FSCU 562088-9", "R00014 - FSCU 562136-0", "R00015 - FSCU 591997-5", "R00016 - HLXU 475603-0", "R00017 - KRJU 740009-5", "R00018 - KRJU 740026-4", "R00019 - KRJU 740042-8", "R00020 - SCXU 492781-3", "R00021 - SUDU 100133-5", "R00022 - SUDU 100215-7", "R00023 - SUDU 100223-9", "R00024 - SUDU 100307-1", "R00025 - SUDU 100359-6", "R00026 - SUDU 475063-5", "R00027 - SUDU 475084-6", "R00028 - SUDU 475098-0", "R00029 - SUDU 475207-3", "R00030 - SUDU 475225-8", "R00031 - SUDU 475258-2", "R00032 - SUDU 475293-6", "R00033 - SUDU 475294-1", "R00034 - SUDU 475315-1", "R00035 - SUDU 475328-0", "R00036 - SUDU 475338-3", "R00037 - SUDU 475354-7", "R00038 - SUDU 475385-0", "R00039 - SUDU 475406-0", "R00040 - SUDU 475417-9", "R00041 - SUDU 475456-4", "R00042 - SUDU 475459-0", "R00043 - SUDU 475587-4", "R00044 - SUDU 475651-0", "R00045 - SUDU 475675-7", "R00046 - SUDU 475694-7", "R00047 - SUDU 475705-4", "R00048 - SUDU 475712-0", "R00049 - SUDU 477266-0", "R00050 - SUDU 477340-9", "R00051 - SUDU 477377-5", "R00052 - TOLU 780207-8", "R00053 - TOLU 780208-3", "R00054 - TRIU 870913-0", "R00055 - TRLU 177425-1", "R00056 - TRLU 179018-6", "R00057 - TRLU 183160-2", "R00058 - TRLU 195790-4", "R00059 - TRLU 196440-0", "R00060 - TRLU 196821-5", "R00061 - TRLU 177605-9", "R00062 - SUDU 475659-3", "R00063 - APRU 509146-3", "R00064 - CCLU 859085-7", "R00065 - CCLU 859664-4", "R00066 - CCLU 860036-4", "R00067 - CCLU 860494-5", "R00068 - CGMU 496309-0", "R00069 - CGMU 496644-3", "R00070 - CMCU 552873-7", "R00071 - CCLU 859016-3", "R00072 - CCLU 861801-8", "R00073 - CCLU 860139-7", "R00074 - CCLU 861134-4", "R00075 - CCLU 859634-6", "R00076 - GESU 934278-1", "R00077 - APRU 508913-1", "R00078 - CCLU 861137-4", "R00079 - CCLU 859141-0", "R00080 - GESU 943030-5", "R00081 - CCLU 859877-6", "R00082 - CMCU 555204-0", "R00083 - MWCU 667899-0", "R00084 - CCLU 859721-3", "R00085 - CCLU 859485-2", "R00086 - CRLU 726949-8", "R00087 - SUDU 622958-6", "R00088 - MWCU 667906-5", "R00089 - MNBU 011835-8", "R00090 - TTNU 848144-6", "R00091 - MORU 581522-0", "R00092 - MNBU 011045-0", "R00093 - ZCSU 511065-4", "R00094 - ZCSU 585058-4", "R00095 - SZLU 909824-6", "R00096 - SZLU 911758-3", "R00097 - CXRU 118045-3", "R00098 - CXRU 118055-6", "R00099 - CRLU 310947-0", "S00001 - IF 04185-16", "S00002 - IF 04185-4", "S00003 - IF 04185-1", "V00001 - PL0050 CALLAO", "V00002 - PL0072 MELIQUINA", "V00003 - PL0075 ROCAS NEGRAS"];
@@ -1858,7 +1867,11 @@ function ogLiberado(og){ return certsOf(og.id).filter(c=>c.aprobacion==='SI' && 
 function pagosOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId)); }
 function ogPagadoPct(og){ return Math.min(100, pagosOf(og.id).reduce((a,p)=>a+(+p.pct||0),0)); }
 function ogPagado(og){ return ogTotal(og)*ogPagadoPct(og)/100; }
-function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }
+function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   // moneda en la que se PACTÓ el precio
+// Moneda en la que efectivamente se PAGA (de qué caja sale la plata): la define la Condición de compra
+// + el tilde "pago_usd", no la Moneda de la OG (se puede pactar en dólares y pagar su equivalente en pesos, o al revés).
+// null = la condición no mueve caja (compensación): no hay "moneda de pago".
+function ogMonedaPagoCode(og){ return COND_SIN_CAJA.includes(og.condicion) ? null : (og.pago_usd ? 'USD' : 'ARS'); }
 function ogLiberadoPct(og){ const t=ogTotal(og); return t? ogLiberado(og)/t*100 : 0; }
 /* Anticipo y tope pagable */
 function ogAnticipoMonto(og){ if(og.condicion!=='CON ANTICIPO') return 0; return ogTotal(og)*((+og.anticipo_pct||0)/100); }
@@ -2570,7 +2583,7 @@ function renderTesoreria(){
     +'</div>';
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'
     +'<button class="mtab'+(tab==='proy'?' active':'')+'" onclick="setTesTab(\'proy\')">Proyectado</button>'
-    +'<button class="mtab'+(tab==='cola'?' active':'')+'" onclick="setTesTab(\'cola\')">Cola de pagos</button>'
+    +'<button class="mtab'+(tab==='cola'?' active':'')+'" onclick="setTesTab(\'cola\')">Pagos pendientes</button>'
     +'<button class="mtab'+(tab==='op'?' active':'')+'" onclick="setTesTab(\'op\')">Órdenes de pago</button>'
     +'<button class="mtab'+(tab==='arqueo'?' active':'')+'" onclick="setTesTab(\'arqueo\')">Arqueo de caja</button></div>';
   let body;
@@ -2585,7 +2598,7 @@ function setTesTab(t){ TES_TAB=t; renderTesoreria(); }
 window.setTesTab=setTesTab; window.renderTesoreria=renderTesoreria;
 
 /* ===== Filtro tipo Excel genérico (reutilizable por namespace) =====
-   Se usa en Proyectado / Cola de pagos / Arqueo de caja: mismo look & feel
+   Se usa en Proyectado / Pagos pendientes / Arqueo de caja: mismo look & feel
    que el filtro de Órdenes de gasto (ogx*) y Órdenes de pago (op*), pero
    sin repetir el bloque de ~30 líneas por cada solapa nueva. */
 const XLF_STORE={}; const XLF_DATE={}; const XLF_DEF={};
@@ -2724,21 +2737,30 @@ function proyeccionSemanal(ogs){
   const buckets={};
   const add=(key,mon,monto)=>{ buckets[key]=buckets[key]||{ARS:0,USD:0}; buckets[key][mon]+=monto; };
   ogs.forEach(o=>{
-    const mon=ogMonedaCode(o);
+    const monPago=ogMonedaPagoCode(o);
+    if(!monPago) return;   // compensación: no mueve caja, no entra en la previsión de caja
+    const mon=ogMonedaCode(o);   // moneda en la que está pactado/expresado el monto de la OG
+    const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
+    // Convierte un monto pactado en "mon" a la moneda en la que efectivamente se paga (monPago).
+    // Sin TC cargado: mejor esfuerzo, no convierte (subestima/sobreestima, pero no rompe la previsión).
+    const aMonPago=m=>{
+      if(mon===monPago || !tc) return m;
+      return mon==='USD' ? m*tc : m/tc;
+    };
     const items=(o.items&&o.items.length)?o.items:null;
     if(!items){
-      const pend=ogTotal(o)*Math.max(0,100-ogAcumPct(o.id)-ogCerradoPct(o))/100;
-      if(pend>0.5) add('sinfecha', mon, pend);
+      const pend=aMonPago(ogTotal(o)*Math.max(0,100-ogAcumPct(o.id)-ogCerradoPct(o))/100);
+      if(pend>0.5) add('sinfecha', monPago, pend);
       return;
     }
     items.forEach((it,idx)=>{
-      const pend=itemTotal(it)*Math.max(0,100-itemAcumPct(o,idx)-itemCerradoPct(it))/100;
+      const pend=aMonPago(itemTotal(it)*Math.max(0,100-itemAcumPct(o,idx)-itemCerradoPct(it))/100);
       if(pend<=0.5) return;
       const fe=it.fecha_entrega;
-      if(!fe){ add('sinfecha', mon, pend); return; }
+      if(!fe){ add('sinfecha', monPago, pend); return; }
       const d=new Date(fe+'T00:00:00');
-      if(d<hoy){ add('atrasado', mon, pend); return; }
-      add(fridayOf(d).toISOString().slice(0,10), mon, pend);
+      if(d<hoy){ add('atrasado', monPago, pend); return; }
+      add(fridayOf(d).toISOString().slice(0,10), monPago, pend);
     });
   });
   return buckets;
@@ -2903,20 +2925,25 @@ function colaView(colaAll){
       if(col==='certificador') return o.certificador||'(sin certificador)';
       if(col==='condicion') return o.condicion||'(sin condición)';
       if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
+      if(col==='monpago'){ const mp=ogMonedaPagoCode(o); return mp==='USD'?'USD':mp==='ARS'?'Pesos':'Compensación'; }
       return '';
     } });
   const cola=colaAll.filter(o=>xlfPass('cola',o));
   const demoTag=DEMO_MODE?'<span class="demo-tag">DATOS DE EJEMPLO</span>':'';
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  // Tinte de fila según de qué caja sale la plata (no la moneda pactada): así el tesorero distingue de un vistazo.
+  const TINTE={USD:'#f0f8f0', ARS:'#eef3fa'};
   const rows=cola.map(o=>{
     const mon=ogMonedaCode(o); const pend=ogTotal(o)*ogPendPagoPct(o)/100;
+    const monPago=ogMonedaPagoCode(o);
     const pagadoPct=ogPagadoPct(o);
     const tc=(o.tc_pesos!=null && o.tc_pesos!=='')?+o.tc_pesos:null;
-    // Pendiente en cada moneda. ARS estimado con el TC de la OG (el tesorero puede cambiarlo al pagar).
+    // Pendiente en cada moneda (equivalencia informativa). ARS estimado con el TC de la OG (el tesorero puede cambiarlo al pagar).
     let mUSD=null, mARS=null;
     if(mon==='USD'){ mUSD=pend; mARS = tc? pend*tc : null; }
     else { mARS=pend; mUSD = tc? pend/tc : null; }
-    return '<tr>'
+    const trStyle = monPago && TINTE[monPago] ? ' style="background:'+TINTE[monPago]+'"' : '';
+    return '<tr'+trStyle+'>'
       +'<td><strong>'+esc(o.numero)+'</strong></td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+(o.clasif_og?esc(o.clasif_og):esc(o.objeto||''))+'</td>'
@@ -2924,15 +2951,16 @@ function colaView(colaAll){
       +'<td>'+esc(o.certificador||'—')+'</td>'
       +'<td style="font-size:11px">'+esc(o.condicion||'—')+'</td>'
       +'<td>'+badge(mon==='USD'?'USD':'Pesos')+'</td>'
+      +'<td>'+(monPago?badge(monPago==='USD'?'USD':'Pesos'):badge('Compensación'))+'</td>'
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
       +'<td><div class="row-actions"><button class="btn ghost sm" onclick="verRespaldo('+o.id+')">Ver respaldo</button>'
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
       +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="11" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
-  return '<div class="card"><div class="card-h"><h3>Cola de pagos'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. El Monto ARS es estimado con el TC de la OG. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda OG','moneda')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }).join('') || '<tr><td colspan="12" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 function verRespaldo(ogId){
@@ -3106,7 +3134,7 @@ function exportOG_OC(ogId){
   campo(xR,yR,'Certificador:', o.certificador||'—'); yR+=6;
   campo(xL,yL,'Teléfono:', prov.tel||prov.tel2||'—'); yL+=6;
   campo(xR,yR,'Centro de costo:', clasifTxt); yR+=6;
-  campo(xL,yL,'Condición de compra:', o.condicion||'—'); yL+=6;
+  campo(xL,yL,'Condición de compra:', (o.condicion||'—')+(ogMonedaPagoCode(o)==='USD'?' (USD billete)':'')); yL+=6;
   campo(xR,yR,'SOLP:', o.solp!=null?String(o.solp):'—'); yR+=6;
   campo(xL,yL,'Cotización:', o.tc_pesos!=null?('$ '+fmtNum(o.tc_pesos,2)+' / US$'):'—'); yL+=6;
   y=Math.max(yL,yR)+4;
@@ -3341,6 +3369,7 @@ window.exportPagoOP=exportPagoOP;
 
 function openPago(ogId){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
+  const monPagoDef=ogMonedaPagoCode(o)||monOG;   // de qué caja sale la plata (Condición de compra + tilde USD), no la moneda pactada
   const pendPct=ogPendPagoPct(o); const pendMonto=ogPendPagoMonto(o); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
   const hoy=new Date().toISOString().slice(0,10);
   const sugInicial=tcDiaAnterior(hoy);
@@ -3352,7 +3381,7 @@ function openPago(ogId){
     +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||'')+'<br>Total: '+simbOG+tot.toLocaleString('es-AR')+' ('+(monOG==='USD'?'dólares':'pesos')+') · Certificado: '+ogLiberadoPct(o).toFixed(0)+'% · Ya pagado: '+ogPagadoPct(o).toFixed(0)+'% · <strong>Pagable ahora: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+' ('+pendPct.toFixed(1).replace('.0','')+'%)</strong>'+antInfo+'</div>'
     +'<div class="frow c2"><div class="field"><label>Importe a pagar ('+(monOG==='USD'?'US$':'$')+', moneda de la OG)</label><input id="pg_imp" type="number" step="0.01" value="'+pendMonto.toFixed(2)+'" oninput="pgCalc()"><div style="font-size:11px;color:var(--muted);margin-top:3px">Máx pendiente: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+'</div></div>'
     +'<div class="field"><label>Fecha de pago</label><input id="pg_fecha" type="date" value="'+hoy+'" onchange="pgFechaChanged()"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Moneda de pago</label><select id="pg_moneda" onchange="pgCalc()"><option value="ARS"'+(monOG==='ARS'?' selected':'')+'>Pesos (CAJA PESOS PROY)</option><option value="USD"'+(monOG==='USD'?' selected':'')+'>Dólares (CAJA DOLARES PROY)</option></select></div>'
+    +'<div class="frow c2"><div class="field"><label>Moneda de pago</label><select id="pg_moneda" onchange="pgCalc()"><option value="ARS"'+(monPagoDef==='ARS'?' selected':'')+'>Pesos (CAJA PESOS PROY)</option><option value="USD"'+(monPagoDef==='USD'?' selected':'')+'>Dólares (CAJA DOLARES PROY)</option></select></div>'
     +'<div class="field"><label>Medio de pago</label><select id="pg_medio"><option>Efectivo</option><option>Transferencia</option><option>Cheque</option></select></div></div>'
     +'<div class="field" id="pg_tcField"><label>Tipo de cambio comprador (pesos por USD)</label><input id="pg_tc" type="number" step="0.01" value="'+esc(tc)+'" oninput="pgCalc()"><div id="pg_tcNote" style="font-size:11px;color:var(--muted);margin-top:3px">'+tcNoteInner(hoy,'pgUsarTcSugerido')+' Editable; se guarda para tener el equivalente en pesos del pago.</div></div>'
     +'<div id="pg_result" style="background:#eef2e6;border-radius:10px;padding:12px;font-size:13px;margin-top:6px"></div>'
@@ -3685,9 +3714,11 @@ function openOG(id){
   const hoy=new Date().toISOString().slice(0,10);
   const clasOGVal = cur.clasif_og ? (cur.clasif_og + ((clasifDesc(cur.clasif_og)&&clasifDesc(cur.clasif_og)!==cur.clasif_og)?' — '+clasifDesc(cur.clasif_og):'')) : '';
   const antShow = (cur.condicion==='CON ANTICIPO');
+  const pagoUsdShow = !COND_SIN_CAJA.includes(cur.condicion||'');
+  const pagoUsdVal = cur.pago_usd!=null ? !!cur.pago_usd : (cur.moneda==='Extranjera');
   const metVal=cur.anticipo_metodo||'';
   const metOpts='<option value="">— elegí —</option><option value="A"'+(metVal==='A'?' selected':'')+'>A · proporcional a lo certificado</option><option value="B"'+(metVal==='B'?' selected':'')+'>B · recupera el anticipo primero</option>';
-  const bloqNota = bloqCabecera ? '<div style="font-size:11.5px;color:#8a6d1e;background:#fdf3d9;border:1px solid #e0c46c;border-radius:8px;padding:8px 10px;margin-bottom:10px">Esta OG ya tiene algo certificado o cerrado: Proveedor, Fecha, Condición de compra, Moneda y Cotización quedan fijos. Solo se pueden modificar los renglones que no estén certificados.</div>' : '';
+  const bloqNota = bloqCabecera ? '<div style="font-size:11.5px;color:#8a6d1e;background:#fdf3d9;border:1px solid #e0c46c;border-radius:8px;padding:8px 10px;margin-bottom:10px">Esta OG ya tiene algo certificado o cerrado: Proveedor, Fecha, Condición de compra (incluido el tilde de USD), Moneda y Cotización quedan fijos. Solo se pueden modificar los renglones que no estén certificados.</div>' : '';
   const dis = bloqCabecera ? ' disabled style="background:#f3f1e8"' : '';
   const disSel = bloqCabecera ? ' disabled' : '';
   const body=bloqNota+'<div class="frow c2"><div class="field"><label>N° OG</label><input id="og_numero" type="text" readonly value="'+esc(cur.numero || (DEMO_MODE?nextNum:''))+'" placeholder="Se asigna al guardar" style="background:#f3f1e8"><div style="font-size:11px;color:var(--muted);margin-top:4px">'+(cur.numero?'N° asignado.':'Se asigna solo al guardar (correlativo desde 2000).')+'</div></div>'
@@ -3696,8 +3727,10 @@ function openOG(id){
     +'<div class="field"><label>Clasificación (OG)</label><input id="og_clasif" value="'+esc(clasOGVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboClasOG()" oninput="comboClasOG()" onblur="comboHideDelayed()"><div style="font-size:11px;color:var(--muted);margin-top:4px">Se copia por defecto a cada renglón nuevo; podés cambiarla por renglón.</div></div>'
     +'<div class="frow c2"><div class="field"><label>Comprador (crea la OG)</label><select id="og_comprador"'+(ROLE.admin?'':' disabled')+'>'+compOpts+'</select></div>'
     +'<div class="field"><label>Certifica la OG</label><select id="og_certificador">'+certOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Condición de compra</label><select id="og_condicion" onchange="ogCondChanged()"'+disSel+'>'+condOpts+'</select></div>'
-    +'<div class="field"><label>Moneda</label><select id="og_moneda"'+disSel+'>'+monOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Condición de compra</label><select id="og_condicion" onchange="ogCondChanged()"'+disSel+'>'+condOpts+'</select>'
+    +'<label id="og_pagoUsdWrap" style="display:'+(pagoUsdShow?'flex':'none')+';align-items:center;gap:6px;margin-top:7px;font-size:12.5px;font-weight:600;color:var(--ink)"><input type="checkbox" id="og_pago_usd"'+(pagoUsdVal?' checked':'')+(bloqCabecera?' disabled':'')+'> Se paga en dólar billete</label>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:3px">Define de qué caja sale la plata al pagar (independiente de en qué moneda se pactó el precio).</div></div>'
+    +'<div class="field"><label>Moneda</label><select id="og_moneda"'+disSel+'>'+monOpts+'</select><div style="font-size:11px;color:var(--muted);margin-top:4px">Moneda en la que se pactó/ajusta el precio. No define en qué moneda se paga.</div></div></div>'
     +'<div class="field"><label>Tipo de cambio comprador (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:((tcDiaAnterior(cur.fecha||hoy)||{}).compra!=null?tcDiaAnterior(cur.fecha||hoy).compra:(USD_COMPRA||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
     +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"></div>'
     +'<div class="field"><label>Método de anticipo</label><select id="og_antmet">'+metOpts+'</select></div></div></div>'
@@ -3917,6 +3950,8 @@ window.comboMod=comboMod;
 function ogCondChanged(){
   const c=document.getElementById('og_condicion'); const box=document.getElementById('ogAnticipoBox');
   if(box) box.style.display=(c && c.value==='CON ANTICIPO')?'block':'none';
+  const pu=document.getElementById('og_pagoUsdWrap');
+  if(pu) pu.style.display=(c && !COND_SIN_CAJA.includes(c.value))?'flex':'none';
 }
 window.ogCondChanged=ogCondChanged;
 // Nota + botón bajo el campo TC de la OG: cotización del día ANTERIOR a la Fecha de creación (Diccionario → Cotización USD).
@@ -4013,6 +4048,7 @@ async function saveOG(id){
     proveedor_cod: vv?vv.codigo:'', proveedor: vv?(vv.razon||vv.comercial):'',
     clasif_og:(document.getElementById('og_clasif').value||'').split(' — ')[0].trim(),
     condicion:gv('og_condicion'), tipo_contratacion:gv('og_condicion'), moneda:gv('og_moneda'),
+    pago_usd:(document.getElementById('og_pago_usd')?document.getElementById('og_pago_usd').checked:false),
     tc_pesos:(gv('og_tc')===''?null:+gv('og_tc')),
     anticipo_pct:(gv('og_condicion')==='CON ANTICIPO' && document.getElementById('og_antpct') && document.getElementById('og_antpct').value!=='')?+document.getElementById('og_antpct').value:null,
     anticipo_metodo:(gv('og_condicion')==='CON ANTICIPO' && document.getElementById('og_antmet'))?document.getElementById('og_antmet').value:null,
@@ -6189,6 +6225,7 @@ async function reloadDB(){
   if(DEMO_MODE) return;
   try{
     mem.ogs          = await sbFetch('/ogs?select=*&order=id.desc') || [];
+    mem.ogs.forEach(ogNormalizeCondicion);
     mem.certificados = await sbFetch('/og_certificados?select=*&order=id.asc') || [];
     mem.pagos        = await sbFetch('/pagos?select=*&order=id.asc') || [];
     mem.ingresos     = await sbFetch('/caja_ingresos?select=*&order=id.asc').catch(()=>[]) || [];
@@ -6285,6 +6322,7 @@ window.reloadDB=reloadDB;
       ]},
     ];
     mem.ogs.forEach(o=>{ o.monto_total=o.items.reduce((a,it)=>a+it.cant*it.precio_unit,0); });
+    mem.ogs.forEach(ogNormalizeCondicion);
     mem.certificados=[
       {id:1, og_id:1, numero:'C1', fecha:'2026-06-10', avances:{0:100,1:50}, aprobacion:'SI', estado:'Liberado', pagado:true, fecha_pago:'2026-06-18', observaciones:'Entrega parcial.'},
       {id:2, og_id:2, numero:'C1', fecha:'2026-05-05', avances:{0:50}, aprobacion:'SI', estado:'Liberado', pagado:false, fecha_pago:'', observaciones:'Liberado, a la espera de pago.'},
