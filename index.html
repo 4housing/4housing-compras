@@ -4236,6 +4236,23 @@ async function saveOG(id){
     desvio:gv('og_desvio'), desvio_txt:gv('og_desvio_txt'), alcance:gv('og_alcance'), observaciones:gv('og_obs'),
     items };
   obj.monto_total = items.length ? items.reduce((a,it)=>a+(it.cant*it.precio_unit),0) : (gv('og_monto')===''?null:+gv('og_monto'));
+  // Si ya se pagó algo de esta OG (anticipo u otro pago), no se puede bajar el total por debajo de lo pagado:
+  // el % pagado de cada pago quedó "congelado" sobre el total de ese momento, y si el total baja después,
+  // el monto realmente pagado (en pesos/dólares) queda subestimado sin que nadie lo note.
+  if(!isNew){
+    const ogOriginal=ogById(id);
+    if(ogOriginal){
+      const pagado=ogPagado(ogOriginal);
+      if(pagado>0.01){
+        const nuevoTotal=(obj.monto_total||0)*(1-(+obj.bonif_pct||0)/100);
+        if(nuevoTotal < pagado-0.01){
+          const simb=ogMonedaCode(ogOriginal)==='USD'?'US$ ':'$ ';
+          alert('Esta OG ya tiene '+simb+pagado.toLocaleString('es-AR',{maximumFractionDigits:2})+' pagado (anticipo u otro pago registrado). No se puede bajar el total por debajo de ese monto.\n\nSi sobra saldo sin certificar, cerralo con el botón "Cerrar saldo" del renglón (o de la OG) en vez de eliminarlo o reducirlo, o dejá el total en al menos '+simb+pagado.toLocaleString('es-AR',{maximumFractionDigits:2})+'.');
+          return;
+        }
+      }
+    }
+  }
   try{
     if(DEMO_MODE){
       if(isNew){ obj.id=Math.max(0,...mem.ogs.map(r=>+r.id||0))+1; obj.numero=String(Math.max(1999,...(mem.ogs||[]).map(x=>+x.numero||0))+1); mem.ogs.unshift(obj); }
