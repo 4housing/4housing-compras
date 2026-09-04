@@ -1903,7 +1903,7 @@ const IDX_DEF={
     fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
     campos:[ {k:'construccion', label:'Costo Construcción'}, {k:'materiales', label:'Materiales'}, {k:'mano_obra', label:'Mano de obra'} ] },
   poli:{ nombre:'Polinómica (IPIB · INDEC, fórmula propia)', tabla:'idx_poli', diaEsperado:29,
-    fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32',
+    fuenteUrl:'https://www.indec.gob.ar/indec/web/Institucional-Indec-Publicaciones-3',
     campos:[
       {k:'mo', label:'Mano de obra (Cuadro 5 inc. a)'},
       {k:'art_ilum', label:'Art. iluminación/cableado (Cuadro 5 inc. g)'},
@@ -2132,10 +2132,14 @@ function idxTabBody(ns){
   const rows=(DIC['idx_'+ns]||[]).slice().sort((a,b)=>b.periodo-a.periodo);
   const faltante=idxFaltante(ns);
   const avisoFaltante = faltante!=null ? '<div style="font-size:12px;color:#8a6d1e;padding:0 16px 8px">Debería estar cargado <strong>'+idxPeriodoFmt(faltante)+'</strong> (se publica aprox. el día '+def.diaEsperado+' del mes siguiente).</div>' : '';
-  const cols = def.campos.map(c=>'<th style="text-align:right">'+esc(c.label)+'</th>').join('') + (def.pesos ? '<th style="text-align:right">Índice ponderado</th>' : '');
+  // Con fórmula (Polinómica): el índice ponderado va primero (es "la respuesta"), y cada componente
+  // muestra su peso en el propio encabezado — son 6 magnitudes de naturaleza distinta (mano de obra,
+  // metal, importados…) que solo cobran sentido puestas en relación a cuánto pesan en la fórmula.
+  const indiceTh = def.pesos ? '<th style="text-align:right;background:#eef2e6">Índice ponderado</th>' : '';
+  const cols = indiceTh + def.campos.map(c=>'<th style="text-align:right">'+esc(c.label)+(def.pesos&&def.pesos[c.k]!=null?' <span style="color:var(--muted);font-weight:400">('+(def.pesos[c.k]*100).toFixed(0)+'%)</span>':'')+'</th>').join('');
   const rowsHtml = rows.map(r=>{
-    const tds = def.campos.map(c=>'<td style="text-align:right">'+(r[c.k]!=null&&r[c.k]!==''?fmtNum(r[c.k],2):'—')+'</td>').join('')
-      + (def.pesos ? '<td style="text-align:right"><strong>'+fmtNum(idxCalculado(ns,r),2)+'</strong></td>' : '');
+    const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+fmtNum(idxCalculado(ns,r),2)+'</strong></td>' : '';
+    const tds = indiceTd + def.campos.map(c=>'<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(r[c.k]!=null&&r[c.k]!==''?fmtNum(r[c.k],2):'—')+'</td>').join('');
     return '<tr><td>'+idxPeriodoFmt(r.periodo)+'</td>'+tds
       +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openIdxRow(\''+ns+'\','+r.periodo+')">'+ICO.edit+'</button>'
       +'<button class="iconbtn del" title="Eliminar" onclick="askIdxDelete(\''+ns+'\','+r.periodo+')">'+ICO.del+'</button></div></td></tr>';
