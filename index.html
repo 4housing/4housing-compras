@@ -467,24 +467,45 @@ function badge(v){ const cls=ESTADO_COLOR[String(v||'').toLowerCase()]||'b-gris'
    La app re-renderiza cada vista reemplazando el HTML entero (no hay tablas persistentes),
    así que en vez de cablear esto en cada render, un MutationObserver detecta cualquier tabla
    .grid que aparezca en el DOM y le agrega los tiradores. El ancho de cada columna se guarda
-   en localStorage por "firma" de la tabla (sus encabezados), así se restaura solo la próxima
-   vez que se abra esa misma vista/pestaña (y sobrevive a recargar la página). */
+   en localStorage por "firma" de la tabla (sus encabezados) como respaldo instantáneo, y además
+   (en producción, con usuario logueado) en la tabla ui_prefs de Supabase, atada al email del
+   usuario — así el ajuste de columnas queda "con el usuario" y no hay que rehacerlo si entra
+   desde otra computadora, en vez de depender solo de este navegador. */
 let COLRESIZE_DRAG=null;
+let UI_PREFS_COLW=null; // null = todavía no se cargó de Supabase; {} = cargado, vacío
 function colResizeSig(table){
   const ths=[...table.querySelectorAll('thead th')].map(th=>(th.textContent||'').trim()).join('|');
   let h=0; for(let i=0;i<ths.length;i++) h=(h*31+ths.charCodeAt(i))|0;
   return 'colw:'+ths.length+':'+h;
 }
 function colResizeApplySaved(table){
-  let saved=null; try{ saved=JSON.parse(localStorage.getItem(colResizeSig(table))||'null'); }catch(e){}
+  const sig=colResizeSig(table);
+  let saved=(UI_PREFS_COLW&&UI_PREFS_COLW[sig])||null;
+  if(!saved) try{ saved=JSON.parse(localStorage.getItem(sig)||'null'); }catch(e){}
   if(!saved) return;
   const ths=[...table.querySelectorAll('thead th')];
   table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
   ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+'px'; });
 }
 function colResizeSave(table, ths){
+  const sig=colResizeSig(table);
   const widths={}; ths.forEach((th,i)=>{ const w=parseInt(th.style.width,10); if(w) widths[i]=w; });
-  try{ localStorage.setItem(colResizeSig(table), JSON.stringify(widths)); }catch(e){}
+  try{ localStorage.setItem(sig, JSON.stringify(widths)); }catch(e){}
+  if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
+    UI_PREFS_COLW=UI_PREFS_COLW||{}; UI_PREFS_COLW[sig]=widths;
+    sbFetch('/ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW}),prefer:'resolution=merge-duplicates,return=minimal'})
+      .catch(()=>{ /* sin conexión: ya quedó en localStorage, se reintenta en el próximo ajuste */ });
+  }
+}
+// Se llama una vez al iniciar sesión (después de reloadDB): trae los anchos de columna guardados
+// para este usuario y reaplica sobre las tablas que ya se hayan montado con el valor de localStorage.
+async function uiPrefsLoad(){
+  if(DEMO_MODE || !AUTH_USER || !AUTH_USER.email){ UI_PREFS_COLW={}; return; }
+  try{
+    const rows=await sbFetch('/ui_prefs?user_email=eq.'+encodeURIComponent(AUTH_USER.email)+'&select=colwidths');
+    UI_PREFS_COLW=(rows&&rows[0]&&rows[0].colwidths)||{};
+  }catch(e){ UI_PREFS_COLW={}; }
+  document.querySelectorAll('table.grid[data-colresize-init]').forEach(colResizeApplySaved);
 }
 // Envuelve la tabla en un contenedor con scroll horizontal si todavía no lo tiene (ej. las que ya
 // traían ".dic-scroll" del Diccionario quedan como estaban). Sin esto, una tabla más ancha que la
@@ -1902,11 +1923,11 @@ async function idxDelete(ns, periodo){
 let IDX_TAB='ipc';
 function setIdxTab(t){ IDX_TAB=t; renderIndices(); }
 window.setIdxTab=setIdxTab;
-// Evolución comparada: hasta 10 series candidatas (una por índice/campo), indexadas a 0% en el
-// período base — así se pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica
-// validada (orden fijo, 8 tonos con separación garantizada); las 2 series de Sueldos reutilizan el tono
-// de IPC/CAC con trazo punteado (encoding secundario) en vez de sumar tonos nuevos sin validar. El usuario
-// elige cuáles mostrar (checkboxes), tope de 8 a la vez para no exceder los tonos validados.
+// Evolución comparada: 10 series candidatas (una por índice/campo), indexadas a 0% en el período
+// base — así se pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica
+// validada (orden fijo, 8 tonos con separación garantizada); las 2 series de Sueldos reutilizan el
+// tono de IPC/CAC con trazo punteado (encoding secundario) en vez de sumar tonos nuevos sin validar.
+// El usuario elige cuáles mostrar (checkboxes); arrancan las 10 tildadas.
 const IDX_EVOL_ALL=[
   {key:'ipc_nacional', ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
   {key:'uva_valor', ns:'uva', campo:'valor', label:'UVA', short:'UVA', color:'#008300'},
@@ -1919,20 +1940,16 @@ const IDX_EVOL_ALL=[
   {key:'sueldos_pct', ns:'sueldos', campo:'pct', label:'Sueldos % (índice)', short:'Sueldos %', color:'#2a78d6', dash:'5,3'},
   {key:'sueldos_ars', ns:'sueldos', campo:'ars', label:'Sueldos $ (RIPTE)', short:'Sueldos $', color:'#eb6834', dash:'5,3'},
 ];
-const IDX_EVOL_MAX=8;
-let IDX_EVOL_SEL=new Set(['ipc_nacional','cac_construccion','poli_indice']);
+const IDX_EVOL_MAX=IDX_EVOL_ALL.length;
+let IDX_EVOL_SEL=new Set(IDX_EVOL_ALL.map(s=>s.key));
 function toggleIdxEvolSerie(key){
   if(IDX_EVOL_SEL.has(key)) IDX_EVOL_SEL.delete(key);
   else{ if(IDX_EVOL_SEL.size>=IDX_EVOL_MAX){ toast('Elegí como máximo '+IDX_EVOL_MAX+' índices a la vez'); return; } IDX_EVOL_SEL.add(key); }
   renderIndices();
 }
 window.toggleIdxEvolSerie=toggleIdxEvolSerie;
-function idxEvolBaseDefault(series){
-  // el período base por default es el más nuevo entre los "primeros períodos" de cada serie elegida,
-  // así arrancan todas con datos.
-  const inicios=series.map(s=>{ const arr=DIC['idx_'+s.ns]||[]; return arr.length?Math.min(...arr.map(r=>r.periodo)):null; }).filter(x=>x!=null);
-  return inicios.length? Math.max(...inicios) : null;
-}
+const IDX_EVOL_BASE_DEFAULT=202001;
+function idxEvolBaseDefault(series){ return IDX_EVOL_BASE_DEFAULT; }
 let IDX_EVOL_BASE=null;
 function setIdxEvolBase(v){ IDX_EVOL_BASE=+v; renderIndices(); }
 window.setIdxEvolBase=setIdxEvolBase;
@@ -1941,12 +1958,20 @@ function idxEvolPeriodosDisponibles(series){
   series.forEach(s=>(DIC['idx_'+s.ns]||[]).forEach(r=>set.add(r.periodo)));
   return [...set].sort((a,b)=>a-b);
 }
+// Si una serie arrancó después del período base elegido (ej. Polinómica, con historia desde 2023),
+// no tiene sentido pedirle un valor en 2020: se reindexa a 0% desde su propio primer período disponible
+// (posterior al base) en vez de desaparecer del gráfico. effBase queda distinto de baseP para avisarlo.
 function idxEvolCalcular(baseP, series){
   return series.map(s=>{
-    const base=idxSerieValor(s.ns,s.campo,baseP);
-    const periodos=(DIC['idx_'+s.ns]||[]).map(r=>r.periodo).filter(p=>p>=baseP).sort((a,b)=>a-b);
+    const arr=(DIC['idx_'+s.ns]||[]).map(r=>r.periodo).sort((a,b)=>a-b);
+    let effBase=baseP, base=idxSerieValor(s.ns,s.campo,baseP);
+    if(base==null){
+      const primerDisponible=arr.find(p=>p>=baseP);
+      if(primerDisponible!=null){ effBase=primerDisponible; base=idxSerieValor(s.ns,s.campo,effBase); }
+    }
+    const periodos=arr.filter(p=>p>=effBase);
     const values=periodos.map(p=>{ const v=idxSerieValor(s.ns,s.campo,p); return { periodo:p, pct:(base&&v!=null)?(v/base-1)*100:null }; });
-    return {...s, values};
+    return {...s, values, effBase};
   });
 }
 function idxEvolSvg(series){
@@ -1963,23 +1988,43 @@ function idxEvolSvg(series){
   const y0=yFor(0);
   let out='<line x1="'+padL+'" y1="'+y0.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+y0.toFixed(1)+'" stroke="#c7c3b3" stroke-width="1"/>'
     +'<text x="'+padL+'" y="'+(y0-4).toFixed(1)+'" font-size="10" fill="#8a8674">0%</text>';
+  const labels=[];
   series.forEach(s=>{
     const pts=s.values.filter(v=>v.pct!=null).map(v=>[xFor(idxOf[v.periodo]), yFor(v.pct)]);
     if(!pts.length) return;
     const d=pts.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
     out+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"'+(s.dash?' stroke-dasharray="'+s.dash+'"':'')+'/>';
     const last=pts[pts.length-1], lastVal=s.values.filter(v=>v.pct!=null).slice(-1)[0];
-    out+='<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="3.5" fill="'+s.color+'"/>'
-      +'<text x="'+(last[0]+7).toFixed(1)+'" y="'+(last[1]+4).toFixed(1)+'" font-size="11" font-weight="700" fill="'+s.color+'">'+esc(s.short||s.label)+' '+(lastVal.pct>=0?'+':'')+lastVal.pct.toFixed(1)+'%</text>';
+    out+='<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="3.5" fill="'+s.color+'"/>';
+    labels.push({x:last[0], yTrue:last[1], y:last[1], color:s.color, text:esc(s.short||s.label)+' '+(lastVal.pct>=0?'+':'')+lastVal.pct.toFixed(1)+'%'});
+  });
+  // Declutter: si dos etiquetas de fin de línea caen a menos de minGap una de otra (líneas que terminan
+  // casi al mismo valor), se separan verticalmente y se dibuja un tiro fino desde el punto real hasta el
+  // texto — si no, quedan superpuestas e ilegibles (motivo del pedido de "mejorar el tema de nombres").
+  const minGap=13;
+  labels.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<labels.length;i++){ if(labels[i].y-labels[i-1].y<minGap) labels[i].y=labels[i-1].y+minGap; }
+  const maxY=padT+innerH, overflow=labels.length?labels[labels.length-1].y-maxY:0;
+  if(overflow>0) labels.forEach(l=>l.y-=overflow);
+  if(labels.length && labels[0].y<padT){ const under=padT-labels[0].y; labels.forEach(l=>l.y+=under); }
+  labels.forEach(l=>{
+    const moved=Math.abs(l.y-l.yTrue)>2.5;
+    if(moved) out+='<line x1="'+(l.x+3).toFixed(1)+'" y1="'+l.yTrue.toFixed(1)+'" x2="'+(l.x+7).toFixed(1)+'" y2="'+l.y.toFixed(1)+'" stroke="'+l.color+'" stroke-width="1"/>';
+    out+='<text x="'+(l.x+(moved?9:7)).toFixed(1)+'" y="'+(l.y+4).toFixed(1)+'" font-size="11" font-weight="700" fill="'+l.color+'">'+l.text+'</text>';
   });
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px;display:block" role="img" aria-label="Evolución comparada de índices, variación acumulada desde el período base">'+out+'</svg>';
+}
+// Etiqueta de una serie con un aviso "(desde AAAA/MM)" cuando arrancó después del período base elegido
+// (ej. Polinómica con base en 2020: se reindexa a 0% desde 2023/05, su primer dato real).
+function idxEvolLabelHtml(s){
+  return esc(s.label)+(s.effBase!=null && s.effBase!==IDX_EVOL_BASE ? ' <span style="color:var(--muted);font-weight:400">(desde '+idxPeriodoFmt(s.effBase)+')</span>' : '');
 }
 function idxEvolTabla(series){
   const periodos=[...new Set(series.flatMap(s=>s.values.map(v=>v.periodo)))].sort((a,b)=>b-a);
   if(!periodos.length) return '';
   const byPer={}; series.forEach(s=>s.values.forEach(v=>{ (byPer[v.periodo]=byPer[v.periodo]||{})[s.key]=v.pct; }));
   const rows=periodos.map(p=>'<tr><td>'+idxPeriodoFmt(p)+'</td>'+series.map(s=>{ const v=(byPer[p]||{})[s.key]; return '<td style="text-align:right">'+(v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—')+'</td>'; }).join('')+'</tr>').join('');
-  return '<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Período</th>'+series.map(s=>'<th style="text-align:right">'+esc(s.label)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  return '<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Período</th>'+series.map(s=>'<th style="text-align:right">'+idxEvolLabelHtml(s)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 function idxEvolChecks(){
   return '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 16px 0">'+IDX_EVOL_ALL.map(s=>{
@@ -1992,14 +2037,14 @@ function idxEvolChecks(){
 }
 function idxEvolucionHtml(){
   const series0=IDX_EVOL_ALL.filter(s=>IDX_EVOL_SEL.has(s.key));
-  const head='<div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas (hasta '+IDX_EVOL_MAX+' a la vez).</span></div>';
+  const head='<div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas.</span></div>';
   if(!series0.length) return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()+'<div style="padding:6px 16px 14px;color:var(--muted);font-size:12.5px">Elegí al menos un índice para graficar.</div></div>';
   if(IDX_EVOL_BASE==null) IDX_EVOL_BASE=idxEvolBaseDefault(series0);
   if(IDX_EVOL_BASE==null) return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()+'<div style="padding:6px 16px 14px;color:var(--muted);font-size:12.5px">Los índices elegidos todavía no tienen períodos cargados.</div></div>';
   const periodos=idxEvolPeriodosDisponibles(series0);
   const selOpts=periodos.map(p=>'<option value="'+p+'"'+(p===IDX_EVOL_BASE?' selected':'')+'>'+idxPeriodoFmt(p)+'</option>').join('');
   const series=idxEvolCalcular(IDX_EVOL_BASE, series0);
-  const legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin:6px 0 10px">'+series.map(s=>'<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s.color+';display:inline-block"></span>'+esc(s.label)+'</span>').join('')+'</div>';
+  const legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin:6px 0 10px">'+series.map(s=>'<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s.color+';display:inline-block"></span>'+idxEvolLabelHtml(s)+'</span>').join('')+'</div>';
   return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()
     +'<div style="padding:10px 16px 0;display:flex;align-items:center;gap:8px;font-size:12.5px"><label>Desde</label><select onchange="setIdxEvolBase(this.value)">'+selOpts+'</select></div>'
     +'<div style="padding:14px 16px 4px">'+idxEvolSvg(series)+legend+'</div>'
@@ -7624,6 +7669,7 @@ window.reloadDB=reloadDB;
     document.getElementById('btnLogout').style.display='none';
   }else{
     await reloadDB();
+    await uiPrefsLoad();
     document.getElementById('autosaveLbl').textContent=
       (AUTH_USER && (AUTH_USER.user_metadata?.name || AUTH_USER.email)) || 'Conectado';
     document.getElementById('btnLogout').onclick=async()=>{ await sbClient.auth.signOut(); location.reload(); };
