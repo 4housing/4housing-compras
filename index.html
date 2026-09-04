@@ -679,29 +679,8 @@ const SCHEMAS = {
     ],
   },
   panol: {
-    title:'Pañol', sub:'Herramientas y préstamos', table:'panol',
+    title:'Pañol', sub:'Egreso de consumibles a producción: carga, valorización y stock', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 6l4 4-8 8-4-4z"/><path d="M18 10l2.5-2.5a2 2 0 0 0-3-2.6L15 7"/><path d="M6 14l-2 6 6-2"/></svg>',
-    kpis:[
-      {label:'Prestadas', calc:d=>d.filter(r=>r.estado==='Prestada').length, sub:'Fuera del pañol'},
-      {label:'Disponibles', calc:d=>d.filter(r=>r.estado==='Disponible').length, sub:'Listas para usar', tone:'ok'},
-    ],
-    cols:[
-      {key:'herramienta', label:'Herramienta'},
-      {key:'codigo', label:'Código'},
-      {key:'responsable', label:'Responsable'},
-      {key:'estado', label:'Estado', badge:true},
-    ],
-    form:[
-      {key:'herramienta', label:'Herramienta', type:'text'},
-      {key:'codigo', label:'Código', type:'text', half:true},
-      {key:'estado', label:'Estado', type:'select', opts:['Disponible','Prestada','Reparación','Baja'], half:true},
-      {key:'responsable', label:'Responsable (si está prestada)', type:'text'},
-    ],
-    seed:[
-      {id:1, herramienta:'Amoladora angular', codigo:'PN-014', responsable:'—', estado:'Disponible'},
-      {id:2, herramienta:'Taladro percutor', codigo:'PN-021', responsable:'J. Pérez', estado:'Prestada'},
-      {id:3, herramienta:'Soldadora inverter', codigo:'PN-007', responsable:'—', estado:'Reparación'},
-    ],
   },
   mantenimiento: {
     title:'Mantenimiento', sub:'Programa anual: planificá los meses y confirmá lo realizado', table:'mantenimiento',
@@ -930,7 +909,7 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML='';
   }else if(view==='seguimiento'){
     document.getElementById('topActions').innerHTML='';
-  }else if(view==='indices'||view==='precios'){
+  }else if(view==='indices'||view==='precios'||view==='panol'){
     document.getElementById('topActions').innerHTML='';
   }else{
     document.getElementById('topActions').innerHTML=
@@ -975,6 +954,7 @@ async function render(view){
   if(view==='diccionarios'){ return renderDic(); }
   if(view==='indices'){ return renderIndices(); }
   if(view==='precios'){ return renderActualizacionPrecios(); }
+  if(view==='panol'){ return renderPanol(); }
   C().innerHTML='<div class="empty">Cargando…</div>';
   let rows=[];
   try{ rows=await Data.list(view); }
@@ -2225,6 +2205,286 @@ function prCalc(){
   res.innerHTML=txt;
 }
 window.prCalc=prCalc;
+
+/* ================================================================
+   PAÑOL — Egreso de consumibles a producción: carga, valorización,
+   sincronización de stock con Tango.
+   El ingreso de stock (Remito) y el saldo real siguen viviendo 100% en
+   Tango — acá se registra la SALIDA a obra (operario/proyecto), se
+   valoriza al costo de referencia del artículo (última compra, ARS/USD,
+   igual criterio que el reporte "Precios" de Tango), y se genera el
+   Excel que Tango importa para descontar el stock (mismo formato que
+   MODELO_PLANILLA_EGRESO: hoja "Artículos y partidas" con Código,
+   Descripción, Depósito, Informar partida, Número partida, Unidad
+   medida, Cantidad, Unidad medida 2, Cantidad 2, Precio, Error).
+   La obra usa el auxiliar contable tipo 03 (Instructivo de Fabricación,
+   ya sincronizado en CONTA_DB.auxopc['3']) — no viaja en el Excel de
+   Tango (que solo pide depósito+artículo+cantidad), es para la
+   valorización/reclasificación interna. */
+let PANOL_PERIODO=null;
+function panolPeriodoDefault(){ const d=new Date(); return d.getFullYear()*100+(d.getMonth()+1); }
+function setPanolPeriodo(v){ PANOL_PERIODO = v ? +String(v).replace('-','') : panolPeriodoDefault(); renderPanol(); }
+window.setPanolPeriodo=setPanolPeriodo;
+function articuloCostoRef(cod){
+  const a=(DIC.articulos||[]).find(x=>x.codigo===cod);
+  return a ? {ars:+a.costo_ars||0, usd:+a.costo_usd||0, fecha:a.costo_fecha||'', proveedor:a.costo_proveedor||''} : {ars:0,usd:0,fecha:'',proveedor:''};
+}
+function panolResumenPor(rows, key){
+  const m={};
+  rows.forEach(r=>{ const k=r[key]||'(sin dato)'; m[k]=m[k]||{cod:k, cantidad:0, ars:0, usd:0}; m[k].cantidad+=+r.cantidad||0; m[k].ars+=+r.total_ars||0; m[k].usd+=+r.total_usd||0; });
+  return Object.values(m).sort((a,b)=>b.ars-a.ars);
+}
+function renderPanol(){
+  if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
+  const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
+  const pMes=String(PANOL_PERIODO).slice(4,6), pAnio=String(PANOL_PERIODO).slice(0,4);
+  const periodoInput='<input type="month" value="'+pAnio+'-'+pMes+'" onchange="setPanolPeriodo(this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:4px 6px;font-size:12.5px">';
+
+  const porObra=panolResumenPor(rows,'proyecto_cod');
+  const porArt=panolResumenPor(rows,'cod_articulo');
+  const totArs=rows.reduce((a,r)=>a+(+r.total_ars||0),0), totUsd=rows.reduce((a,r)=>a+(+r.total_usd||0),0);
+
+  const saldos=(DIC.stock_saldos||[]);
+  const saldosTbl = saldos.length
+    ? '<div class="tbl-hscroll tbl-compact" style="max-height:260px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Depósito</th><th style="text-align:right">Saldo</th><th>U.M.</th></tr></thead><tbody>'
+      + saldos.slice(0,500).map(s=>'<tr><td>'+esc(s.cod_articulo)+' · '+esc(s.descripcion||'')+'</td><td>'+esc(s.cod_deposito)+' · '+esc(s.desc_deposito||'')+'</td><td style="text-align:right">'+fmtNum(s.saldo,2)+'</td><td>'+esc(s.um||'')+'</td></tr>').join('')
+      + '</tbody></table></div>'+(saldos.length>500?'<div style="font-size:11px;color:var(--muted);padding:6px 4px">Mostrando 500 de '+saldos.length+'.</div>':'')
+    : '<div style="padding:10px 4px;color:var(--muted);font-size:12.5px">Sin saldos importados todavía.</div>';
+
+  const movHead='<th>Fecha</th><th>Depósito</th><th>Artículo</th><th style="text-align:right">Cantidad</th><th>Obra</th><th>Operario</th><th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th><th>Exportado</th>';
+  const movRows = rows.length ? rows.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.cod_deposito)+'</td><td>'+esc(r.cod_articulo)+' · '+esc(artDesc(r.cod_articulo)||'')+'</td>'
+      +'<td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.proyecto_cod)+'</td><td>'+esc(r.operario||'')+'</td>'
+      +'<td style="text-align:right">'+fmtNum(r.total_ars,2)+'</td><td style="text-align:right">'+fmtNum(r.total_usd,2)+'</td>'
+      +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
+      +'<td><div class="row-actions">'+(r.exportado?'':'<button class="iconbtn" title="Editar" onclick="openPanolEgresoForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
+    : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Sin egresos cargados en este período.</td></tr>';
+
+  const resumenTbl=(list,label)=>'<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>'+label+'</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th></tr></thead><tbody>'
+    +(list.length?list.map(x=>'<tr><td>'+esc(x.cod)+'</td><td style="text-align:right">'+fmtNum(x.cantidad,2)+'</td><td style="text-align:right">'+fmtNum(x.ars,2)+'</td><td style="text-align:right">'+fmtNum(x.usd,2)+'</td></tr>').join('')
+     :'<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--muted)">Sin datos.</td></tr>')
+    +'</tbody></table></div>';
+
+  C().innerHTML =
+    '<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px">'
+      +'<h3 style="margin:0">Saldos actuales (Tango)</h3><span class="meta">'+saldos.length+' filas'+(saldos[0]&&saldos[0].actualizado_en?' · última importación: '+fmtDate(String(saldos[0].actualizado_en).slice(0,10)):'')+'</span>'
+      +'<span style="margin-left:auto"><button class="btn ghost sm" onclick="openPanolSyncSaldos()">Importar saldos de Tango</button></span></div>'
+      +'<div style="padding:10px 16px 14px">'+saldosTbl+'</div></div>'
+
+    +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px">'
+      +'<h3 style="margin:0">Egresos a producción</h3><span class="meta">Período '+periodoInput+' · '+rows.length+' movimientos · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" onclick="openPanolSyncPrecios()">Importar costos (Precios)</button>'
+      +'<button class="btn ghost sm" onclick="panolGenerarEgresoTango()">Generar egreso para Tango'+(pendientesTot?' ('+pendientesTot+')':'')+'</button>'
+      +'<button class="btn sm" onclick="openPanolEgresoForm()">'+ICO.plus+'Cargar egreso</button></span></div>'
+      +'<div style="font-size:11.5px;color:var(--muted);padding:0 16px 8px">"Generar egreso para Tango" toma todos los movimientos pendientes de exportar (de cualquier período), no solo los de arriba.</div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid"><thead><tr>'+movHead+'<th style="width:80px"></th></tr></thead><tbody>'+movRows+'</tbody></table></div></div>'
+
+    +'<div class="frow c2">'
+      +'<div class="card"><div class="card-h"><h3 style="margin:0">Valorización por obra</h3><span class="meta">Período seleccionado</span></div><div style="padding:10px 16px 14px">'+resumenTbl(porObra,'Obra')+'</div></div>'
+      +'<div class="card"><div class="card-h"><h3 style="margin:0">Valorización por artículo</h3><span class="meta">Período seleccionado</span></div><div style="padding:10px 16px 14px">'+resumenTbl(porArt,'Artículo')+'</div></div>'
+    +'</div>';
+}
+window.renderPanol=renderPanol;
+
+function openPanolEgresoForm(id){
+  const cur = id!=null ? (DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)) : null;
+  if(cur && cur.exportado){ toast('Este egreso ya se exportó a Tango; no se puede editar.'); return; }
+  const hoy=new Date().toISOString().slice(0,10);
+  const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(cur&&cur.cod_deposito===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
+  const obraOpts=auxOpts('3').map(o=>'<option value="'+esc(o.cod)+'"'+(cur&&cur.proyecto_cod===o.cod?' selected':'')+'>'+esc(o.cod)+' · '+esc(o.desc)+'</option>').join('');
+  const artOpts=(DIC.articulos||[]).map(a=>'<option value="'+esc(a.codigo)+'"'+(cur&&cur.cod_articulo===a.codigo?' selected':'')+'>'+esc(a.codigo)+' · '+esc(a.descripcion)+'</option>').join('');
+  const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pn_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'"></div>'
+    +'<div class="field"><label>Depósito</label><select id="pn_deposito"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
+    +'<div class="field"><label>Artículo</label><select id="pn_articulo" onchange="panolArticuloChanged()"><option value="">— elegí —</option>'+artOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pn_cantidad" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolCalcTotal()"></div>'
+    +'<div class="field"><label>Unidad de medida</label><input id="pn_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Obra</label><select id="pn_obra"><option value="">— elegí —</option>'+obraOpts+'</select></div>'
+    +'<div class="field"><label>Operario</label><input id="pn_operario" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Nombre, o dejalo vacío = Genérico"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Costo unit. ARS</label><input id="pn_costo_ars" type="number" step="0.01" value="'+(cur?cur.costo_unit_ars:'')+'" oninput="panolCalcTotal()"></div>'
+    +'<div class="field"><label>Costo unit. USD</label><input id="pn_costo_usd" type="number" step="0.01" value="'+(cur?cur.costo_unit_usd:'')+'" oninput="panolCalcTotal()"></div></div>'
+    +'<div id="pn_totalNote" style="font-size:12px;color:var(--muted);margin:2px 0 10px"></div>'
+    +'<div class="field"><label>Comentario</label><input id="pn_comentario" type="text" value="'+esc(cur?(cur.comentario||''):'')+'"></div>';
+  openModal((cur?'Editar':'Cargar')+' egreso de pañol', body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolEgreso('+(cur?cur.id:'null')+')">Guardar</button>');
+  if(cur) panolCalcTotal();
+}
+window.openPanolEgresoForm=openPanolEgresoForm;
+function panolArticuloChanged(){
+  const cod=document.getElementById('pn_articulo').value;
+  const c=articuloCostoRef(cod);
+  document.getElementById('pn_costo_ars').value = c.ars||'';
+  document.getElementById('pn_costo_usd').value = c.usd||'';
+  panolCalcTotal();
+}
+window.panolArticuloChanged=panolArticuloChanged;
+function panolCalcTotal(){
+  const el=document.getElementById('pn_totalNote'); if(!el) return;
+  const cant=+(document.getElementById('pn_cantidad')||{}).value||0;
+  const cArs=+(document.getElementById('pn_costo_ars')||{}).value||0;
+  const cUsd=+(document.getElementById('pn_costo_usd')||{}).value||0;
+  el.textContent='Total: $ '+fmtNum(cant*cArs,2)+' ARS · US$ '+fmtNum(cant*cUsd,2);
+}
+window.panolCalcTotal=panolCalcTotal;
+async function guardarPanolEgreso(id){
+  const fecha=document.getElementById('pn_fecha').value;
+  const cod_deposito=document.getElementById('pn_deposito').value;
+  const cod_articulo=document.getElementById('pn_articulo').value;
+  const cantidad=+document.getElementById('pn_cantidad').value||0;
+  const um=document.getElementById('pn_um').value.trim();
+  const proyecto_cod=document.getElementById('pn_obra').value;
+  const operario=document.getElementById('pn_operario').value.trim()||'Genérico';
+  const costo_unit_ars=+document.getElementById('pn_costo_ars').value||0;
+  const costo_unit_usd=+document.getElementById('pn_costo_usd').value||0;
+  const comentario=document.getElementById('pn_comentario').value.trim();
+  if(!fecha){ toast('Elegí una fecha'); return; }
+  if(!cod_deposito){ toast('Elegí un depósito'); return; }
+  if(!cod_articulo){ toast('Elegí un artículo'); return; }
+  if(!cantidad){ toast('Ingresá una cantidad'); return; }
+  if(!proyecto_cod){ toast('Elegí la obra'); return; }
+  const periodo=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
+  const row={ fecha, periodo, cod_deposito, cod_articulo, cantidad, um, proyecto_cod, operario,
+    costo_unit_ars, costo_unit_usd, total_ars:+(cantidad*costo_unit_ars).toFixed(2), total_usd:+(cantidad*costo_unit_usd).toFixed(2),
+    comentario, exportado:false };
+  if(DEMO_MODE){
+    DIC.panol_egresos=DIC.panol_egresos||[];
+    if(id==null){ row.id=Math.max(0,...DIC.panol_egresos.map(r=>+r.id||0))+1; DIC.panol_egresos.push(row); }
+    else{ const r=DIC.panol_egresos.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,row); }
+  }else{
+    row.creado_por=(AUTH_USER&&AUTH_USER.email)||'';
+    if(id==null) await sbFetch('/panol_egresos',{method:'POST',body:JSON.stringify(row)});
+    else await sbFetch('/panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
+    await reloadDB();
+  }
+  closeModal(); toast('Guardado'); renderPanol();
+}
+window.guardarPanolEgreso=guardarPanolEgreso;
+function askPanolEgresoDel(id){
+  const r=(DIC.panol_egresos||[]).find(x=>String(x.id)===String(id)); if(r&&r.exportado){ toast('Ya se exportó a Tango; no se puede eliminar.'); return; }
+  openModal('Eliminar egreso','<p style="margin:0;font-size:14px">¿Eliminar este egreso de pañol?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmPanolEgresoDel('+id+')">Eliminar</button>');
+}
+window.askPanolEgresoDel=askPanolEgresoDel;
+async function confirmPanolEgresoDel(id){
+  if(!DEMO_MODE){ try{ await sbFetch('/panol_egresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(e){ toast('No se pudo eliminar'); return; } }
+  DIC.panol_egresos=(DIC.panol_egresos||[]).filter(r=>String(r.id)!==String(id));
+  closeModal(); toast('Eliminado'); renderPanol();
+}
+window.confirmPanolEgresoDel=confirmPanolEgresoDel;
+
+function panolGenerarEgresoTango(){
+  const pendientes=(DIC.panol_egresos||[]).filter(r=>!r.exportado);
+  if(!pendientes.length){ toast('No hay egresos pendientes de exportar'); return; }
+  const agg={};
+  pendientes.forEach(r=>{ const k=r.cod_deposito+'||'+r.cod_articulo; agg[k]=agg[k]||{cod_deposito:r.cod_deposito, cod_articulo:r.cod_articulo, cantidad:0, um:r.um}; agg[k].cantidad+=+r.cantidad||0; });
+  const filas=[['Código','Descripción','Depósito','Informar partida','Número partida','Unidad medida','Cantidad','Unidad medida 2','Cantidad 2','Precio','Error']];
+  Object.values(agg).forEach(g=>{ filas.push([g.cod_articulo, artDesc(g.cod_articulo)||'', g.cod_deposito, '', '', g.um||'UNI', g.cantidad, '', '', '', '']); });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[]]), 'Egresos de Stock');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), 'Artículos y partidas');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Código','Descripción','Depósito','Número partida','Número serie','Descripción adicional 1','Descripción adicional 2','Comentario','Error']]), 'Series');
+  XLSX.writeFile(wb, 'Egreso_Stock_Panol_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  panolMarcarExportados(pendientes);
+}
+window.panolGenerarEgresoTango=panolGenerarEgresoTango;
+async function panolMarcarExportados(rows){
+  const ahora=new Date().toISOString();
+  if(DEMO_MODE){ rows.forEach(r=>{ r.exportado=true; r.exportado_en=ahora; }); }
+  else{
+    for(const r of rows){ try{ await sbFetch('/panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify({exportado:true, exportado_en:ahora}),prefer:'return=minimal'}); }catch(e){} }
+    await reloadDB();
+  }
+  toast('Egreso generado ('+rows.length+' movimientos) y marcado como exportado'); renderPanol();
+}
+
+/* ===== Importar "Saldos" de Tango (foto de existencia real por artículo/depósito) ===== */
+function openPanolSyncSaldos(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "Stock - Artículos - Saldos". Reemplaza toda la tabla de saldos actuales — es una foto del momento, no un histórico.</div>'
+    +'<div class="field"><label>Saldos (.xlsx) *</label><input id="pnsal_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="pnsalMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolSyncSaldosAnalizar()">Importar</button>';
+  openModal('Importar saldos de Tango', body, foot);
+}
+window.openPanolSyncSaldos=openPanolSyncSaldos;
+async function panolSyncSaldosAnalizar(){
+  const f=(document.getElementById('pnsal_file').files||[])[0];
+  const msg=document.getElementById('pnsalMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'Cód. Artículo','Cod. Articulo')>=0 && _syncIdx(h,'Saldo control stock')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "Cód. Artículo" y "Saldo control stock".');
+    const H=rows[0];
+    const iCod=_syncIdx(H,'Cód. Artículo','Cod. Articulo'), iDesc=_syncIdx(H,'Descripción','Descripcion'),
+          iDep=_syncIdx(H,'Cód. Depósito','Cod. Deposito'), iDepDesc=_syncIdx(H,'Descripción depósito','Descripcion deposito'),
+          iUm=_syncIdx(H,'U.M. control stock'), iSaldo=_syncIdx(H,'Saldo control stock'),
+          iComp=_syncIdx(H,'Cantidad comprometida control stock'), iRec=_syncIdx(H,'Cantidad a recibir control stock'),
+          iPP=_syncIdx(H,'Punto de Pedido');
+    const ahora=new Date().toISOString();
+    const out=[];
+    for(let i=1;i<rows.length;i++){
+      const cod=_syncNorm(rows[i][iCod]); if(!cod) continue;
+      out.push({cod_articulo:cod, descripcion:iDesc>=0?_syncNorm(rows[i][iDesc]):'', cod_deposito:iDep>=0?_syncNorm(rows[i][iDep]):'',
+        desc_deposito:iDepDesc>=0?_syncNorm(rows[i][iDepDesc]):'', um:iUm>=0?_syncNorm(rows[i][iUm]):'',
+        saldo:+rows[i][iSaldo]||0, cant_comprometida:iComp>=0?(+rows[i][iComp]||0):0, cant_a_recibir:iRec>=0?(+rows[i][iRec]||0):0,
+        punto_pedido:iPP>=0?(+rows[i][iPP]||0):0, actualizado_en:ahora});
+    }
+    if(!out.length) throw new Error('No encontré filas de datos.');
+    if(DEMO_MODE){ DIC.stock_saldos=out; }
+    else{
+      await sbFetch('/stock_saldos?cod_articulo=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+      for(let i=0;i<out.length;i+=500){ await sbFetch('/stock_saldos',{method:'POST', body:JSON.stringify(out.slice(i,i+500))}); }
+      DIC.stock_saldos=out;
+    }
+    closeModal(); toast('Saldos actualizados: '+out.length+' filas'); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolSyncSaldosAnalizar=panolSyncSaldosAnalizar;
+
+/* ===== Importar "Precios" de Tango (costo de referencia por artículo) ===== */
+function openPanolSyncPrecios(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "Precios" (último costo de compra por artículo). Actualiza el costo de referencia ARS/USD de los artículos que coincidan por código; no toca los que no aparezcan en el archivo.</div>'
+    +'<div class="field"><label>Precios (.xlsx) *</label><input id="pnprc_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="pnprcMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolSyncPreciosAnalizar()">Importar</button>';
+  openModal('Importar costos de referencia (Precios) de Tango', body, foot);
+}
+window.openPanolSyncPrecios=openPanolSyncPrecios;
+async function panolSyncPreciosAnalizar(){
+  const f=(document.getElementById('pnprc_file').files||[])[0];
+  const msg=document.getElementById('pnprcMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'COD_ARTIC')>=0 && (_syncIdx(h,'COSTO_LO')>=0||_syncIdx(h,'COSTO_EX')>=0));
+    if(!rows) throw new Error('No encontré una hoja con columnas "COD_ARTIC" y "COSTO_LO"/"COSTO_EX".');
+    const H=rows[0];
+    const iCod=_syncIdx(H,'COD_ARTIC'), iProv=_syncIdx(H,'PROV_ULC'), iArs=_syncIdx(H,'COSTO_LO'), iUsd=_syncIdx(H,'COSTO_EX'), iFecha=_syncIdx(H,'FECHA_ULC');
+    const updates=[]; let sinMatch=0;
+    for(let i=1;i<rows.length;i++){
+      const cod=_syncNorm(rows[i][iCod]); if(!cod) continue;
+      const art=(DIC.articulos||[]).find(a=>a.codigo===cod);
+      if(!art){ sinMatch++; continue; }
+      const fechaRaw=iFecha>=0?rows[i][iFecha]:null;
+      let fecha='';
+      if(fechaRaw instanceof Date) fecha=fechaRaw.toISOString().slice(0,10);
+      else if(fechaRaw){ const d=new Date(fechaRaw); if(!isNaN(d)) fecha=d.toISOString().slice(0,10); }
+      updates.push({codigo:cod, costo_ars:iArs>=0?(+rows[i][iArs]||0):0, costo_usd:iUsd>=0?(+rows[i][iUsd]||0):0, costo_fecha:fecha, costo_proveedor:iProv>=0?_syncNorm(rows[i][iProv]):''});
+    }
+    if(!updates.length) throw new Error('No encontré artículos que coincidan por código con el diccionario.');
+    msg.textContent='Actualizando '+updates.length+' artículos'+(sinMatch?' ('+sinMatch+' códigos del archivo no existen en el diccionario)':'')+'…';
+    if(DEMO_MODE){
+      updates.forEach(u=>{ const a=DIC.articulos.find(x=>x.codigo===u.codigo); if(a) Object.assign(a,u); });
+    }else{
+      for(const u of updates){ await sbFetch('/articulos?codigo=eq.'+encodeURIComponent(u.codigo),{method:'PATCH',body:JSON.stringify({costo_ars:u.costo_ars,costo_usd:u.costo_usd,costo_fecha:u.costo_fecha||null,costo_proveedor:u.costo_proveedor}),prefer:'return=minimal'}); }
+      await reloadDB();
+    }
+    closeModal(); toast('Costos actualizados: '+updates.length+' artículos'); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolSyncPreciosAnalizar=panolSyncPreciosAnalizar;
+
 function setOGFiltro(k,v){ OG_FILTRO[k]=v; renderCompras(); }
 function limpiarOGFiltro(){ OG_FILTRO={comprador:'',certificador:'',proveedor:'',clasifRenglon:'',estado:'todas'}; renderCompras(); }
 window.setOGFiltro=setOGFiltro; window.limpiarOGFiltro=limpiarOGFiltro;
@@ -5027,8 +5287,8 @@ function exportDicTab(){
     sheetName='Proveedores'; fname='Diccionario_Proveedores_'+hoy+'.xlsx';
   } else if(DIC_TAB==='articulos'){
     let rows=DIC.articulos.filter(r=>dicRowPass('articulos',r)); if(q) rows=rows.filter(r=>dicMatch(r,q)); rows=dicApplySort('articulos',rows);
-    aoa=[['Código','Descripción','Descripción adicional','Sinónimo','N° cuenta','Cuenta'],
-      ...rows.map(r=>[r.codigo,r.descripcion,r.desc_adicional,r.sinonimo,r.cuenta_cod,r.cuenta])];
+    aoa=[['Código','Descripción','Descripción adicional','Sinónimo','N° cuenta','Cuenta','Costo ref. ARS','Costo ref. USD','Fecha costo','Proveedor último'],
+      ...rows.map(r=>[r.codigo,r.descripcion,r.desc_adicional,r.sinonimo,r.cuenta_cod,r.cuenta,r.costo_ars,r.costo_usd,r.costo_fecha,r.costo_proveedor])];
     sheetName='Artículos'; fname='Diccionario_Articulos_'+hoy+'.xlsx';
   } else if(DIC_TAB==='depositos'){
     let rows=(DIC.depositos||[]).filter(r=>dicRowPass('depositos',r)); if(q) rows=rows.filter(r=>dicMatch(r,q)); rows=dicApplySort('depositos',rows);
@@ -6380,12 +6640,13 @@ function paintDic(){
     let rows=(DIC.articulos||[]).filter(r=>dicRowPass('articulos',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('articulos', rows);
-    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+'</tr></thead><tbody>'
+    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+'<th style="text-align:right">Costo ref.</th>'+'</tr></thead><tbody>'
       +rows.slice(0,500).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td><td>'+esc(r.descripcion)+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.desc_adicional||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.sinonimo||'—')+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.cuenta_cod||'—')+'</td>'
-        +'<td style="font-size:12px">'+esc(r.cuenta||'—')+'</td></tr>').join('')+'</tbody></table></div>'
+        +'<td style="font-size:12px">'+esc(r.cuenta||'—')+'</td>'
+        +'<td style="text-align:right;font-size:11.5px">'+(r.costo_ars?('$ '+fmtNum(r.costo_ars,2)+' / US$ '+fmtNum(r.costo_usd||0,2)):'—')+(r.costo_fecha?'<div style="color:var(--muted);font-size:10.5px">'+fmtDate(r.costo_fecha)+'</div>':'')+'</td></tr>').join('')+'</tbody></table></div>'
       +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);margin-top:8px;padding:0 15px">Mostrando 500 de '+rows.length+'. Usá el buscador para filtrar.</div>':'')
       +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">La cuenta es la <em>por defecto</em>; puede variar según el destino (el auxiliar contable define el caso). Los códigos GC son los habilitados para compras.</div>';
     const syncBtn=ROLE.admin?'<button class="btn sm" onclick="openSyncTango()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:5px;vertical-align:-2px"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>Sincronizar con Tango</button>':'';
@@ -6921,15 +7182,28 @@ async function reloadDB(){
         catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
       if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}));
     }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ }
-    // Artículos: idem
+    // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
+    // reciente: si la columna todavía no existe en producción, cae al select clásico.
     try{
-      const arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc');
-      if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||''}));
+      let arts;
+      try{ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
+      catch(colErr){ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
+      if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||'',
+        costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||''}));
     }catch(e){ /* queda el ejemplo embebido */ }
     // Depósitos: diccionario nuevo, sincronizado desde Tango
     try{
       const deps = await sbFetchAll('/depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
       if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
+    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    // Pañol: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
+    try{
+      const egs = await sbFetchAll('/panol_egresos?select=*&order=fecha.desc,id.desc');
+      if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    try{
+      const sal = await sbFetchAll('/stock_saldos?select=*&order=cod_articulo.asc');
+      if(sal) DIC.stock_saldos = sal.map(r=>({...r, saldo:+r.saldo||0, cant_comprometida:+r.cant_comprometida||0, cant_a_recibir:+r.cant_a_recibir||0, punto_pedido:+r.punto_pedido||0}));
     }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
     // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
     try{
@@ -7063,6 +7337,24 @@ window.reloadDB=reloadDB;
       {id:8, herr_id:7, tipo:'prestamo', fecha:'2025-03-10', persona:'L. Díaz', desde:'2025-03-10', hasta:'2025-03-14'},
     ];
     DIC.motivos_cierre = MOTIVOS_CIERRE.map((m,i)=>({id:i+1, descripcion:m, activo:true}));
+    // Pañol: costo de referencia sobre un par de artículos ya existentes, depósitos, saldos (foto de
+    // Tango) y un par de egresos de ejemplo (uno ya exportado, otro pendiente).
+    (DIC.articulos||[]).forEach(a=>{
+      if(a.codigo==='GCAEI02000'){ a.costo_ars=240765.52; a.costo_usd=166.05; a.costo_fecha='2026-06-19'; a.costo_proveedor='HUUP'; }
+      if(a.codigo==='GCAMO01000'){ a.costo_ars=185000; a.costo_usd=128.5; a.costo_fecha='2026-05-10'; a.costo_proveedor='CARPINTERIA SUR'; }
+    });
+    DIC.depositos = [
+      {codigo:'01', descripcion:'INSUMOS DEPOSITO', direccion:'', inhabilitado:'No', sucursal:''},
+      {codigo:'13', descripcion:'SERVICIOS PM', direccion:'', inhabilitado:'No', sucursal:''},
+    ];
+    DIC.stock_saldos = [
+      {cod_articulo:'GCAEI02000', descripcion:'ARTEFACTO DE ILUMINACION', cod_deposito:'01', desc_deposito:'INSUMOS DEPOSITO', um:'UNI', saldo:5, cant_comprometida:0, cant_a_recibir:0, punto_pedido:0, actualizado_en:'2026-09-01'},
+      {cod_articulo:'GCAMO01000', descripcion:'MUEBLES A MEDIDA', cod_deposito:'01', desc_deposito:'INSUMOS DEPOSITO', um:'UNI', saldo:3, cant_comprometida:0, cant_a_recibir:0, punto_pedido:0, actualizado_en:'2026-09-01'},
+    ];
+    DIC.panol_egresos = [
+      {id:1, fecha:'2026-09-01', periodo:202609, cod_deposito:'01', cod_articulo:'GCAEI02000', cantidad:2, um:'UNI', proyecto_cod:'PL0004', operario:'C. Añazco', costo_unit_ars:240765.52, costo_unit_usd:166.05, total_ars:481531.04, total_usd:332.1, comentario:'', exportado:true, exportado_en:'2026-09-01T14:00:00.000Z'},
+      {id:2, fecha:'2026-09-02', periodo:202609, cod_deposito:'01', cod_articulo:'GCAMO01000', cantidad:1, um:'UNI', proyecto_cod:'IF4296', operario:'Genérico', costo_unit_ars:185000, costo_unit_usd:128.5, total_ars:185000, total_usd:128.5, comentario:'', exportado:false},
+    ];
     DIC.usd_diario = [
       {fecha:'2026-08-25', compra:1470, venta:1490, fuente:'manual'},
       {fecha:'2026-08-26', compra:1475, venta:1495, fuente:'manual'},
