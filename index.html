@@ -435,6 +435,7 @@ const ICO={
   del:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
   pdf:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v6h6"/></svg>',
   ban:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg>',
+  copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>',
 };
 
 /* ===== color de badges por texto de estado (genérico y editable) ===== */
@@ -2288,6 +2289,7 @@ async function renderCompras(){
         +'<td><div class="row-actions">'
         +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
+        +(puedeCrearOG()?'<button class="iconbtn" title="Duplicar OG (crea una copia abierta, sin certificar ni pagar)" onclick="duplicateOG('+o.id+')">'+ICO.copy+'</button>':'')
         +((puedeEditarOG(o)&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
         +'</div></td></tr>';
       return head+(exp?ogDetail(o):'');
@@ -3877,9 +3879,26 @@ function renderCertPanel(){
 }
 window.renderCertPanel=renderCertPanel;
 
+/* ---- Duplicar OG: copia todo lo editable en una OG nueva "Abierta" (sin certificar ni pagar) ---- */
+let OG_DUP_PREFILL=null;   // precarga de openOG(null) para la próxima vez que se abra (se consume una sola vez)
+function duplicateOG(id){
+  const o=ogById(id); if(!o){ toast('No encontré la OG.'); return; }
+  if(!puedeCrearOG()){ toast('No tenés permiso para crear una OG.'); return; }
+  const { id:_id, numero:_numero, anulada:_an, anulada_por:_ap, anulada_fecha:_af, ...resto } = o;
+  OG_DUP_PREFILL={ ...resto,
+    fecha:new Date().toISOString().slice(0,10),
+    comprador: MI_NOMBRE||o.comprador,
+    items:(o.items||[]).map(it=>({...it})),   // copia limpia: no hay certificados para esta OG nueva, así que ningún renglón queda bloqueado
+  };
+  openOG(null);
+  toast('OG duplicada como borrador — revisá los datos y guardá para crearla.');
+}
+window.duplicateOG=duplicateOG;
 /* ---- Alta / edición de OG ---- */
 function openOG(id){
-  const o = id!=null ? ogById(id) : null; const cur=o||{};
+  const o = id!=null ? ogById(id) : null;
+  const cur = o || OG_DUP_PREFILL || {};
+  if(id==null) OG_DUP_PREFILL=null;   // se usa una sola vez
   if(!o && !puedeCrearOG()){ toast('No tenés permiso para crear una OG.'); return; }
   const soloLectura = !!o && !puedeEditarOG(o);
   const bloqCabecera = ogCabeceraBloqueada(o);
