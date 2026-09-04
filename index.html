@@ -1873,6 +1873,10 @@ const IDX_DEF={
     fuenteUrl:'http://estudiodelamo.com/indice-salarios-argentina/',
     campos:[ {k:'ars', label:'Sueldos $ (RIPTE)'}, {k:'pct', label:'Sueldos % (índice)'} ] },
 };
+// Sueldos (RIPTE) es información sensible de compensaciones: solo la ve quien tiene el mismo
+// permiso "confidencial" que ya usa Contabilidad para ocultar cuentas confidenciales (canSeeConfid,
+// más abajo) — hoy Micaela y Pablo Spinetto, vía el flag ve_confidencial de usuarios_autorizados.
+function idxDefNs(){ return Object.keys(IDX_DEF).filter(ns=>ns!=='sueldos'||(typeof canSeeConfid==='function'&&canSeeConfid())); }
 // Polinómica es la única con un "índice" calculado (ponderación de sus 6 campos); IPC/CAC son series paralelas, cada campo es su propio valor.
 function idxCalculado(ns, row){
   const def=IDX_DEF[ns]; if(!def.pesos) return null;
@@ -1880,7 +1884,7 @@ function idxCalculado(ns, row){
 }
 function idxSerieOpts(){
   const opts=[];
-  Object.keys(IDX_DEF).forEach(ns=>{
+  idxDefNs().forEach(ns=>{
     const def=IDX_DEF[ns];
     if(def.pesos) opts.push({ns, campo:'indice', label:def.nombre});
     else def.campos.forEach(c=>opts.push({ns, campo:c.k, label:def.nombre+' · '+c.label}));
@@ -1929,13 +1933,15 @@ async function idxDelete(ns, periodo){
 
 /* ===== Vista "Índices" ===== */
 let IDX_TAB='ipc';
-function setIdxTab(t){ IDX_TAB=t; renderIndices(); }
+function setIdxTab(t){ IDX_TAB=idxDefNs().includes(t)?t:'ipc'; renderIndices(); }
 window.setIdxTab=setIdxTab;
-// Evolución comparada: 10 series candidatas (una por índice/campo), indexadas a 0% en el período
+// Evolución comparada: 9 series candidatas (una por índice/campo), indexadas a 0% en el período
 // base — así se pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica
-// validada (orden fijo, 8 tonos con separación garantizada); las 2 series de Sueldos reutilizan el
-// tono de IPC/CAC con trazo punteado (encoding secundario) en vez de sumar tonos nuevos sin validar.
-// El usuario elige cuáles mostrar (checkboxes); arrancan las 10 tildadas.
+// validada (orden fijo, 8 tonos con separación garantizada); Sueldos $ reutiliza el tono de CAC
+// Costo Construcción con trazo punteado (encoding secundario) en vez de sumar un tono sin validar.
+// El usuario elige cuáles mostrar (checkboxes); arrancan todas tildadas. Sueldos además solo se
+// lista/dibuja para quien tiene permiso "confidencial" (idxEvolAllVisible, más abajo) — para el
+// resto ni el checkbox ni la serie existen, aunque sigan en IDX_EVOL_SEL.
 const IDX_EVOL_ALL=[
   {key:'ipc_nacional', ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
   {key:'uva_valor', ns:'uva', campo:'valor', label:'UVA', short:'UVA', color:'#008300'},
@@ -1947,6 +1953,7 @@ const IDX_EVOL_ALL=[
   {key:'poli_indice', ns:'poli', campo:'indice', label:'Polinómica', short:'Polinómica', color:'#1baf7a'},
   {key:'sueldos_ars', ns:'sueldos', campo:'ars', label:'Sueldos $ (RIPTE)', short:'Sueldos $', color:'#eb6834', dash:'5,3'},
 ];
+function idxEvolAllVisible(){ return IDX_EVOL_ALL.filter(s=>s.ns!=='sueldos'||(typeof canSeeConfid==='function'&&canSeeConfid())); }
 const IDX_EVOL_MAX=IDX_EVOL_ALL.length;
 let IDX_EVOL_SEL=new Set(IDX_EVOL_ALL.map(s=>s.key));
 function toggleIdxEvolSerie(key){
@@ -2034,7 +2041,7 @@ function idxEvolTabla(series){
   return '<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Período</th>'+series.map(s=>'<th style="text-align:right">'+idxEvolLabelHtml(s)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 function idxEvolChecks(){
-  return '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 16px 0">'+IDX_EVOL_ALL.map(s=>{
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 16px 0">'+idxEvolAllVisible().map(s=>{
     const checked=IDX_EVOL_SEL.has(s.key);
     const disabled=!checked && IDX_EVOL_SEL.size>=IDX_EVOL_MAX;
     return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;'+(disabled?'opacity:.45':'')+'">'
@@ -2043,7 +2050,7 @@ function idxEvolChecks(){
   }).join('')+'</div>';
 }
 function idxEvolucionHtml(){
-  const series0=IDX_EVOL_ALL.filter(s=>IDX_EVOL_SEL.has(s.key));
+  const series0=idxEvolAllVisible().filter(s=>IDX_EVOL_SEL.has(s.key));
   const head='<div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas.</span></div>';
   if(!series0.length) return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()+'<div style="padding:6px 16px 14px;color:var(--muted);font-size:12.5px">Elegí al menos un índice para graficar.</div></div>';
   if(IDX_EVOL_BASE==null) IDX_EVOL_BASE=idxEvolBaseDefault(series0);
@@ -2058,9 +2065,10 @@ function idxEvolucionHtml(){
     +'<div style="padding:0 16px 14px">'+idxEvolTabla(series)+'</div></div>';
 }
 function renderIndices(){
-  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+Object.keys(IDX_DEF).map(ns=>
+  if(IDX_TAB==='sueldos' && !(typeof canSeeConfid==='function'&&canSeeConfid())) IDX_TAB='ipc';
+  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+idxDefNs().map(ns=>
     '<button class="mtab'+(IDX_TAB===ns?' active':'')+'" onclick="setIdxTab(\''+ns+'\')">'+esc(IDX_DEF[ns].nombre.split(' (')[0].split(' ·')[0])+'</button>').join('')+'</div>';
-  const faltantes=Object.keys(IDX_DEF).map(ns=>({ns, per:idxFaltante(ns)})).filter(x=>x.per!=null);
+  const faltantes=idxDefNs().map(ns=>({ns, per:idxFaltante(ns)})).filter(x=>x.per!=null);
   const banner = faltantes.length ? '<div class="card" style="padding:12px 16px;margin-bottom:14px;background:#fdf3d9;border:1px solid #e0c46c;font-size:13px"><strong>Hay índices para actualizar:</strong> '
     +faltantes.map(f=>esc(IDX_DEF[f.ns].nombre.split(' (')[0].split(' ·')[0])+' de '+idxPeriodoFmt(f.per)).join(' · ')+'</div>' : '';
   C().innerHTML = banner + idxEvolucionHtml() + tabs + idxTabBody(IDX_TAB);
