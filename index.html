@@ -89,11 +89,19 @@ table.grid th .col-resizer:hover,table.grid th .col-resizer.active{background:rg
 /* !important: varias vistas arman el <th> con style="white-space:nowrap" inline (xlfTh y afines);
    un estilo inline le gana a cualquier regla de hoja de estilos salvo que ésta sea !important. */
 table.grid.grid-fixed th{white-space:normal!important;line-height:1.3;}
-.tbl-hscroll{overflow:auto;max-height:70vh;}
+/* resize:horizontal + overflow:auto = tirador nativo del navegador en la esquina inferior derecha
+   para achicar/agrandar el cuadro a mano; max-width evita que se arrastre más allá de la card, y si
+   el contenido no entra en lo que el usuario eligió, scrollea (el mismo overflow:auto). */
+.tbl-hscroll{overflow:auto;max-height:70vh;resize:horizontal;max-width:100%;min-width:180px;}
 /* Tablas de informes numéricos densos (ej. Índices): el ancho sigue al contenido en vez de estirarse
    a 100% del contenedor, así las columnas quedan pegadas y el cuadro se achica junto con ellas. */
 .tbl-compact table.grid{width:auto;}
 .tbl-compact table.grid th,.tbl-compact table.grid td{padding-left:10px;padding-right:10px;}
+/* El wrapper también se achica al contenido (si no, el tirador de resize queda flotando lejos de la
+   tabla, en el borde de la card en vez de en el borde real de la tabla angosta). Seguro acá porque
+   la tabla ya tiene un ancho explícito (width:auto de arriba), sin la dependencia circular que
+   tendría un <table> al 100% dentro de un wrapper que también se achica a su contenido. */
+.tbl-compact.tbl-hscroll{display:inline-block;width:auto;vertical-align:top;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
 .iconbtn{background:none;border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;color:var(--muted);display:inline-flex;}
 .iconbtn svg{width:15px;height:15px;}
@@ -247,7 +255,7 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
 .modal.xwide input,.modal.xwide select,.modal.xwide textarea{font-size:13px;padding:8px 9px;}
 .modal.xwide .og-items-tbl th{font-size:10px;}
 .modal.xwide .og-items-tbl input,.modal.xwide .og-items-tbl select{font-size:12px;padding:4px 6px;}
-.dic-scroll{max-height:62vh;overflow:auto;border-radius:8px;}
+.dic-scroll{max-height:62vh;overflow:auto;border-radius:8px;resize:horizontal;max-width:100%;min-width:180px;}
 .dic-scroll table{margin:0;}
 .dic-scroll thead th{position:sticky;top:0;background:#efece1;z-index:3;box-shadow:0 1px 0 var(--line);}
 .modal-b{padding:18px;}
@@ -490,13 +498,54 @@ function colResizeApplySaved(table){
 function colResizeSave(table, ths){
   const sig=colResizeSig(table);
   const widths={}; ths.forEach((th,i)=>{ const w=parseInt(th.style.width,10); if(w) widths[i]=w; });
-  try{ localStorage.setItem(sig, JSON.stringify(widths)); }catch(e){}
+  uiPrefSet(sig, widths);
+}
+// Guarda cualquier preferencia (ancho de columnas, ancho del cuadro) bajo su "firma", en localStorage
+// (respaldo instantáneo) y en ui_prefs de Supabase si hay sesión — mismo mecanismo para las dos cosas.
+function uiPrefSet(sig, value){
+  try{ localStorage.setItem(sig, JSON.stringify(value)); }catch(e){}
   if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
-    UI_PREFS_COLW=UI_PREFS_COLW||{}; UI_PREFS_COLW[sig]=widths;
+    UI_PREFS_COLW=UI_PREFS_COLW||{}; UI_PREFS_COLW[sig]=value;
     sbFetch('/ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW}),prefer:'resolution=merge-duplicates,return=minimal'})
       .catch(()=>{ /* sin conexión: ya quedó en localStorage, se reintenta en el próximo ajuste */ });
   }
 }
+function uiPrefGet(sig){
+  let saved=(UI_PREFS_COLW&&UI_PREFS_COLW[sig])!=null?UI_PREFS_COLW[sig]:null;
+  if(saved==null) try{ saved=JSON.parse(localStorage.getItem(sig)||'null'); }catch(e){}
+  return saved;
+}
+/* ===== Ancho del cuadro (todo el bloque de la tabla, no solo columnas) =====
+   Redimensionable a mano (tirador nativo del navegador, esquina inferior derecha de cada
+   .tbl-hscroll/.dic-scroll — ver CSS "resize:horizontal"). Se detecta el drag por posición del
+   mousedown (no hay forma de engancharse al tirador nativo directamente) y se guarda con el mismo
+   mecanismo que el ancho de columnas, para que "hasta dónde quiero que llegue el cuadro" quede
+   guardado por vista y por usuario, igual que las columnas. */
+let RESIZING_WRAPPER=null;
+function tblWidthSig(table){
+  const ths=[...table.querySelectorAll('thead th')].map(th=>(th.textContent||'').trim()).join('|');
+  let h=0; for(let i=0;i<ths.length;i++) h=(h*31+ths.charCodeAt(i))|0;
+  return 'tblw:'+ths.length+':'+h;
+}
+function tblWidthApplySaved(wrap, table){
+  const w=uiPrefGet(tblWidthSig(table));
+  if(w) wrap.style.width=w+'px';
+}
+function tblWidthSave(wrap, table){
+  uiPrefSet(tblWidthSig(table), Math.round(wrap.getBoundingClientRect().width));
+}
+document.addEventListener('mousedown', e=>{
+  const wrap=e.target.closest && e.target.closest('.tbl-hscroll,.dic-scroll');
+  if(!wrap) return;
+  const r=wrap.getBoundingClientRect();
+  if((r.right-e.clientX)<=16 && (r.bottom-e.clientY)<=16) RESIZING_WRAPPER=wrap;   // esquina del tirador nativo
+});
+document.addEventListener('mouseup', ()=>{
+  if(!RESIZING_WRAPPER) return;
+  const table=RESIZING_WRAPPER.querySelector('table.grid');
+  if(table) tblWidthSave(RESIZING_WRAPPER, table);
+  RESIZING_WRAPPER=null;
+});
 // Se llama una vez al iniciar sesión (después de reloadDB): trae los anchos de columna guardados
 // para este usuario y reaplica sobre las tablas que ya se hayan montado con el valor de localStorage.
 async function uiPrefsLoad(){
@@ -506,18 +555,22 @@ async function uiPrefsLoad(){
     UI_PREFS_COLW=(rows&&rows[0]&&rows[0].colwidths)||{};
   }catch(e){ UI_PREFS_COLW={}; }
   document.querySelectorAll('table.grid[data-colresize-init]').forEach(colResizeApplySaved);
+  document.querySelectorAll('.tbl-hscroll,.dic-scroll').forEach(wrap=>{ const t=wrap.querySelector('table.grid'); if(t) tblWidthApplySaved(wrap, t); });
 }
 // Envuelve la tabla en un contenedor con scroll horizontal si todavía no lo tiene (ej. las que ya
 // traían ".dic-scroll" del Diccionario quedan como estaban). Sin esto, una tabla más ancha que la
 // card queda recortada sin forma de llegar a las últimas columnas (.card tiene overflow:hidden).
 function tblEnsureHScroll(table){
-  if(table.closest('.dic-scroll,.tbl-hscroll')) return;
+  const existing=table.closest('.dic-scroll,.tbl-hscroll');
+  if(existing) return existing;
   const w=document.createElement('div'); w.className='tbl-hscroll';
   table.parentNode.insertBefore(w, table); w.appendChild(table);
+  return w;
 }
 function colResizeInit(table){
   if(table.dataset.colresizeInit) return; table.dataset.colresizeInit='1';
-  tblEnsureHScroll(table);
+  const wrap=tblEnsureHScroll(table);
+  tblWidthApplySaved(wrap, table);
   const ths=[...table.querySelectorAll('thead th')];
   if(ths.length<2) return;
   colResizeApplySaved(table);
@@ -6374,7 +6427,8 @@ function paintDic(){
       +'</tbody></table>';
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Cotización USD (día a día)</h3><span class="meta">'+rows.length+' de '+(DIC.usd_diario||[]).length+'</span>'
       +'<span style="margin-left:auto"><button class="btn sm" onclick="openNuevaCotizacion()">'+ICO.plus+'Nueva cotización</button></span></div>'
-      +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dólar blue comprador y vendedor por día (el promedio de ambos es lo que usan las OG y los pagos). Se completa solo cuando alguien abre la app ese día; los días que falten (fines de semana, feriados, días previos al arranque) se cargan a mano acá. El tipo de cambio de una OG usa la cotización del día <strong>anterior</strong> a su Fecha de creación; el de un pago, la del día anterior a su Fecha de pago.</div>'+udTbl+'</div>';
+      +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dólar blue comprador y vendedor por día (el promedio de ambos es lo que usan las OG y los pagos). Se completa solo cuando alguien abre la app ese día; los días que falten (fines de semana, feriados, días previos al arranque) se cargan a mano acá. El tipo de cambio de una OG usa la cotización del día <strong>anterior</strong> a su Fecha de creación; el de un pago, la del día anterior a su Fecha de pago.</div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh">'+udTbl+'</div></div>';
   } else if(DIC_TAB==='series'){
     _enrichSeries('otros');
     const base=SERIES_ACTIVAS.filter(r=>r.familia==='otros');
