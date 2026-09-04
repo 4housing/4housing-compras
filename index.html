@@ -74,7 +74,10 @@ a{color:var(--olive-deep);}
 .card-h h3{margin:0;font-size:15px;font-weight:700;}
 .card-h .meta{font-size:12px;color:var(--muted);font-weight:600;}
 table.grid{width:100%;border-collapse:collapse;}
-table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;position:sticky;top:0;z-index:3;box-shadow:0 1px 0 var(--line);}
+/* text-align:center !important: muchas columnas (montos, TC, etc.) traen su <th> con style="text-align:right"
+   inline para alinear con la celda numérica de abajo — eso le gana a cualquier regla sin !important. Los
+   títulos de encabezado van siempre centrados (el alineado izq/der queda solo para el contenido de las filas). */
+table.grid th{text-align:center!important;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;position:sticky;top:0;z-index:3;box-shadow:0 1px 0 var(--line);}
 table.grid td{padding:12px 16px;border-bottom:1px solid var(--line);font-size:10.5px;vertical-align:middle;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr:hover{background:#fbfaf3;}
@@ -848,6 +851,8 @@ function setHeader(view){
   }else if(view==='diccionarios'){
     document.getElementById('topActions').innerHTML='';
   }else if(view==='seguimiento'){
+    document.getElementById('topActions').innerHTML='';
+  }else if(view==='indices'||view==='precios'){
     document.getElementById('topActions').innerHTML='';
   }else{
     document.getElementById('topActions').innerHTML=
@@ -1880,13 +1885,86 @@ async function idxDelete(ns, periodo){
 let IDX_TAB='ipc';
 function setIdxTab(t){ IDX_TAB=t; renderIndices(); }
 window.setIdxTab=setIdxTab;
+// Evolución comparada: 3 series fijas (una por familia), indexadas a 0% en el período base — así se
+// pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica validada (orden fijo).
+const IDX_EVOL_SERIES=[
+  {ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
+  {ns:'cac', campo:'construccion', label:'CAC Costo Construcción', short:'CAC', color:'#eb6834'},
+  {ns:'poli', campo:'indice', label:'Polinómica', short:'Polinómica', color:'#1baf7a'},
+];
+function idxEvolBaseDefault(){
+  // el período base por default es el más nuevo entre los "primeros períodos" de cada serie,
+  // así arrancan las 3 con datos (hoy: lo determina Polinómica, la que tiene menos historia).
+  const inicios=IDX_EVOL_SERIES.map(s=>{ const arr=DIC['idx_'+s.ns]||[]; return arr.length?Math.min(...arr.map(r=>r.periodo)):null; }).filter(x=>x!=null);
+  return inicios.length? Math.max(...inicios) : null;
+}
+let IDX_EVOL_BASE=null;
+function setIdxEvolBase(v){ IDX_EVOL_BASE=+v; renderIndices(); }
+window.setIdxEvolBase=setIdxEvolBase;
+function idxEvolPeriodosDisponibles(){
+  const set=new Set();
+  IDX_EVOL_SERIES.forEach(s=>(DIC['idx_'+s.ns]||[]).forEach(r=>set.add(r.periodo)));
+  return [...set].sort((a,b)=>a-b);
+}
+function idxEvolCalcular(baseP){
+  return IDX_EVOL_SERIES.map(s=>{
+    const base=idxSerieValor(s.ns,s.campo,baseP);
+    const periodos=(DIC['idx_'+s.ns]||[]).map(r=>r.periodo).filter(p=>p>=baseP).sort((a,b)=>a-b);
+    const values=periodos.map(p=>{ const v=idxSerieValor(s.ns,s.campo,p); return { periodo:p, pct:(base&&v!=null)?(v/base-1)*100:null }; });
+    return {...s, values};
+  });
+}
+function idxEvolSvg(series){
+  const periodos=[...new Set(series.flatMap(s=>s.values.map(v=>v.periodo)))].sort((a,b)=>a-b);
+  if(periodos.length<2) return '<div style="padding:10px 4px;color:var(--muted);font-size:12.5px">Elegí un período base con al menos 2 meses de datos posteriores.</div>';
+  const W=680,H=260,padL=8,padR=140,padT=16,padB=8;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  const idxOf={}; periodos.forEach((p,i)=>idxOf[p]=i);
+  const xFor=i=>padL+(periodos.length<=1?0:i/(periodos.length-1)*innerW);
+  const allVals=series.flatMap(s=>s.values.map(v=>v.pct)).filter(v=>v!=null);
+  const maxV=Math.max(0,...allVals), minV=Math.min(0,...allVals);
+  const range=Math.max(1,maxV-minV);
+  const yFor=v=>padT+innerH-(v-minV)/range*innerH;
+  const y0=yFor(0);
+  let out='<line x1="'+padL+'" y1="'+y0.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+y0.toFixed(1)+'" stroke="#c7c3b3" stroke-width="1"/>'
+    +'<text x="'+padL+'" y="'+(y0-4).toFixed(1)+'" font-size="10" fill="#8a8674">0%</text>';
+  series.forEach(s=>{
+    const pts=s.values.filter(v=>v.pct!=null).map(v=>[xFor(idxOf[v.periodo]), yFor(v.pct)]);
+    if(!pts.length) return;
+    const d=pts.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    out+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+    const last=pts[pts.length-1], lastVal=s.values.filter(v=>v.pct!=null).slice(-1)[0];
+    out+='<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="3.5" fill="'+s.color+'"/>'
+      +'<text x="'+(last[0]+7).toFixed(1)+'" y="'+(last[1]+4).toFixed(1)+'" font-size="11" font-weight="700" fill="'+s.color+'">'+esc(s.short||s.label)+' '+(lastVal.pct>=0?'+':'')+lastVal.pct.toFixed(1)+'%</text>';
+  });
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px;display:block" role="img" aria-label="Evolución comparada de índices, variación acumulada desde el período base">'+out+'</svg>';
+}
+function idxEvolTabla(series){
+  const periodos=[...new Set(series.flatMap(s=>s.values.map(v=>v.periodo)))].sort((a,b)=>b-a);
+  if(!periodos.length) return '';
+  const byPer={}; series.forEach(s=>s.values.forEach(v=>{ (byPer[v.periodo]=byPer[v.periodo]||{})[s.ns]=v.pct; }));
+  const rows=periodos.map(p=>'<tr><td>'+idxPeriodoFmt(p)+'</td>'+series.map(s=>{ const v=(byPer[p]||{})[s.ns]; return '<td style="text-align:right">'+(v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—')+'</td>'; }).join('')+'</tr>').join('');
+  return '<div class="tbl-hscroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Período</th>'+series.map(s=>'<th style="text-align:right">'+esc(s.label)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+function idxEvolucionHtml(){
+  if(IDX_EVOL_BASE==null) IDX_EVOL_BASE=idxEvolBaseDefault();
+  if(IDX_EVOL_BASE==null) return '';
+  const periodos=idxEvolPeriodosDisponibles();
+  const selOpts=periodos.map(p=>'<option value="'+p+'"'+(p===IDX_EVOL_BASE?' selected':'')+'>'+idxPeriodoFmt(p)+'</option>').join('');
+  const series=idxEvolCalcular(IDX_EVOL_BASE);
+  const legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin:6px 0 10px">'+series.map(s=>'<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s.color+';display:inline-block"></span>'+esc(s.label)+'</span>').join('')+'</div>';
+  return '<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas.</span>'
+    +'<span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px"><label>Desde</label><select onchange="setIdxEvolBase(this.value)">'+selOpts+'</select></span></div>'
+    +'<div style="padding:14px 16px 4px">'+idxEvolSvg(series)+legend+'</div>'
+    +'<div style="padding:0 16px 14px">'+idxEvolTabla(series)+'</div></div>';
+}
 function renderIndices(){
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'+Object.keys(IDX_DEF).map(ns=>
     '<button class="mtab'+(IDX_TAB===ns?' active':'')+'" onclick="setIdxTab(\''+ns+'\')">'+esc(IDX_DEF[ns].nombre.split(' (')[0].split(' ·')[0])+'</button>').join('')+'</div>';
   const faltantes=Object.keys(IDX_DEF).map(ns=>({ns, per:idxFaltante(ns)})).filter(x=>x.per!=null);
   const banner = faltantes.length ? '<div class="card" style="padding:12px 16px;margin-bottom:14px;background:#fdf3d9;border:1px solid #e0c46c;font-size:13px"><strong>Hay índices para actualizar:</strong> '
     +faltantes.map(f=>esc(IDX_DEF[f.ns].nombre.split(' (')[0].split(' ·')[0])+' de '+idxPeriodoFmt(f.per)).join(' · ')+'</div>' : '';
-  C().innerHTML = banner + tabs + idxTabBody(IDX_TAB);
+  C().innerHTML = banner + idxEvolucionHtml() + tabs + idxTabBody(IDX_TAB);
 }
 window.renderIndices=renderIndices;
 function idxTabBody(ns){
@@ -6823,17 +6901,277 @@ window.reloadDB=reloadDB;
       {fecha:'2026-08-31', compra:1520, fuente:'manual'},
       {fecha:'2026-09-01', compra:1535, fuente:'dolarapi'},
     ];
+    // Histórico real de IPC/CAC/Polinómica, tomado del Excel de índices (hasta 07/2026, último dato
+    // publicado; los meses posteriores en el Excel repiten el último valor como placeholder y no se cargan).
     DIC.idx_ipc = [
-      {periodo:202606, nacional:412.3, empalme:4823.1},
-      {periodo:202607, nacional:418.9, empalme:4900.2},
+      {periodo:202001, nacional:289.8, empalme:289.8299},
+      {periodo:202002, nacional:295.7, empalme:295.666},
+      {periodo:202003, nacional:305.6, empalme:305.5515},
+      {periodo:202004, nacional:310.1, empalme:310.1243},
+      {periodo:202005, nacional:314.9, empalme:314.9087},
+      {periodo:202006, nacional:322, empalme:321.9738},
+      {periodo:202007, nacional:328.2, empalme:328.2014},
+      {periodo:202008, nacional:337.1, empalme:337.0632},
+      {periodo:202009, nacional:346.6, empalme:346.6207},
+      {periodo:202010, nacional:359.7, empalme:359.657},
+      {periodo:202011, nacional:371, empalme:371.0211},
+      {periodo:202012, nacional:385.9, empalme:385.8826},
+      {periodo:202101, nacional:401.5, empalme:401.5071},
+      {periodo:202102, nacional:415.9, empalme:415.8595},
+      {periodo:202103, nacional:435.9, empalme:435.8657},
+      {periodo:202104, nacional:453.7, empalme:453.6503},
+      {periodo:202105, nacional:468.7, empalme:468.725},
+      {periodo:202106, nacional:483.6, empalme:483.6049},
+      {periodo:202107, nacional:498.1, empalme:498.0987},
+      {periodo:202108, nacional:510.4, empalme:510.3942},
+      {periodo:202109, nacional:528.5, empalme:528.4968},
+      {periodo:202110, nacional:547.1, empalme:547.0802},
+      {periodo:202111, nacional:560.9, empalme:560.9184},
+      {periodo:202112, nacional:582.5, empalme:582.4575},
+      {periodo:202201, nacional:605, empalme:605.0317},
+      {periodo:202202, nacional:633.4, empalme:633.4341},
+      {periodo:202203, nacional:676.1, empalme:676.0566},
+      {periodo:202204, nacional:716.9, empalme:716.9399},
+      {periodo:202205, nacional:753.1, empalme:753.147},
+      {periodo:202206, nacional:793, empalme:793.0278},
+      {periodo:202207, nacional:851.8, empalme:851.761},
+      {periodo:202208, nacional:911.1, empalme:911.1316},
+      {periodo:202209, nacional:967.3, empalme:967.3076},
+      {periodo:202210, nacional:1028.7, empalme:1028.706},
+      {periodo:202211, nacional:1079.3, empalme:1079.2787},
+      {periodo:202212, nacional:1134.6, empalme:1134.5875},
+      {periodo:202301, nacional:1203, empalme:1202.979},
+      {periodo:202302, nacional:1282.7, empalme:1282.7091},
+      {periodo:202303, nacional:1381.2, empalme:1381.1601},
+      {periodo:202304, nacional:1497.2, empalme:1497.2147},
+      {periodo:202305, nacional:1613.6, empalme:1613.5895},
+      {periodo:202306, nacional:1709.6, empalme:1709.6115},
+      {periodo:202307, nacional:1818.1, empalme:1818.0838},
+      {periodo:202308, nacional:2044.3, empalme:2044.2832},
+      {periodo:202309, nacional:2304.9, empalme:2304.9242},
+      {periodo:202310, nacional:2496.3, empalme:2496.273},
+      {periodo:202311, nacional:2816.1, empalme:2816.0628},
+      {periodo:202312, nacional:3533.2, empalme:3533.1922},
+      {periodo:202401, nacional:4261.5, empalme:4261.5324},
+      {periodo:202402, nacional:4825.8, empalme:4825.7881},
+      {periodo:202403, nacional:5357.1, empalme:5357.0929},
+      {periodo:202404, nacional:5830.2, empalme:5830.2271},
+      {periodo:202405, nacional:6073.7, empalme:6073.7165},
+      {periodo:202406, nacional:6351.7, empalme:6351.7145},
+      {periodo:202407, nacional:6607.7, empalme:6607.7479},
+      {periodo:202408, nacional:6883.4, empalme:6883.4412},
+      {periodo:202409, nacional:7122.2, empalme:7122.2421},
+      {periodo:202410, nacional:7314, empalme:7313.9542},
+      {periodo:202411, nacional:7491.4, empalme:7491.4314},
+      {periodo:202412, nacional:7694, empalme:7694.0075},
+      {periodo:202501, nacional:7864.1257, empalme:7864.1257},
+      {periodo:202502, nacional:8052.9927, empalme:8052.9927},
+      {periodo:202503, nacional:8353.3158, empalme:8353.3158},
+      {periodo:202504, nacional:8585.6078, empalme:8585.6078},
+      {periodo:202505, nacional:8714.4871, empalme:8714.4871},
+      {periodo:202506, nacional:8855.6, empalme:8855.5681},
+      {periodo:202507, nacional:9024, empalme:9023.973},
+      {periodo:202508, nacional:9193.2441, empalme:9193.2441},
+      {periodo:202509, nacional:9384.0922, empalme:9384.0922},
+      {periodo:202510, nacional:9603.8623, empalme:9603.8623},
+      {periodo:202511, nacional:9841.3581, empalme:9841.3581},
+      {periodo:202512, nacional:10121.3715, empalme:10121.3715},
+      {periodo:202601, nacional:10413, empalme:10413.0309},
+      {periodo:202602, nacional:10714.6, empalme:10714.6255},
+      {periodo:202603, nacional:11077.0608, empalme:11077.0608},
+      {periodo:202604, nacional:11363.0904, empalme:11363.0904},
+      {periodo:202605, nacional:11607.3937, empalme:11607.3937},
+      {periodo:202606, nacional:11826.4103, empalme:11826.4103},
+      {periodo:202607, nacional:12076.3937, empalme:12076.3937},
     ];
     DIC.idx_cac = [
-      {periodo:202606, construccion:1240.5, materiales:1180.2, mano_obra:1310.8},
-      {periodo:202607, construccion:1268.1, materiales:1195.6, mano_obra:1350.4},
+      {periodo:201401, construccion:77.1, materiales:74.9, mano_obra:79.2},
+      {periodo:201402, construccion:79.1, materiales:79.1, mano_obra:79.2},
+      {periodo:201403, construccion:79.8, materiales:81.33, mano_obra:78.4},
+      {periodo:201404, construccion:87.4, materiales:84.2, mano_obra:90.5},
+      {periodo:201405, construccion:88.3, materiales:86.4, mano_obra:90.1},
+      {periodo:201406, construccion:88.9, materiales:87.7, mano_obra:90.1},
+      {periodo:201407, construccion:94.6, materiales:89.5, mano_obra:99.5},
+      {periodo:201408, construccion:96, materiales:92.3, mano_obra:99.7},
+      {periodo:201409, construccion:97, materiales:94.4, mano_obra:99.7},
+      {periodo:201410, construccion:98.3, materiales:96.7, mano_obra:100},
+      {periodo:201411, construccion:99.5, materiales:98.9, mano_obra:100},
+      {periodo:201412, construccion:100, materiales:100, mano_obra:100},
+      {periodo:201501, construccion:102.1, materiales:101.6, mano_obra:102.7},
+      {periodo:201502, construccion:104.1, materiales:103.7, mano_obra:104.6},
+      {periodo:201503, construccion:105.1, materiales:104.4, mano_obra:104.6},
+      {periodo:201504, construccion:105.1, materiales:107.2, mano_obra:101.9},
+      {periodo:201505, construccion:112.8, materiales:109.2, mano_obra:118},
+      {periodo:201506, construccion:120.2, materiales:110.7, mano_obra:134.3},
+      {periodo:201507, construccion:114.6, materiales:112.2, mano_obra:118.2},
+      {periodo:201508, construccion:120.1, materiales:114.4, mano_obra:128.5},
+      {periodo:201509, construccion:121.1, materiales:116.1, mano_obra:128.5},
+      {periodo:201510, construccion:122.3, materiales:117.9, mano_obra:128.7},
+      {periodo:201511, construccion:124.8, materiales:122.1, mano_obra:128.7},
+      {periodo:201512, construccion:131.2, materiales:132.3, mano_obra:129.6},
+      {periodo:201601, construccion:135.1, materiales:137.4, mano_obra:131.7},
+      {periodo:201602, construccion:138.8, materiales:141.8, mano_obra:134.4},
+      {periodo:201603, construccion:140.2, materiales:144.1, mano_obra:134.4},
+      {periodo:201604, construccion:151.6, materiales:146.8, mano_obra:158.7},
+      {periodo:201605, construccion:153.1, materiales:149.1, mano_obra:159},
+      {periodo:201606, construccion:154.4, materiales:150.6, mano_obra:159.9},
+      {periodo:201607, construccion:156.4, materiales:153.2, mano_obra:161.2},
+      {periodo:201608, construccion:157, materiales:154.2, mano_obra:161.2},
+      {periodo:201609, construccion:158.2, materiales:156.2, mano_obra:161.2},
+      {periodo:201610, construccion:165.8, materiales:158.4, mano_obra:176.6},
+      {periodo:201611, construccion:167.4, materiales:161.1, mano_obra:176.6},
+      {periodo:201612, construccion:171.3, materiales:163.6, mano_obra:182.6},
+      {periodo:201701, construccion:178.3, materiales:167.8, mano_obra:193.6},
+      {periodo:201702, construccion:179, materiales:169, mano_obra:193.6},
+      {periodo:201703, construccion:180, materiales:170.7, mano_obra:193.6},
+      {periodo:201704, construccion:187.3, materiales:173.2, mano_obra:207.9},
+      {periodo:201705, construccion:189.4, materiales:176, mano_obra:209.2},
+      {periodo:201706, construccion:191.2, materiales:179, mano_obra:209.2},
+      {periodo:201707, construccion:202.2, materiales:184.5, mano_obra:228.1},
+      {periodo:201708, construccion:204.5, materiales:188.4, mano_obra:228.1},
+      {periodo:201709, construccion:206.2, materiales:191.3, mano_obra:228.1},
+      {periodo:201710, construccion:208, materiales:194.2, mano_obra:228.1},
+      {periodo:201711, construccion:210.1, materiales:197.8, mano_obra:228.1},
+      {periodo:201712, construccion:212.7, materiales:202.2, mano_obra:228.1},
+      {periodo:201801, construccion:220.2, materiales:209.4, mano_obra:236.1},
+      {periodo:201802, construccion:224.3, materiales:214.1, mano_obra:239.3},
+      {periodo:201803, construccion:229.8, materiales:220.7, mano_obra:243.2},
+      {periodo:201804, construccion:239.6, materiales:227.7, mano_obra:257.1},
+      {periodo:201805, construccion:248.5, materiales:242.7, mano_obra:257.1},
+      {periodo:201806, construccion:259.4, materiales:260.6, mano_obra:257.5},
+      {periodo:201807, construccion:264.4, materiales:268.4, mano_obra:258.5},
+      {periodo:201808, construccion:283.6, materiales:291.1, mano_obra:272.6},
+      {periodo:201809, construccion:305.1, materiales:319.4, mano_obra:284.2},
+      {periodo:201810, construccion:311.5, materiales:330, mano_obra:284.5},
+      {periodo:201811, construccion:323.7, materiales:338.7, mano_obra:301.7},
+      {periodo:201812, construccion:331.5, materiales:344.5, mano_obra:312.5},
+      {periodo:201901, construccion:339.3, materiales:353.6, mano_obra:318.2},
+      {periodo:201902, construccion:346.1, materiales:364.3, mano_obra:319.3},
+      {periodo:201903, construccion:361, materiales:382, mano_obra:330.1},
+      {periodo:201904, construccion:381.5, materiales:394.8, mano_obra:361.9},
+      {periodo:201905, construccion:395.6, materiales:404.8, mano_obra:382.3},
+      {periodo:201906, construccion:400.9, materiales:413.5, mano_obra:382.4},
+      {periodo:201907, construccion:410.7, materiales:418.7, mano_obra:398.9},
+      {periodo:201908, construccion:453.4, materiales:480.9, mano_obra:412.9},
+      {periodo:201909, construccion:459, materiales:490.5, mano_obra:412.9},
+      {periodo:201910, construccion:486.4, materiales:515.1, mano_obra:444.2},
+      {periodo:201911, construccion:507.4, materiales:532.8, mano_obra:470.2},
+      {periodo:201912, construccion:513.1, materiales:542.4, mano_obra:470.2},
+      {periodo:202001, construccion:539.6, materiales:552.4, mano_obra:520.7},
+      {periodo:202002, construccion:560.2, materiales:564.6, mano_obra:553.7},
+      {periodo:202003, construccion:565.3, materiales:572.9, mano_obra:554.1},
+      {periodo:202004, construccion:573, materiales:584.6, mano_obra:556},
+      {periodo:202005, construccion:588.1, materiales:606.9, mano_obra:560.5},
+      {periodo:202006, construccion:598.6, materiales:624, mano_obra:561.3},
+      {periodo:202007, construccion:615.2, materiales:651.8, mano_obra:561.6},
+      {periodo:202008, construccion:631.5, materiales:679.3, mano_obra:561.6},
+      {periodo:202009, construccion:655.8, materiales:717.6, mano_obra:565.2},
+      {periodo:202010, construccion:695.1, materiales:780.7, mano_obra:569.8},
+      {periodo:202011, construccion:763.4, materiales:833, mano_obra:661.4},
+      {periodo:202012, construccion:794.4, materiales:884.8, mano_obra:662},
+      {periodo:202101, construccion:824.9, materiales:936.1, mano_obra:662},
+      {periodo:202102, construccion:872.7, materiales:987.4, mano_obra:704.7},
+      {periodo:202103, construccion:896.7, materiales:1027.5, mano_obra:704.9},
+      {periodo:202104, construccion:959.1, materiales:1074.2, mano_obra:790.3},
+      {periodo:202105, construccion:988.4, materiales:1122.3, mano_obra:792.2},
+      {periodo:202106, construccion:1011.3, materiales:1160.8, mano_obra:792.3},
+      {periodo:202107, construccion:1065.8, materiales:1205, mano_obra:861.4},
+      {periodo:202108, construccion:1089.8, materiales:1245.7, mano_obra:861.4},
+      {periodo:202109, construccion:1131.2, materiales:1291.8, mano_obra:895.9},
+      {periodo:202110, construccion:1180.2, materiales:1341.5, mano_obra:943.6},
+      {periodo:202111, construccion:1210, materiales:1391.6, mano_obra:943.6},
+      {periodo:202112, construccion:1234.3, materiales:1431.9, mano_obra:944.9},
+      {periodo:202201, construccion:1281.5, materiales:1487.1, mano_obra:980.2},
+      {periodo:202202, construccion:1344.5, materiales:1545.8, mano_obra:1049.4},
+      {periodo:202203, construccion:1416.2, materiales:1624.6, mano_obra:1110.7},
+      {periodo:202204, construccion:1467.2, materiales:1709.9, mano_obra:1111.5},
+      {periodo:202205, construccion:1563.9, materiales:1801.7, mano_obra:1215.2},
+      {periodo:202206, construccion:1670.2, materiales:1907.4, mano_obra:1322.6},
+      {periodo:202207, construccion:1784, materiales:2098.7, mano_obra:1322.6},
+      {periodo:202208, construccion:1905.9, materiales:2245.6, mano_obra:1407.6},
+      {periodo:202209, construccion:2051.9, materiales:2399.4, mano_obra:1541.9},
+      {periodo:202210, construccion:2211.9, materiales:2573, mano_obra:1682.6},
+      {periodo:202211, construccion:2369.7, materiales:2747.7, mano_obra:1815.7},
+      {periodo:202212, construccion:2552.3, materiales:2933.6, mano_obra:1993.4},
+      {periodo:202301, construccion:2713.1, materiales:3113.8, mano_obra:2125.6},
+      {periodo:202302, construccion:2865.3, materiales:3276.5, mano_obra:2262.7},
+      {periodo:202303, construccion:2998.7, materiales:3482.1, mano_obra:2290.2},
+      {periodo:202304, construccion:3228.5, materiales:3740.9, mano_obra:2477.5},
+      {periodo:202305, construccion:3448.3, materiales:3985.6, mano_obra:2660.9},
+      {periodo:202306, construccion:3662.2, materiales:4282.6, mano_obra:2752.8},
+      {periodo:202307, construccion:4001.9, materiales:4678.3, mano_obra:3010.5},
+      {periodo:202308, construccion:4789.7, materiales:5707.8, mano_obra:3444.1},
+      {periodo:202309, construccion:5215.9, materiales:6219.5, mano_obra:3744.9},
+      {periodo:202310, construccion:5790, materiales:6979.6, mano_obra:4046.5},
+      {periodo:202311, construccion:6785.2, materiales:8345.6, mano_obra:4498},
+      {periodo:202312, construccion:9049.8, materiales:11806.7, mano_obra:5009},
+      {periodo:202401, construccion:10331, materiales:13277.8, mano_obra:6011.7},
+      {periodo:202402, construccion:11228.3, materiales:14214.4, mano_obra:6851.6},
+      {periodo:202403, construccion:11669, materiales:14955.88, mano_obra:6851.6},
+      {periodo:202404, construccion:12216.2, materiales:15226.8, mano_obra:7803.5},
+      {periodo:202405, construccion:12747.4, materiales:15537.5, mano_obra:8657.9},
+      {periodo:202406, construccion:13295.8, materiales:15811.7, mano_obra:9608.3},
+      {periodo:202407, construccion:13574.8, materiales:16281, mano_obra:9608.3},
+      {periodo:202408, construccion:14017.6, materiales:16700.7, mano_obra:10084.9},
+      {periodo:202409, construccion:14366.9, materiales:17016.6, mano_obra:10483.3},
+      {periodo:202410, construccion:14614.9, materiales:17149.9, mano_obra:10899.2},
+      {periodo:202411, construccion:15043, materiales:17375.7, mano_obra:11624.1},
+      {periodo:202412, construccion:15356.4, materiales:17585.1, mano_obra:12089.7},
+      {periodo:202501, construccion:15592.5, materiales:17825.2, mano_obra:12319.9},
+      {periodo:202502, construccion:15852.4, materiales:17967.5, mano_obra:12752.3},
+      {periodo:202503, construccion:15995.4, materiales:18122.5, mano_obra:12877.8},
+      {periodo:202504, construccion:16253.5, materiales:18640.1, mano_obra:12755.3},
+      {periodo:202505, construccion:16521.3, materiales:18695.2, mano_obra:13334.9},
+      {periodo:202506, construccion:16643.4, materiales:18826.5, mano_obra:13443.5},
+      {periodo:202507, construccion:16939.5, materiales:19141.7, mano_obra:13711.8},
+      {periodo:202508, construccion:17187.6, materiales:19490, mano_obra:13812.6},
+      {periodo:202509, construccion:17762.3, materiales:20187.5, mano_obra:14207.5},
+      {periodo:202510, construccion:18172.8, materiales:20740.8, mano_obra:14408.8},
+      {periodo:202511, construccion:18534.9, materiales:21055.9, mano_obra:14839.9},
+      {periodo:202512, construccion:18776.5, materiales:21335.3, mano_obra:15026.2},
+      {periodo:202601, construccion:19209.4, materiales:21778, mano_obra:15444.4},
+      {periodo:202602, construccion:19453, materiales:22007.9, mano_obra:15708.2},
+      {periodo:202603, construccion:19771.2, materiales:22204.2, mano_obra:16205.2},
+      {periodo:202604, construccion:20493.2, materiales:22870, mano_obra:17009.6},
+      {periodo:202605, construccion:21035.6, materiales:23500.2, mano_obra:17423.2},
+      {periodo:202606, construccion:21641.1, materiales:23901.9, mano_obra:18327.3},
+      {periodo:202607, construccion:21960.7, materiales:24149.4, mano_obra:18752.8},
     ];
     DIC.idx_poli = [
-      {periodo:202606, mo:1780.7, art_ilum:2580.1, maq_imp:2790.5, hierros:3070.5, equipo:2790.5, gastos:2409.4},
-      {periodo:202607, mo:1830.2, art_ilum:2640.8, maq_imp:2855.1, hierros:3145.2, equipo:2855.1, gastos:2470.7},
+      {periodo:202305, mo:1780.7, art_ilum:2580.1, maq_imp:2790.5, hierros:3070.5, equipo:2790.5, gastos:2409.4},
+      {periodo:202310, mo:2588.7, art_ilum:4133.3, maq_imp:4897, hierros:4724.4, equipo:4897, gastos:3777.8},
+      {periodo:202312, mo:3191.3, art_ilum:6455.5, maq_imp:8869.3, hierros:11086.9017, equipo:8869.3, gastos:5069.2},
+      {periodo:202401, mo:3863.5, art_ilum:7023.4, maq_imp:9526.5, hierros:11303, equipo:9526.5, gastos:5859.5},
+      {periodo:202402, mo:3960.5, art_ilum:7306.5, maq_imp:10070.6, hierros:11362.3, equipo:10070.6, gastos:7456.2},
+      {periodo:202403, mo:4512.6, art_ilum:7570.9, maq_imp:9985.1, hierros:11304, equipo:9985, gastos:7789.3},
+      {periodo:202404, mo:4754.7, art_ilum:7732, maq_imp:10065.3, hierros:11312, equipo:10065.3, gastos:8313.1},
+      {periodo:202405, mo:5947.9, art_ilum:8234.8, maq_imp:10020.4, hierros:11327.6, equipo:10020.4, gastos:9216.1},
+      {periodo:202406, mo:6312.4, art_ilum:8588.2, maq_imp:10402.7, hierros:11472.1, equipo:10402.6, gastos:9650.9},
+      {periodo:202407, mo:6367.7, art_ilum:8828.7, maq_imp:10717.7, hierros:11601.9, equipo:10717.7, gastos:10007},
+      {periodo:202408, mo:6388.8, art_ilum:8882.3, maq_imp:10813.6, hierros:11693.6, equipo:10813.5, gastos:10154.8},
+      {periodo:202409, mo:6908.8, art_ilum:9089.5, maq_imp:10876.2, hierros:11231, equipo:10876.1, gastos:10750.4},
+      {periodo:202410, mo:6946.3, art_ilum:9150.3, maq_imp:11096.7, hierros:11282.9, equipo:11096.7, gastos:10970.4},
+      {periodo:202411, mo:6970, art_ilum:9180.7, maq_imp:11178.5, hierros:11238.1, equipo:11178.5, gastos:11269.8},
+      {periodo:202412, mo:8196.1, art_ilum:9522.7, maq_imp:11250.1, hierros:11115.7, equipo:11250, gastos:11910},
+      {periodo:202501, mo:8231, art_ilum:9555.3, maq_imp:11407.1, hierros:11116.8, equipo:11407, gastos:12235.6},
+      {periodo:202502, mo:8464.3, art_ilum:9581, maq_imp:11378.3, hierros:11158.9, equipo:11378.2, gastos:12513.9},
+      {periodo:202503, mo:8489, art_ilum:9846.2, maq_imp:11495.1, hierros:11080.3, equipo:11495, gastos:12588.1},
+      {periodo:202504, mo:8290.6, art_ilum:10058, maq_imp:12457.1, hierros:12008.4, equipo:12457, gastos:12811.5},
+      {periodo:202505, mo:8828.8, art_ilum:9980.7, maq_imp:11901.2, hierros:11562.4, equipo:11901.1, gastos:13152.4},
+      {periodo:202506, mo:8935.4, art_ilum:10223.4, maq_imp:12195.1, hierros:11852.4, equipo:12195.1, gastos:13381},
+      {periodo:202507, mo:9144, art_ilum:10446.7, maq_imp:13100.2, hierros:12670.3, equipo:13100.1, gastos:13627.1},
+      {periodo:202508, mo:9201.7, art_ilum:10700.8, maq_imp:13423.4, hierros:12800, equipo:13423.4, gastos:13795.5},
+      {periodo:202509, mo:9538.5, art_ilum:10988.1, maq_imp:14811.1, hierros:14037.1, equipo:14811, gastos:14255.2},
+      {periodo:202510, mo:9760, art_ilum:11303.5, maq_imp:14751.9, hierros:13454.8, equipo:14751.8, gastos:14462},
+      {periodo:202511, mo:10068.9, art_ilum:11452.2, maq_imp:14504.5, hierros:13667.6, equipo:14504.4, gastos:14755.5},
+      {periodo:202512, mo:10200.05, art_ilum:11633.2, maq_imp:14756.4, hierros:13832.2, equipo:14756.3, gastos:14940.1},
+      {periodo:202601, mo:10572.3, art_ilum:11880.3, maq_imp:14765.3, hierros:14000.5, equipo:14765.2, gastos:15285.6},
+      {periodo:202602, mo:10758, art_ilum:12043.2, maq_imp:14436.6, hierros:13502.9, equipo:14436.5, gastos:15949.3},
+      {periodo:202603, mo:11129.8, art_ilum:12094.2, maq_imp:14270.3, hierros:13513, equipo:14270.3, gastos:16256.7},
+      {periodo:202604, mo:11475.1, art_ilum:12648.7, maq_imp:14071.4, hierros:13236.4, equipo:14071.4, gastos:16731.2},
+      {periodo:202605, mo:11797.8, art_ilum:12972.6, maq_imp:14265.5, hierros:13653.6, equipo:14265.4, gastos:17453.1},
+      {periodo:202606, mo:12401.3, art_ilum:13546.2, maq_imp:14797.8, hierros:14051.4, equipo:14797.7, gastos:17892.9},
+      {periodo:202607, mo:12715.4, art_ilum:13888.9, maq_imp:15219.7, hierros:14608.9, equipo:15219.7, gastos:18326.9},
     ];
       '<div class="demo-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>'
       +'Modo demo: datos de ejemplo en memoria (no se guardan). Completá SB_URL, SB_KEY y REDIRECT_URL en el código para conectar Supabase y activar el login.</div>';
