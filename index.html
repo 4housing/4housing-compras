@@ -1782,14 +1782,14 @@ function expandPendingOG(){ OG_VISIBLE_IDS.forEach(id=>{ const o=ogById(id); if(
 window.expandAllOG=expandAllOG; window.collapseAllOG=collapseAllOG; window.expandPendingOG=expandPendingOG;
 let TES_TAB='proy';
 let OG_FILTRO={comprador:'',certificador:'',proveedor:'',clasifRenglon:'',estado:'todas'};
-let USD_COMPRA=null, USD_FECHA='';
+let USD_COMPRA=null, USD_VENTA=null, USD_FECHA='';
 async function fetchUSD(){
   try{
     const r=await fetch('https://dolarapi.com/v1/dolares/blue',{cache:'no-store'});
     const j=await r.json();
     if(j && j.compra){
-      USD_COMPRA=j.compra; USD_FECHA=(j.fechaActualizacion||'').slice(0,10);
-      if(USD_FECHA) await usdDiarioUpsert(USD_FECHA, j.compra, 'dolarapi');
+      USD_COMPRA=j.compra; USD_VENTA=j.venta||null; USD_FECHA=(j.fechaActualizacion||'').slice(0,10);
+      if(USD_FECHA) await usdDiarioUpsert(USD_FECHA, j.compra, j.venta, 'dolarapi');
       if(typeof current!=='undefined' && current==='compras') renderCompras();
     }
   }catch(e){ /* sin conexión / CORS: la cotización queda vacía y se puede cargar a mano */ }
@@ -1800,12 +1800,12 @@ window.fetchUSD=fetchUSD;
    Registro propio de la app (no depende de que dolarapi tenga histórico): cada vez que
    se consulta la cotización del día se guarda acá, y se puede completar/corregir a mano
    (ej. días previos al arranque del registro). Sirve para que el TC de una OG sea el
-   tipo de cambio COMPRADOR blue del día ANTERIOR a su fecha de creación (y el de un pago,
+   PROMEDIO (compra/venta) blue del día ANTERIOR a su fecha de creación (y el de un pago,
    del día anterior a la fecha de pago), en vez de "lo que diga dolarapi hoy". */
-async function usdDiarioUpsert(fecha, compra, fuente){
+async function usdDiarioUpsert(fecha, compra, venta, fuente){
   DIC.usd_diario=DIC.usd_diario||[];
   const i=DIC.usd_diario.findIndex(r=>r.fecha===fecha);
-  const row={fecha, compra:+compra, fuente:fuente||'manual'};
+  const row={fecha, compra:+compra, venta:venta!=null&&venta!==''?+venta:null, fuente:fuente||'manual'};
   if(i>=0) DIC.usd_diario[i]=row; else DIC.usd_diario.push(row);
   if(!DEMO_MODE){
     try{ await sbFetch('/usd_diario',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
@@ -1813,6 +1813,14 @@ async function usdDiarioUpsert(fecha, compra, fuente){
   }
 }
 window.usdDiarioUpsert=usdDiarioUpsert;
+// Promedio comprador/vendedor de una cotización; si falta uno de los dos (registros viejos, antes
+// de sumar "venta"), cae al que haya.
+function usdProm(r){
+  if(!r) return null;
+  const c=r.compra!=null&&r.compra!==''?+r.compra:null, v=r.venta!=null&&r.venta!==''?+r.venta:null;
+  return (c!=null&&v!=null) ? (c+v)/2 : (c!=null?c:v);
+}
+window.usdProm=usdProm;
 // Cotización vigente para el día ANTERIOR a fechaISO: la más reciente registrada en/antes de ese día anterior.
 function tcDiaAnterior(fechaISO){
   if(!fechaISO || !(DIC.usd_diario&&DIC.usd_diario.length)) return null;
@@ -1937,7 +1945,6 @@ const IDX_EVOL_ALL=[
   {key:'dolar_oficial_compra', ns:'dolar_oficial', campo:'compra', label:'Dólar Oficial (TC vendedor)', short:'USD Ofic.', color:'#4a3aa7'},
   {key:'dolar_blue_compra', ns:'dolar_blue', campo:'compra', label:'Dólar Blue (TC vendedor)', short:'USD Blue', color:'#e34948'},
   {key:'poli_indice', ns:'poli', campo:'indice', label:'Polinómica', short:'Polinómica', color:'#1baf7a'},
-  {key:'sueldos_pct', ns:'sueldos', campo:'pct', label:'Sueldos % (índice)', short:'Sueldos %', color:'#2a78d6', dash:'5,3'},
   {key:'sueldos_ars', ns:'sueldos', campo:'ars', label:'Sueldos $ (RIPTE)', short:'Sueldos $', color:'#eb6834', dash:'5,3'},
 ];
 const IDX_EVOL_MAX=IDX_EVOL_ALL.length;
@@ -2671,7 +2678,8 @@ async function renderCompras(){
       +'</tr></thead><tbody>'+tr+'</tbody></table>';
   }
   const demoTag=DEMO_MODE?'<span class="demo-tag">DATOS DE EJEMPLO</span>':'';
-  const usdTxt = USD_COMPRA ? ' · USD compra $'+USD_COMPRA+(USD_FECHA?' ('+USD_FECHA.split('-').reverse().join('/')+')':'') : ' · USD: cargá conexión';
+  const usdProm0 = usdProm({compra:USD_COMPRA, venta:USD_VENTA});
+  const usdTxt = usdProm0 ? ' · USD $'+fmtNum(usdProm0,2)+(USD_FECHA?' ('+USD_FECHA.split('-').reverse().join('/')+')':'') : ' · USD: cargá conexión';
   C().innerHTML=comprasTabs()+'<div class="kpi-grid">'+kpis+'</div>'+filtros+'<div class="card"><div class="card-h"><h3>Órdenes de gasto'+demoTag+'</h3><span class="meta">N° ≥ 2000 = de esta herramienta'+usdTxt+'</span></div>'+body+'</div>';
 }
 
@@ -2851,7 +2859,7 @@ function ogReportRows(ogs){
   const rows=[REPORT_COLS.slice()];
   ogs.forEach(o=>{
     const esUSD = (o.moneda==='Extranjera');
-    const tcCompra = (o.tc_pesos!=null && o.tc_pesos!=='') ? +o.tc_pesos : ((tcDiaAnterior(o.fecha)||{}).compra || (USD_COMPRA?+USD_COMPRA:null)); // OG viejas sin TC guardado: cotización comprador del día anterior a la fecha de la OG; si no hay registro, la de hoy
+    const tcCompra = (o.tc_pesos!=null && o.tc_pesos!=='') ? +o.tc_pesos : (usdProm(tcDiaAnterior(o.fecha)) || usdProm({compra:USD_COMPRA,venta:USD_VENTA})); // OG viejas sin TC guardado: cotización promedio del día anterior a la fecha de la OG; si no hay registro, la de hoy
     const ppOG = ogPesosPagados(o);   // pesos realmente pagados (todos los pagos)
     const ogTot = ogTotal(o) || 0;    // total en moneda de la OG
     const round2 = x => Math.round((+x||0)*100)/100;
@@ -2890,7 +2898,7 @@ function ogReportRows(ogs){
       r[16]= (avancePct?avancePct.toFixed(1).replace('.0','')+'%':'0%'); // Estado (renglón)
       r[17]= o.observaciones||'';                      // Observaciones
       r[18]= o.moneda||'';                             // Moneda
-      r[19]= USD_COMPRA||'';                            // Cotización (dólar blue comprador)
+      r[19]= usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'';  // Cotización (dólar blue, promedio)
       r[20]= o.comprador||'';                          // Nombre del comprador
       r[21]= o.condicion||o.tipo_contratacion||'';     // Condición de compra
       r[22]= o.solp!=null?o.solp:'';                   // SOLP N°
@@ -3923,7 +3931,7 @@ function openPago(ogId){
   const pendPct=ogPendPagoPct(o); const pendMonto=ogPendPagoMonto(o); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
   const hoy=new Date().toISOString().slice(0,10);
   const sugInicial=tcDiaAnterior(hoy);
-  const tc=sugInicial?sugInicial.compra:(USD_COMPRA||'');
+  const tc=usdProm(sugInicial)!=null?usdProm(sugInicial):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'');
   const antInfo = (o.condicion==='CON ANTICIPO')
     ? '<br><span style="color:var(--olive-deep)">Anticipo '+(+o.anticipo_pct||0)+'% · método '+(o.anticipo_metodo||'—')+(o.anticipo_metodo==='B'?' (recupera primero)':' (proporcional)')+'</span>'
     : (COND_SIN_CAJA.includes(o.condicion) ? '<br><span style="color:var(--olive-deep)">'+esc(o.condicion)+' · no impacta la caja (cancelación por compensación)</span>' : '');
@@ -3935,7 +3943,7 @@ function openPago(ogId){
     +'<div class="field"><label>Medio de pago</label><select id="pg_medio"><option>Efectivo</option><option>Transferencia</option><option>Cheque</option></select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Lugar de pago</label><select id="pg_lugar_pago">'+lugarPagoOpts(o.lugar_pago||'La Huella')+'</select></div>'
     +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="pg_lugar_pago_txt" type="text" value="'+esc(o.lugar_pago==='Otra'?(o.lugar_pago_txt||''):'')+'" placeholder="Escribí la ubicación…"></div></div>'
-    +'<div class="field" id="pg_tcField"><label>Tipo de cambio comprador (pesos por USD)</label><input id="pg_tc" type="number" step="0.01" value="'+esc(tc)+'" oninput="pgCalc()"><div id="pg_tcNote" style="font-size:11px;color:var(--muted);margin-top:3px">'+tcNoteInner(hoy,'pgUsarTcSugerido')+' Editable; se guarda para tener el equivalente en pesos del pago.</div></div>'
+    +'<div class="field" id="pg_tcField"><label>Tipo de cambio (pesos por USD)</label><input id="pg_tc" type="number" step="0.01" value="'+esc(tc)+'" oninput="pgCalc()"><div id="pg_tcNote" style="font-size:11px;color:var(--muted);margin-top:3px">'+tcNoteInner(hoy,'pgUsarTcSugerido')+' Editable; se guarda para tener el equivalente en pesos del pago.</div></div>'
     +'<div id="pg_result" style="background:#eef2e6;border-radius:10px;padding:12px;font-size:13px;margin-top:6px"></div>'
     +'<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;font-weight:600;color:var(--ink)"><input type="checkbox" id="pg_redondear" checked onchange="pgCalc()"> Redondear (si hay una diferencia chica, cerrar la OG y ajustar la caja) — si lo destildás, se registra como pago parcial y el resto queda pendiente</label>'
     +'<div class="field" style="margin-top:12px"><label>Observaciones</label><input id="pg_obs" type="text"></div>';
@@ -4312,7 +4320,7 @@ function openOG(id){
     +'<div class="field"><label>Moneda</label><select id="og_moneda"'+disSel+'>'+monOpts+'</select><div style="font-size:11px;color:var(--muted);margin-top:4px">Moneda en la que se pactó/ajusta el precio. No define en qué moneda se paga.</div></div></div>'
     +'<div class="frow c2" id="og_lugarPagoWrap" style="display:'+(pagoUsdShow?'grid':'none')+'"><div class="field"><label>Lugar de pago</label><select id="og_lugar_pago">'+lugarOpts+'</select></div>'
     +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="og_lugar_pago_txt" type="text" value="'+esc(cur.lugar_pago_txt||'')+'" placeholder="Escribí la ubicación…"></div></div>'
-    +'<div class="field"><label>Tipo de cambio comprador (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:((tcDiaAnterior(cur.fecha||hoy)||{}).compra!=null?tcDiaAnterior(cur.fecha||hoy).compra:(USD_COMPRA||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
+    +'<div class="field"><label>Tipo de cambio (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:(usdProm(tcDiaAnterior(cur.fecha||hoy))!=null?usdProm(tcDiaAnterior(cur.fecha||hoy)):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
     +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"></div>'
     +'<div class="field"><label>Método de anticipo</label><select id="og_antmet">'+metOpts+'</select></div></div></div>'
     +'<div class="field"><label>Observaciones</label><textarea id="og_obs" rows="2" style="font-size:13px;min-height:36px;line-height:1.4" placeholder="Detalle de la condición (plazos, % de anticipo, aclaraciones)…">'+esc(cur.observaciones||'')+'</textarea></div>'
@@ -4542,9 +4550,10 @@ window.ogCondChanged=ogCondChanged;
 // Nota + botón "Usar esta cotización" reutilizable: tipo de cambio COMPRADOR blue del día anterior a fechaISO.
 // aplicarFn = nombre de la función global que vuelca el valor sugerido en el input de TC correspondiente (OG o pago).
 function tcNoteInner(fechaISO, aplicarFn){
-  const sug=tcDiaAnterior(fechaISO);
-  if(sug) return 'Cotización comprador del día anterior ('+fmtDate(sug.fecha)+'): <strong>$ '+fmtNum(sug.compra,2)+'</strong> · <button type="button" class="btn ghost sm" style="padding:2px 8px;font-size:11px" onclick="'+aplicarFn+'('+sug.compra+')">Usar esta cotización</button>';
-  if(USD_COMPRA) return 'No hay cotización registrada para el día anterior. Dólar blue comprador de hoy: <strong>$ '+fmtNum(USD_COMPRA,2)+'</strong>'+(USD_FECHA?(' ('+USD_FECHA+')'):'')+' · <button type="button" class="btn ghost sm" style="padding:2px 8px;font-size:11px" onclick="'+aplicarFn+'('+USD_COMPRA+')">Usar esta cotización</button> · Cargá el histórico en Diccionario → Cotización USD.';
+  const sug=tcDiaAnterior(fechaISO), sugProm=usdProm(sug);
+  if(sugProm!=null) return 'Cotización promedio del día anterior ('+fmtDate(sug.fecha)+'): <strong>$ '+fmtNum(sugProm,2)+'</strong> · <button type="button" class="btn ghost sm" style="padding:2px 8px;font-size:11px" onclick="'+aplicarFn+'('+sugProm+')">Usar esta cotización</button>';
+  const hoyProm=usdProm({compra:USD_COMPRA,venta:USD_VENTA});
+  if(hoyProm!=null) return 'No hay cotización registrada para el día anterior. Dólar blue promedio de hoy: <strong>$ '+fmtNum(hoyProm,2)+'</strong>'+(USD_FECHA?(' ('+USD_FECHA+')'):'')+' · <button type="button" class="btn ghost sm" style="padding:2px 8px;font-size:11px" onclick="'+aplicarFn+'('+hoyProm+')">Usar esta cotización</button> · Cargá el histórico en Diccionario → Cotización USD.';
   return 'No hay cotización automática ni registrada para esa fecha. Cargala a mano, o completá Diccionario → Cotización USD.';
 }
 window.tcNoteInner=tcNoteInner;
@@ -4968,7 +4977,7 @@ function exportDicTab(){
   } else if(DIC_TAB==='usd_diario'){
     let rows=(DIC.usd_diario||[]).slice(); if(q) rows=rows.filter(r=>String(r.fecha||'').includes(q));
     rows.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
-    aoa=[['Fecha','Dólar blue comprador','Fuente'], ...rows.map(r=>[r.fecha, r.compra, r.fuente])];
+    aoa=[['Fecha','Comprador','Vendedor','Promedio','Fuente'], ...rows.map(r=>[r.fecha, r.compra, r.venta, usdProm(r), r.fuente])];
     sheetName='Cotización USD'; fname='Diccionario_CotizacionUSD_'+hoy+'.xlsx';
   } else if(DIC_TAB==='series'){
     _enrichSeries('otros');
@@ -5466,8 +5475,9 @@ window.confirmEliminarMotivoCierre=confirmEliminarMotivoCierre;
 function openNuevaCotizacion(fecha){
   const cur=(DIC.usd_diario||[]).find(r=>r.fecha===fecha);
   const hoy=new Date().toISOString().slice(0,10);
-  const body='<div class="frow c2"><div class="field"><label>Fecha *</label><input id="cu_fecha" type="date" value="'+esc(fecha||hoy)+'" '+(fecha?'readonly style="background:#f3f1e8"':'')+'></div>'
-    +'<div class="field"><label>Dólar blue comprador *</label><input id="cu_compra" type="number" step="0.01" value="'+esc(cur?cur.compra:'')+'" placeholder="ej. 1500"></div></div>';
+  const body='<div class="frow c2"><div class="field"><label>Fecha *</label><input id="cu_fecha" type="date" value="'+esc(fecha||hoy)+'" '+(fecha?'readonly style="background:#f3f1e8"':'')+'></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Dólar blue comprador *</label><input id="cu_compra" type="number" step="0.01" value="'+esc(cur?cur.compra:'')+'" placeholder="ej. 1500"></div>'
+    +'<div class="field"><label>Dólar blue vendedor</label><input id="cu_venta" type="number" step="0.01" value="'+esc(cur&&cur.venta!=null?cur.venta:'')+'" placeholder="ej. 1520"></div></div>';
   openModal(fecha?'Editar cotización · '+fmtDate(fecha):'Nueva cotización', body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCotizacion('+(fecha?("'"+fecha+"'"):'null')+')">Guardar</button>');
 }
@@ -5475,10 +5485,12 @@ window.openNuevaCotizacion=openNuevaCotizacion;
 async function guardarCotizacion(fechaOrig){
   const fecha=(document.getElementById('cu_fecha').value||'').trim();
   const compra=+document.getElementById('cu_compra').value||0;
+  const ventaRaw=document.getElementById('cu_venta').value;
+  const venta=ventaRaw===''?null:+ventaRaw;
   if(!fecha){ toast('Elegí una fecha'); return; }
   if(compra<=0){ toast('Ingresá un valor mayor a 0'); return; }
   if(!fechaOrig && (DIC.usd_diario||[]).some(r=>r.fecha===fecha)){ toast('Ya existe una cotización para esa fecha. Editala desde la lista.'); return; }
-  await usdDiarioUpsert(fecha, compra, 'manual');
+  await usdDiarioUpsert(fecha, compra, venta, 'manual');
   closeModal(); toast('Cotización guardada'); renderDic();
 }
 window.guardarCotizacion=guardarCotizacion;
@@ -6346,15 +6358,15 @@ function paintDic(){
     let rows=(DIC.usd_diario||[]).slice();
     if(q) rows=rows.filter(r=>String(r.fecha||'').includes(q));
     rows.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
-    const udTbl='<table class="grid"><thead><tr><th>Fecha</th><th style="text-align:right">Dólar blue comprador</th><th>Fuente</th><th style="width:110px"></th></tr></thead><tbody>'
-      +rows.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td style="text-align:right">$ '+fmtNum(r.compra,2)+'</td><td style="font-size:11px;color:var(--muted)">'+esc(r.fuente||'—')+'</td>'
+    const udTbl='<table class="grid"><thead><tr><th>Fecha</th><th style="text-align:right">Comprador</th><th style="text-align:right">Vendedor</th><th style="text-align:right">Promedio</th><th>Fuente</th><th style="width:110px"></th></tr></thead><tbody>'
+      +rows.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td style="text-align:right">$ '+fmtNum(r.compra,2)+'</td><td style="text-align:right">'+(r.venta!=null?'$ '+fmtNum(r.venta,2):'—')+'</td><td style="text-align:right"><strong>'+(usdProm(r)!=null?'$ '+fmtNum(usdProm(r),2):'—')+'</strong></td><td style="font-size:11px;color:var(--muted)">'+esc(r.fuente||'—')+'</td>'
         +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openNuevaCotizacion(\''+r.fecha+'\')">'+ICO.edit+'</button>'
         +'<button class="iconbtn del" title="Eliminar" onclick="eliminarCotizacion(\''+r.fecha+'\')">'+ICO.del+'</button></div></td></tr>').join('')
-      +(rows.length?'':'<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Sin cotizaciones cargadas.</td></tr>')
+      +(rows.length?'':'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">Sin cotizaciones cargadas.</td></tr>')
       +'</tbody></table>';
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Cotización USD (día a día)</h3><span class="meta">'+rows.length+' de '+(DIC.usd_diario||[]).length+'</span>'
       +'<span style="margin-left:auto"><button class="btn sm" onclick="openNuevaCotizacion()">'+ICO.plus+'Nueva cotización</button></span></div>'
-      +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dólar blue <strong>comprador</strong> (campo "compra" de dolarapi) por día. Se completa solo cuando alguien abre la app ese día; los días que falten (fines de semana, feriados, días previos al arranque) se cargan a mano acá. El tipo de cambio de una OG usa la cotización del día <strong>anterior</strong> a su Fecha de creación; el de un pago, la del día anterior a su Fecha de pago.</div>'+udTbl+'</div>';
+      +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dólar blue comprador y vendedor por día (el promedio de ambos es lo que usan las OG y los pagos). Se completa solo cuando alguien abre la app ese día; los días que falten (fines de semana, feriados, días previos al arranque) se cargan a mano acá. El tipo de cambio de una OG usa la cotización del día <strong>anterior</strong> a su Fecha de creación; el de un pago, la del día anterior a su Fecha de pago.</div>'+udTbl+'</div>';
   } else if(DIC_TAB==='series'){
     _enrichSeries('otros');
     const base=SERIES_ACTIVAS.filter(r=>r.familia==='otros');
@@ -6860,8 +6872,8 @@ async function reloadDB(){
     }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
     // Cotización USD día a día: registro propio de la app, no viene de Tango
     try{
-      const ud = await sbFetchAll('/usd_diario?select=fecha,compra,fuente&order=fecha.asc');
-      if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, fuente:r.fuente||''}));
+      const ud = await sbFetchAll('/usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
+      if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
     }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
     // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
     for(const ns of Object.keys(IDX_DEF)){
@@ -6986,12 +6998,12 @@ window.reloadDB=reloadDB;
     ];
     DIC.motivos_cierre = MOTIVOS_CIERRE.map((m,i)=>({id:i+1, descripcion:m, activo:true}));
     DIC.usd_diario = [
-      {fecha:'2026-08-25', compra:1470, fuente:'manual'},
-      {fecha:'2026-08-26', compra:1475, fuente:'manual'},
-      {fecha:'2026-08-27', compra:1480, fuente:'manual'},
-      {fecha:'2026-08-28', compra:1490, fuente:'manual'},
-      {fecha:'2026-08-31', compra:1520, fuente:'manual'},
-      {fecha:'2026-09-01', compra:1535, fuente:'dolarapi'},
+      {fecha:'2026-08-25', compra:1470, venta:1490, fuente:'manual'},
+      {fecha:'2026-08-26', compra:1475, venta:1495, fuente:'manual'},
+      {fecha:'2026-08-27', compra:1480, venta:1500, fuente:'manual'},
+      {fecha:'2026-08-28', compra:1490, venta:1510, fuente:'manual'},
+      {fecha:'2026-08-31', compra:1520, venta:1540, fuente:'manual'},
+      {fecha:'2026-09-01', compra:1535, venta:1555, fuente:'dolarapi'},
     ];
     // Histórico real de IPC/CAC/Polinómica, tomado del Excel de índices (hasta 07/2026, último dato
     // publicado; los meses posteriores en el Excel repiten el último valor como placeholder y no se cargan).
