@@ -697,8 +697,16 @@ const SCHEMAS = {
     title:'Diccionarios', sub:'Datos maestros de referencia — a disposición de todas las áreas', table:'-', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 0 2 2h13"/><path d="M9 7h6M9 11h6"/></svg>',
   },
+  indices: {
+    title:'Índices', sub:'IPC, CAC y Polinómica mes a mes, para actualizar precios si vuelve la inflación', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>',
+  },
+  precios: {
+    title:'Actualización de precios', sub:'Calculadora: variación de un índice entre dos períodos', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
+  },
 };
-const ORDER=['compras','seguimiento','tesoreria','deposito','panol','mantenimiento','logistica','diccionarios'];
+const ORDER=['compras','seguimiento','tesoreria','deposito','panol','mantenimiento','logistica','diccionarios','indices','precios'];
 
 /* ================================================================
    CAPA DE DATOS
@@ -882,6 +890,8 @@ async function render(view){
   if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='tesoreria'){ return renderTesoreria(); }
   if(view==='diccionarios'){ return renderDic(); }
+  if(view==='indices'){ return renderIndices(); }
+  if(view==='precios'){ return renderActualizacionPrecios(); }
   C().innerHTML='<div class="empty">Cargando…</div>';
   let rows=[];
   try{ rows=await Data.list(view); }
@@ -1783,6 +1793,196 @@ function tcDiaAnterior(fechaISO){
   return best;
 }
 window.tcDiaAnterior=tcDiaAnterior;
+
+/* ===== Índices mes a mes (IPC / CAC / Polinómica), para actualizar precios si vuelve la inflación =====
+   Carga manual: ninguno de los tres tiene una API pública confirmada y probable desde este entorno
+   (INDEC sí publica una API de series de tiempo — apis.datos.gob.ar — candidata para automatizar el
+   IPC más adelante, pero no se pudo probar su respuesta/CORS real desde acá; mejor no adivinar el
+   comportamiento de una integración que no se validó). Cada índice tiene su propio "día esperado de
+   publicación" (del mes siguiente al período) para poder avisar cuando ya debería estar cargado.
+   Polinómica: fórmula propia (no un valor publicado), ponderando 6 series del informe de Precios
+   Internos Básicos al por Mayor de INDEC (confirmado con el usuario):
+     Mano de obra 35% · Artefactos de iluminación/cableado 7% · Máquinas y equipos importados 8% ·
+     Hierros y aceros en formas básicas 20% · Equipo / amortización de equipo 15% · Gastos generales 15%. */
+const IDX_DEF={
+  ipc:{ nombre:'IPC (INDEC)', tabla:'idx_ipc', diaEsperado:10,
+    fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-31',
+    campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'} ] },
+  cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'idx_cac', diaEsperado:20,
+    fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
+    campos:[ {k:'construccion', label:'Costo Construcción'}, {k:'materiales', label:'Materiales'}, {k:'mano_obra', label:'Mano de obra'} ] },
+  poli:{ nombre:'Polinómica (IPIB · INDEC, fórmula propia)', tabla:'idx_poli', diaEsperado:29,
+    fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32',
+    campos:[
+      {k:'mo', label:'Mano de obra (Cuadro 5 inc. a)'},
+      {k:'art_ilum', label:'Art. iluminación/cableado (Cuadro 5 inc. g)'},
+      {k:'maq_imp', label:'Máquinas/equipos importados (Cuadro 13 CIIU 29)'},
+      {k:'hierros', label:'Hierros/aceros básicos (Cuadro 3 CPC 27101)'},
+      {k:'equipo', label:'Equipo / amortización (Cuadro 1 inc. j)'},
+      {k:'gastos', label:'Gastos Generales (Cuadro 5 inc. p)'},
+    ],
+    pesos:{mo:0.35, art_ilum:0.07, maq_imp:0.08, hierros:0.20, equipo:0.15, gastos:0.15} },
+};
+// Polinómica es la única con un "índice" calculado (ponderación de sus 6 campos); IPC/CAC son series paralelas, cada campo es su propio valor.
+function idxCalculado(ns, row){
+  const def=IDX_DEF[ns]; if(!def.pesos) return null;
+  return def.campos.reduce((a,c)=>a+(+row[c.k]||0)*(def.pesos[c.k]||0), 0);
+}
+function idxSerieOpts(){
+  const opts=[];
+  Object.keys(IDX_DEF).forEach(ns=>{
+    const def=IDX_DEF[ns];
+    if(def.pesos) opts.push({ns, campo:'indice', label:def.nombre});
+    else def.campos.forEach(c=>opts.push({ns, campo:c.k, label:def.nombre+' · '+c.label}));
+  });
+  return opts;
+}
+function idxSerieValor(ns, campo, periodo){
+  const row=(DIC['idx_'+ns]||[]).find(r=>+r.periodo===+periodo);
+  if(!row) return null;
+  return campo==='indice' ? idxCalculado(ns,row) : (row[campo]!=null&&row[campo]!==''?+row[campo]:null);
+}
+function idxPeriodoFmt(p){ p=String(p); return p.slice(4,6)+'/'+p.slice(0,4); }
+// Período (AAAAMM) más reciente que YA debería estar publicado, según el día de publicación esperado.
+function idxPeriodoEsperado(diaEsperado, hoy){
+  hoy=hoy||new Date();
+  const pub=new Date(hoy.getFullYear(), hoy.getMonth(), diaEsperado);
+  const mesesAtras = hoy>=pub ? 1 : 2;
+  const d=new Date(hoy.getFullYear(), hoy.getMonth()-mesesAtras, 1);
+  return d.getFullYear()*100+(d.getMonth()+1);
+}
+// null = está al día; si no, el período (AAAAMM) que falta cargar.
+function idxFaltante(ns, hoy){
+  const def=IDX_DEF[ns]; const esperado=idxPeriodoEsperado(def.diaEsperado, hoy);
+  const tiene=(DIC['idx_'+ns]||[]).some(r=>+r.periodo===esperado);
+  return tiene? null : esperado;
+}
+function idxUpsert(ns, periodo, fields){
+  const arr=DIC['idx_'+ns]=DIC['idx_'+ns]||[];
+  const i=arr.findIndex(r=>+r.periodo===+periodo);
+  const row={periodo:+periodo, ...fields};
+  if(i>=0) arr[i]=row; else arr.push(row);
+  arr.sort((a,b)=>a.periodo-b.periodo);
+  if(!DEMO_MODE){
+    try{ sbFetch('/'+IDX_DEF[ns].tabla,{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
+    catch(e){ /* si la tabla no existe todavía, queda solo en memoria */ }
+  }
+}
+async function idxDelete(ns, periodo){
+  DIC['idx_'+ns]=(DIC['idx_'+ns]||[]).filter(r=>+r.periodo!==+periodo);
+  if(!DEMO_MODE){
+    try{ await sbFetch('/'+IDX_DEF[ns].tabla+'?periodo=eq.'+periodo,{method:'DELETE',prefer:'return=minimal'}); }
+    catch(e){}
+  }
+}
+
+/* ===== Vista "Índices" ===== */
+let IDX_TAB='ipc';
+function setIdxTab(t){ IDX_TAB=t; renderIndices(); }
+window.setIdxTab=setIdxTab;
+function renderIndices(){
+  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+Object.keys(IDX_DEF).map(ns=>
+    '<button class="mtab'+(IDX_TAB===ns?' active':'')+'" onclick="setIdxTab(\''+ns+'\')">'+esc(IDX_DEF[ns].nombre.split(' (')[0].split(' ·')[0])+'</button>').join('')+'</div>';
+  const faltantes=Object.keys(IDX_DEF).map(ns=>({ns, per:idxFaltante(ns)})).filter(x=>x.per!=null);
+  const banner = faltantes.length ? '<div class="card" style="padding:12px 16px;margin-bottom:14px;background:#fdf3d9;border:1px solid #e0c46c;font-size:13px"><strong>Hay índices para actualizar:</strong> '
+    +faltantes.map(f=>esc(IDX_DEF[f.ns].nombre.split(' (')[0].split(' ·')[0])+' de '+idxPeriodoFmt(f.per)).join(' · ')+'</div>' : '';
+  C().innerHTML = banner + tabs + idxTabBody(IDX_TAB);
+}
+window.renderIndices=renderIndices;
+function idxTabBody(ns){
+  const def=IDX_DEF[ns];
+  const rows=(DIC['idx_'+ns]||[]).slice().sort((a,b)=>b.periodo-a.periodo);
+  const faltante=idxFaltante(ns);
+  const avisoFaltante = faltante!=null ? '<div style="font-size:12px;color:#8a6d1e;padding:0 16px 8px">Debería estar cargado <strong>'+idxPeriodoFmt(faltante)+'</strong> (se publica aprox. el día '+def.diaEsperado+' del mes siguiente).</div>' : '';
+  const cols = def.campos.map(c=>'<th style="text-align:right">'+esc(c.label)+'</th>').join('') + (def.pesos ? '<th style="text-align:right">Índice ponderado</th>' : '');
+  const rowsHtml = rows.map(r=>{
+    const tds = def.campos.map(c=>'<td style="text-align:right">'+(r[c.k]!=null&&r[c.k]!==''?fmtNum(r[c.k],2):'—')+'</td>').join('')
+      + (def.pesos ? '<td style="text-align:right"><strong>'+fmtNum(idxCalculado(ns,r),2)+'</strong></td>' : '');
+    return '<tr><td>'+idxPeriodoFmt(r.periodo)+'</td>'+tds
+      +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openIdxRow(\''+ns+'\','+r.periodo+')">'+ICO.edit+'</button>'
+      +'<button class="iconbtn del" title="Eliminar" onclick="askIdxDelete(\''+ns+'\','+r.periodo+')">'+ICO.del+'</button></div></td></tr>';
+  }).join('') || '<tr><td colspan="'+(2+def.campos.length)+'" style="text-align:center;padding:20px;color:var(--muted)">Sin períodos cargados todavía.</td></tr>';
+  return '<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">'+esc(def.nombre)+'</h3><span class="meta">'+rows.length+' períodos cargados</span>'
+    +'<span style="margin-left:auto;display:flex;align-items:center;gap:10px"><a href="'+esc(def.fuenteUrl)+'" target="_blank" rel="noopener" style="font-size:12px">Fuente ↗</a><button class="btn sm" onclick="openIdxRow(\''+ns+'\')">'+ICO.plus+'Cargar período</button></span></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">Se publica aprox. el día '+def.diaEsperado+' del mes siguiente al período.'+(def.pesos?' El "Índice ponderado" lo calcula la app con los pesos de la fórmula (no se carga a mano).':'')+'</div>'+avisoFaltante
+    +'<table class="grid"><thead><tr><th>Período</th>'+cols+'<th style="width:80px"></th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
+}
+function openIdxRow(ns, periodo){
+  const def=IDX_DEF[ns];
+  const cur = periodo!=null ? (DIC['idx_'+ns]||[]).find(r=>+r.periodo===+periodo) : null;
+  const periodoVal = cur ? String(cur.periodo).slice(0,4)+'-'+String(cur.periodo).slice(4,6) : '';
+  const camposHtml = def.campos.map(c=>'<div class="field"><label>'+esc(c.label)+'</label><input id="idx_c_'+c.k+'" type="number" step="0.0001" value="'+(cur&&cur[c.k]!=null?cur[c.k]:'')+'"></div>').join('');
+  const body='<div class="field"><label>Período</label><input id="idx_periodo" type="month" value="'+periodoVal+'"'+(cur?' readonly style="background:#f3f1e8"':'')+'></div>'
+    +'<div class="frow c2">'+camposHtml+'</div>';
+  openModal((cur?'Editar':'Cargar período')+' · '+esc(def.nombre), body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarIdxRow(\''+ns+'\''+(cur?(','+cur.periodo):',null')+')">Guardar</button>');
+}
+window.openIdxRow=openIdxRow;
+function guardarIdxRow(ns, periodoOrig){
+  const def=IDX_DEF[ns];
+  const pv=(document.getElementById('idx_periodo').value||'').trim();
+  if(!pv){ toast('Elegí un período'); return; }
+  const periodo=+pv.replace('-','');
+  if(periodoOrig==null && (DIC['idx_'+ns]||[]).some(r=>+r.periodo===periodo)){ toast('Ya existe ese período. Editalo desde la lista.'); return; }
+  const fields={};
+  def.campos.forEach(c=>{ const v=document.getElementById('idx_c_'+c.k).value; fields[c.k]=v===''?null:+v; });
+  idxUpsert(ns, periodo, fields);
+  closeModal(); toast('Guardado'); renderIndices();
+}
+window.guardarIdxRow=guardarIdxRow;
+function askIdxDelete(ns, periodo){
+  openModal('Eliminar período', '<p style="margin:0;font-size:14px">¿Eliminar <strong>'+esc(idxPeriodoFmt(periodo))+'</strong> de '+esc(IDX_DEF[ns].nombre)+'?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmIdxDelete(\''+ns+'\','+periodo+')">Eliminar</button>');
+}
+window.askIdxDelete=askIdxDelete;
+async function confirmIdxDelete(ns, periodo){
+  await idxDelete(ns, periodo); closeModal(); toast('Eliminado'); renderIndices();
+}
+window.confirmIdxDelete=confirmIdxDelete;
+
+/* ===== Vista "Actualización de precios" (calculadora de referencia; no modifica OGs) ===== */
+function renderActualizacionPrecios(){
+  const opts=idxSerieOpts();
+  const selHtml='<option value="">— elegí un índice —</option>'+opts.map(o=>'<option value="'+o.ns+':'+o.campo+'">'+esc(o.label)+'</option>').join('');
+  C().innerHTML='<div class="card"><div class="card-h"><h3 style="margin:0">Actualización de precios</h3><span class="meta">Calculadora de referencia: te muestra la variación entre dos períodos, no modifica ninguna OG.</span></div>'
+    +'<div style="padding:16px;max-width:520px">'
+    +'<div class="field"><label>Índice</label><select id="pr_serie" onchange="prSerieChanged()">'+selHtml+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Desde (período base)</label><select id="pr_desde" onchange="prCalc()"></select></div>'
+    +'<div class="field"><label>Hasta</label><select id="pr_hasta" onchange="prCalc()"></select></div></div>'
+    +'<div id="pr_result" style="background:#eef2e6;border-radius:10px;padding:14px;margin-top:10px;font-size:14px;color:var(--muted)">Elegí un índice para calcular.</div>'
+    +'<div class="field" style="margin-top:14px"><label>Precio base (opcional, para ver a cuánto quedaría)</label><input id="pr_precio" type="number" step="0.01" oninput="prCalc()" placeholder="ej. 12000"></div>'
+    +'</div></div>';
+}
+window.renderActualizacionPrecios=renderActualizacionPrecios;
+function prSerieChanged(){
+  const val=document.getElementById('pr_serie').value;
+  const [ns]=val?val.split(':'):[null];
+  const periodos = ns ? (DIC['idx_'+ns]||[]).map(r=>r.periodo).sort((a,b)=>a-b) : [];
+  const optsHtml=periodos.map(p=>'<option value="'+p+'">'+idxPeriodoFmt(p)+'</option>').join('');
+  document.getElementById('pr_desde').innerHTML=optsHtml;
+  document.getElementById('pr_hasta').innerHTML=optsHtml;
+  if(periodos.length>=2){ document.getElementById('pr_desde').value=periodos[periodos.length-2]; document.getElementById('pr_hasta').value=periodos[periodos.length-1]; }
+  prCalc();
+}
+window.prSerieChanged=prSerieChanged;
+function prCalc(){
+  const res=document.getElementById('pr_result'); if(!res) return;
+  const val=document.getElementById('pr_serie').value;
+  if(!val){ res.innerHTML='Elegí un índice para calcular.'; return; }
+  const [ns,campo]=val.split(':');
+  const desde=+(document.getElementById('pr_desde').value||0), hasta=+(document.getElementById('pr_hasta').value||0);
+  if(!desde||!hasta){ res.innerHTML='Cargá al menos 2 períodos de este índice en la solapa "Índices" para poder calcular.'; return; }
+  const vDesde=idxSerieValor(ns,campo,desde), vHasta=idxSerieValor(ns,campo,hasta);
+  if(vDesde==null||vHasta==null||!vDesde){ res.innerHTML='Faltan datos de ese índice para alguno de los dos períodos elegidos.'; return; }
+  const variacion=(vHasta/vDesde-1)*100;
+  const def=IDX_DEF[ns]; const label=def.nombre+(campo!=='indice'?(' · '+def.campos.find(c=>c.k===campo).label):'');
+  let txt='<strong>'+esc(label)+'</strong><br>De '+idxPeriodoFmt(desde)+' ('+fmtNum(vDesde,2)+') a '+idxPeriodoFmt(hasta)+' ('+fmtNum(vHasta,2)+')'
+    +' → <strong style="color:'+(variacion>=0?'var(--olive-deep)':'#b4554e')+'">'+(variacion>=0?'+':'')+variacion.toFixed(2)+'%</strong>';
+  const precio=+(document.getElementById('pr_precio').value||0);
+  if(precio>0) txt+='<br>Precio actualizado: <strong>'+(precio*(1+variacion/100)).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong>';
+  res.innerHTML=txt;
+}
+window.prCalc=prCalc;
 function setOGFiltro(k,v){ OG_FILTRO[k]=v; renderCompras(); }
 function limpiarOGFiltro(){ OG_FILTRO={comprador:'',certificador:'',proveedor:'',clasifRenglon:'',estado:'todas'}; renderCompras(); }
 window.setOGFiltro=setOGFiltro; window.limpiarOGFiltro=limpiarOGFiltro;
@@ -6493,6 +6693,13 @@ async function reloadDB(){
       const ud = await sbFetchAll('/usd_diario?select=fecha,compra,fuente&order=fecha.asc');
       if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, fuente:r.fuente||''}));
     }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
+    for(const ns of Object.keys(IDX_DEF)){
+      try{
+        const rows = await sbFetchAll('/'+IDX_DEF[ns].tabla+'?select=*&order=periodo.asc');
+        if(rows) DIC['idx_'+ns] = rows.map(r=>({...r, periodo:+r.periodo}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    }
     // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
     try{
       const cu=await sbFetchAll('/cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
@@ -6615,6 +6822,18 @@ window.reloadDB=reloadDB;
       {fecha:'2026-08-28', compra:1490, fuente:'manual'},
       {fecha:'2026-08-31', compra:1520, fuente:'manual'},
       {fecha:'2026-09-01', compra:1535, fuente:'dolarapi'},
+    ];
+    DIC.idx_ipc = [
+      {periodo:202606, nacional:412.3, empalme:4823.1},
+      {periodo:202607, nacional:418.9, empalme:4900.2},
+    ];
+    DIC.idx_cac = [
+      {periodo:202606, construccion:1240.5, materiales:1180.2, mano_obra:1310.8},
+      {periodo:202607, construccion:1268.1, materiales:1195.6, mano_obra:1350.4},
+    ];
+    DIC.idx_poli = [
+      {periodo:202606, mo:1780.7, art_ilum:2580.1, maq_imp:2790.5, hierros:3070.5, equipo:2790.5, gastos:2409.4},
+      {periodo:202607, mo:1830.2, art_ilum:2640.8, maq_imp:2855.1, hierros:3145.2, equipo:2855.1, gastos:2470.7},
     ];
       '<div class="demo-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>'
       +'Modo demo: datos de ejemplo en memoria (no se guardan). Completá SB_URL, SB_KEY y REDIRECT_URL en el código para conectar Supabase y activar el login.</div>';
