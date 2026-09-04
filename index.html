@@ -1827,6 +1827,18 @@ const IDX_DEF={
       {k:'gastos', label:'Gastos Generales (Cuadro 5 inc. p)'},
     ],
     pesos:{mo:0.35, art_ilum:0.07, maq_imp:0.08, hierros:0.20, equipo:0.15, gastos:0.15} },
+  uva:{ nombre:'UVA (BCRA)', tabla:'idx_uva', diaEsperado:null,
+    fuenteUrl:'https://www.bcra.gob.ar/principales-variables-datos/?serie=7913',
+    campos:[ {k:'valor', label:'UVA'} ] },
+  dolar_oficial:{ nombre:'Dólar Oficial (BNA)', tabla:'idx_dolar_oficial', diaEsperado:null,
+    fuenteUrl:'https://www.bna.com.ar/Personas',
+    campos:[ {k:'compra', label:'TC Comprador'} ] },
+  dolar_blue:{ nombre:'Dólar Blue', tabla:'idx_dolar_blue', diaEsperado:null,
+    fuenteUrl:'https://www.cotizacion-dolar.com.ar/dolar-blue-historico-2026.php',
+    campos:[ {k:'compra', label:'TC Comprador'} ] },
+  sueldos:{ nombre:'Sueldos (RIPTE)', tabla:'idx_sueldos', diaEsperado:null,
+    fuenteUrl:'http://estudiodelamo.com/indice-salarios-argentina/',
+    campos:[ {k:'ars', label:'Sueldos $ (RIPTE)'}, {k:'pct', label:'Sueldos % (índice)'} ] },
 };
 // Polinómica es la única con un "índice" calculado (ponderación de sus 6 campos); IPC/CAC son series paralelas, cada campo es su propio valor.
 function idxCalculado(ns, row){
@@ -1858,7 +1870,8 @@ function idxPeriodoEsperado(diaEsperado, hoy){
 }
 // null = está al día; si no, el período (AAAAMM) que falta cargar.
 function idxFaltante(ns, hoy){
-  const def=IDX_DEF[ns]; const esperado=idxPeriodoEsperado(def.diaEsperado, hoy);
+  const def=IDX_DEF[ns]; if(!def.diaEsperado) return null; // sin día de publicación fijo (ej. cotizaciones diarias): no se avisa
+  const esperado=idxPeriodoEsperado(def.diaEsperado, hoy);
   const tiene=(DIC['idx_'+ns]||[]).some(r=>+r.periodo===esperado);
   return tiene? null : esperado;
 }
@@ -1885,29 +1898,47 @@ async function idxDelete(ns, periodo){
 let IDX_TAB='ipc';
 function setIdxTab(t){ IDX_TAB=t; renderIndices(); }
 window.setIdxTab=setIdxTab;
-// Evolución comparada: 3 series fijas (una por familia), indexadas a 0% en el período base — así se
-// pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica validada (orden fijo).
-const IDX_EVOL_SERIES=[
-  {ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
-  {ns:'cac', campo:'construccion', label:'CAC Costo Construcción', short:'CAC', color:'#eb6834'},
-  {ns:'poli', campo:'indice', label:'Polinómica', short:'Polinómica', color:'#1baf7a'},
+// Evolución comparada: hasta 10 series candidatas (una por índice/campo), indexadas a 0% en el
+// período base — así se pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica
+// validada (orden fijo, 8 tonos con separación garantizada); las 2 series de Sueldos reutilizan el tono
+// de IPC/CAC con trazo punteado (encoding secundario) en vez de sumar tonos nuevos sin validar. El usuario
+// elige cuáles mostrar (checkboxes), tope de 8 a la vez para no exceder los tonos validados.
+const IDX_EVOL_ALL=[
+  {key:'ipc_nacional', ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
+  {key:'cac_construccion', ns:'cac', campo:'construccion', label:'CAC Costo Construcción', short:'CAC Constr.', color:'#eb6834'},
+  {key:'poli_indice', ns:'poli', campo:'indice', label:'Polinómica', short:'Polinómica', color:'#1baf7a'},
+  {key:'cac_materiales', ns:'cac', campo:'materiales', label:'CAC Materiales', short:'CAC Mat.', color:'#eda100'},
+  {key:'cac_mano_obra', ns:'cac', campo:'mano_obra', label:'CAC Mano de obra', short:'CAC M.O.', color:'#e87ba4'},
+  {key:'uva_valor', ns:'uva', campo:'valor', label:'UVA', short:'UVA', color:'#008300'},
+  {key:'dolar_oficial_compra', ns:'dolar_oficial', campo:'compra', label:'Dólar Oficial (TC comprador)', short:'USD Ofic.', color:'#4a3aa7'},
+  {key:'dolar_blue_compra', ns:'dolar_blue', campo:'compra', label:'Dólar Blue (TC comprador)', short:'USD Blue', color:'#e34948'},
+  {key:'sueldos_pct', ns:'sueldos', campo:'pct', label:'Sueldos % (índice)', short:'Sueldos %', color:'#2a78d6', dash:'5,3'},
+  {key:'sueldos_ars', ns:'sueldos', campo:'ars', label:'Sueldos $ (RIPTE)', short:'Sueldos $', color:'#eb6834', dash:'5,3'},
 ];
-function idxEvolBaseDefault(){
-  // el período base por default es el más nuevo entre los "primeros períodos" de cada serie,
-  // así arrancan las 3 con datos (hoy: lo determina Polinómica, la que tiene menos historia).
-  const inicios=IDX_EVOL_SERIES.map(s=>{ const arr=DIC['idx_'+s.ns]||[]; return arr.length?Math.min(...arr.map(r=>r.periodo)):null; }).filter(x=>x!=null);
+const IDX_EVOL_MAX=8;
+let IDX_EVOL_SEL=new Set(['ipc_nacional','cac_construccion','poli_indice']);
+function toggleIdxEvolSerie(key){
+  if(IDX_EVOL_SEL.has(key)) IDX_EVOL_SEL.delete(key);
+  else{ if(IDX_EVOL_SEL.size>=IDX_EVOL_MAX){ toast('Elegí como máximo '+IDX_EVOL_MAX+' índices a la vez'); return; } IDX_EVOL_SEL.add(key); }
+  renderIndices();
+}
+window.toggleIdxEvolSerie=toggleIdxEvolSerie;
+function idxEvolBaseDefault(series){
+  // el período base por default es el más nuevo entre los "primeros períodos" de cada serie elegida,
+  // así arrancan todas con datos.
+  const inicios=series.map(s=>{ const arr=DIC['idx_'+s.ns]||[]; return arr.length?Math.min(...arr.map(r=>r.periodo)):null; }).filter(x=>x!=null);
   return inicios.length? Math.max(...inicios) : null;
 }
 let IDX_EVOL_BASE=null;
 function setIdxEvolBase(v){ IDX_EVOL_BASE=+v; renderIndices(); }
 window.setIdxEvolBase=setIdxEvolBase;
-function idxEvolPeriodosDisponibles(){
+function idxEvolPeriodosDisponibles(series){
   const set=new Set();
-  IDX_EVOL_SERIES.forEach(s=>(DIC['idx_'+s.ns]||[]).forEach(r=>set.add(r.periodo)));
+  series.forEach(s=>(DIC['idx_'+s.ns]||[]).forEach(r=>set.add(r.periodo)));
   return [...set].sort((a,b)=>a-b);
 }
-function idxEvolCalcular(baseP){
-  return IDX_EVOL_SERIES.map(s=>{
+function idxEvolCalcular(baseP, series){
+  return series.map(s=>{
     const base=idxSerieValor(s.ns,s.campo,baseP);
     const periodos=(DIC['idx_'+s.ns]||[]).map(r=>r.periodo).filter(p=>p>=baseP).sort((a,b)=>a-b);
     const values=periodos.map(p=>{ const v=idxSerieValor(s.ns,s.campo,p); return { periodo:p, pct:(base&&v!=null)?(v/base-1)*100:null }; });
@@ -1932,7 +1963,7 @@ function idxEvolSvg(series){
     const pts=s.values.filter(v=>v.pct!=null).map(v=>[xFor(idxOf[v.periodo]), yFor(v.pct)]);
     if(!pts.length) return;
     const d=pts.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-    out+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+    out+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"'+(s.dash?' stroke-dasharray="'+s.dash+'"':'')+'/>';
     const last=pts[pts.length-1], lastVal=s.values.filter(v=>v.pct!=null).slice(-1)[0];
     out+='<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="3.5" fill="'+s.color+'"/>'
       +'<text x="'+(last[0]+7).toFixed(1)+'" y="'+(last[1]+4).toFixed(1)+'" font-size="11" font-weight="700" fill="'+s.color+'">'+esc(s.short||s.label)+' '+(lastVal.pct>=0?'+':'')+lastVal.pct.toFixed(1)+'%</text>';
@@ -1942,19 +1973,31 @@ function idxEvolSvg(series){
 function idxEvolTabla(series){
   const periodos=[...new Set(series.flatMap(s=>s.values.map(v=>v.periodo)))].sort((a,b)=>b-a);
   if(!periodos.length) return '';
-  const byPer={}; series.forEach(s=>s.values.forEach(v=>{ (byPer[v.periodo]=byPer[v.periodo]||{})[s.ns]=v.pct; }));
-  const rows=periodos.map(p=>'<tr><td>'+idxPeriodoFmt(p)+'</td>'+series.map(s=>{ const v=(byPer[p]||{})[s.ns]; return '<td style="text-align:right">'+(v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—')+'</td>'; }).join('')+'</tr>').join('');
+  const byPer={}; series.forEach(s=>s.values.forEach(v=>{ (byPer[v.periodo]=byPer[v.periodo]||{})[s.key]=v.pct; }));
+  const rows=periodos.map(p=>'<tr><td>'+idxPeriodoFmt(p)+'</td>'+series.map(s=>{ const v=(byPer[p]||{})[s.key]; return '<td style="text-align:right">'+(v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—')+'</td>'; }).join('')+'</tr>').join('');
   return '<div class="tbl-hscroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Período</th>'+series.map(s=>'<th style="text-align:right">'+esc(s.label)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
+function idxEvolChecks(){
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 16px 0">'+IDX_EVOL_ALL.map(s=>{
+    const checked=IDX_EVOL_SEL.has(s.key);
+    const disabled=!checked && IDX_EVOL_SEL.size>=IDX_EVOL_MAX;
+    return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;'+(disabled?'opacity:.45':'')+'">'
+      +'<input type="checkbox" '+(checked?'checked ':'')+(disabled?'disabled ':'')+'onchange="toggleIdxEvolSerie(\''+s.key+'\')">'
+      +'<span style="width:10px;height:10px;border-radius:2px;background:'+s.color+';display:inline-block'+(s.dash?';outline:1px dashed rgba(0,0,0,.4);outline-offset:1px':'')+'"></span>'+esc(s.label)+'</label>';
+  }).join('')+'</div>';
+}
 function idxEvolucionHtml(){
-  if(IDX_EVOL_BASE==null) IDX_EVOL_BASE=idxEvolBaseDefault();
-  if(IDX_EVOL_BASE==null) return '';
-  const periodos=idxEvolPeriodosDisponibles();
+  const series0=IDX_EVOL_ALL.filter(s=>IDX_EVOL_SEL.has(s.key));
+  const head='<div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas (hasta '+IDX_EVOL_MAX+' a la vez).</span></div>';
+  if(!series0.length) return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()+'<div style="padding:6px 16px 14px;color:var(--muted);font-size:12.5px">Elegí al menos un índice para graficar.</div></div>';
+  if(IDX_EVOL_BASE==null) IDX_EVOL_BASE=idxEvolBaseDefault(series0);
+  if(IDX_EVOL_BASE==null) return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()+'<div style="padding:6px 16px 14px;color:var(--muted);font-size:12.5px">Los índices elegidos todavía no tienen períodos cargados.</div></div>';
+  const periodos=idxEvolPeriodosDisponibles(series0);
   const selOpts=periodos.map(p=>'<option value="'+p+'"'+(p===IDX_EVOL_BASE?' selected':'')+'>'+idxPeriodoFmt(p)+'</option>').join('');
-  const series=idxEvolCalcular(IDX_EVOL_BASE);
+  const series=idxEvolCalcular(IDX_EVOL_BASE, series0);
   const legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin:6px 0 10px">'+series.map(s=>'<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s.color+';display:inline-block"></span>'+esc(s.label)+'</span>').join('')+'</div>';
-  return '<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Evolución comparada</h3><span class="meta">Variación acumulada de cada índice desde un período base, para compararlos aunque estén en escalas distintas.</span>'
-    +'<span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px"><label>Desde</label><select onchange="setIdxEvolBase(this.value)">'+selOpts+'</select></span></div>'
+  return '<div class="card" style="margin-bottom:14px">'+head+idxEvolChecks()
+    +'<div style="padding:10px 16px 0;display:flex;align-items:center;gap:8px;font-size:12.5px"><label>Desde</label><select onchange="setIdxEvolBase(this.value)">'+selOpts+'</select></div>'
     +'<div style="padding:14px 16px 4px">'+idxEvolSvg(series)+legend+'</div>'
     +'<div style="padding:0 16px 14px">'+idxEvolTabla(series)+'</div></div>';
 }
@@ -1982,7 +2025,7 @@ function idxTabBody(ns){
   }).join('') || '<tr><td colspan="'+(2+def.campos.length)+'" style="text-align:center;padding:20px;color:var(--muted)">Sin períodos cargados todavía.</td></tr>';
   return '<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">'+esc(def.nombre)+'</h3><span class="meta">'+rows.length+' períodos cargados</span>'
     +'<span style="margin-left:auto;display:flex;align-items:center;gap:10px"><a href="'+esc(def.fuenteUrl)+'" target="_blank" rel="noopener" style="font-size:12px">Fuente ↗</a><button class="btn sm" onclick="openIdxRow(\''+ns+'\')">'+ICO.plus+'Cargar período</button></span></div>'
-    +'<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">Se publica aprox. el día '+def.diaEsperado+' del mes siguiente al período.'+(def.pesos?' El "Índice ponderado" lo calcula la app con los pesos de la fórmula (no se carga a mano).':'')+'</div>'+avisoFaltante
+    +(def.diaEsperado||def.pesos ? '<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">'+(def.diaEsperado?'Se publica aprox. el día '+def.diaEsperado+' del mes siguiente al período.':'Sin día de publicación fijo (cotización diaria): se carga el valor de cierre del período.')+(def.pesos?' El "Índice ponderado" lo calcula la app con los pesos de la fórmula (no se carga a mano).':'')+'</div>' : '')+avisoFaltante
     +'<table class="grid"><thead><tr><th>Período</th>'+cols+'<th style="width:80px"></th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
 }
 function openIdxRow(ns, periodo){
@@ -7172,6 +7215,404 @@ window.reloadDB=reloadDB;
       {periodo:202605, mo:11797.8, art_ilum:12972.6, maq_imp:14265.5, hierros:13653.6, equipo:14265.4, gastos:17453.1},
       {periodo:202606, mo:12401.3, art_ilum:13546.2, maq_imp:14797.8, hierros:14051.4, equipo:14797.7, gastos:17892.9},
       {periodo:202607, mo:12715.4, art_ilum:13888.9, maq_imp:15219.7, hierros:14608.9, equipo:15219.7, gastos:18326.9},
+    ];
+    DIC.idx_uva = [
+      {periodo:202001, valor:49.05},
+      {periodo:202002, valor:50.49},
+      {periodo:202003, valor:51.62},
+      {periodo:202004, valor:52.95},
+      {periodo:202005, valor:54.24},
+      {periodo:202006, valor:55.06},
+      {periodo:202007, valor:56.09},
+      {periodo:202008, valor:57.17},
+      {periodo:202009, valor:58.52},
+      {periodo:202010, valor:60.16},
+      {periodo:202011, valor:61.94},
+      {periodo:202012, valor:64.32},
+      {periodo:202101, valor:66.54},
+      {periodo:202102, valor:69.04},
+      {periodo:202103, valor:71.92},
+      {periodo:202104, valor:74.87},
+      {periodo:202105, valor:78.07},
+      {periodo:202106, valor:81.13},
+      {periodo:202107, valor:83.82},
+      {periodo:202108, valor:86.42},
+      {periodo:202109, valor:88.76},
+      {periodo:202110, valor:91.35},
+      {periodo:202111, valor:94.6},
+      {periodo:202112, valor:97.51},
+      {periodo:202201, valor:100.31},
+      {periodo:202202, valor:103.92},
+      {periodo:202203, valor:108.9},
+      {periodo:202204, valor:114.94},
+      {periodo:202205, valor:122.39},
+      {periodo:202206, valor:129.08},
+      {periodo:202207, valor:135.68},
+      {periodo:202208, valor:144.49},
+      {periodo:202209, valor:154.72},
+      {periodo:202210, valor:164.5},
+      {periodo:202211, valor:175.28},
+      {periodo:202212, valor:185.32},
+      {periodo:202301, valor:194.58},
+      {periodo:202302, valor:204.69},
+      {periodo:202303, valor:218.27},
+      {periodo:202304, valor:232.96},
+      {periodo:202305, valor:252.63},
+      {periodo:202306, valor:272.76},
+      {periodo:202307, valor:290.93},
+      {periodo:202308, valor:309.97},
+      {periodo:202309, valor:337.84},
+      {periodo:202310, valor:380.98},
+      {periodo:202311, valor:420.6},
+      {periodo:202312, valor:463.4},
+      {periodo:202401, valor:552.55},
+      {periodo:202402, valor:675.7},
+      {periodo:202403, valor:786.1},
+      {periodo:202404, valor:890.49},
+      {periodo:202405, valor:980.68},
+      {periodo:202406, valor:1042.74},
+      {periodo:202407, valor:1090.82},
+      {periodo:202408, valor:1137.82},
+      {periodo:202409, valor:1180.35},
+      {periodo:202410, valor:1230.16},
+      {periodo:202411, valor:1267.86},
+      {periodo:202412, valor:1300.85},
+      {periodo:202501, valor:1333.96},
+      {periodo:202502, valor:1365.1},
+      {periodo:202503, valor:1396},
+      {periodo:202504, valor:1439.56},
+      {periodo:202505, valor:1487.47},
+      {periodo:202506, valor:1517.83},
+      {periodo:202507, valor:1543.26},
+      {periodo:202508, valor:1569.24},
+      {periodo:202509, valor:1599.5},
+      {periodo:202510, valor:1631.97},
+      {periodo:202511, valor:1665.91},
+      {periodo:202512, valor:1707.79},
+      {periodo:202601, valor:1752.97},
+      {periodo:202602, valor:1800.05},
+      {periodo:202603, valor:1855.18},
+      {periodo:202604, valor:1912.36},
+      {periodo:202605, valor:1969.47},
+      {periodo:202606, valor:2016.85},
+      {periodo:202607, valor:2057.99},
+      {periodo:202608, valor:2096.27},
+    ];
+    DIC.idx_dolar_oficial = [
+      {periodo:202001, compra:63},
+      {periodo:202002, compra:64},
+      {periodo:202003, compra:65.75},
+      {periodo:202004, compra:68.75},
+      {periodo:202005, compra:70.5},
+      {periodo:202006, compra:73.5},
+      {periodo:202007, compra:76.25},
+      {periodo:202008, compra:78},
+      {periodo:202009, compra:80},
+      {periodo:202010, compra:83.5},
+      {periodo:202011, compra:86.5},
+      {periodo:202012, compra:89.25},
+      {periodo:202101, compra:92.25},
+      {periodo:202102, compra:94.5},
+      {periodo:202103, compra:97.5},
+      {periodo:202104, compra:98.5},
+      {periodo:202105, compra:99.75},
+      {periodo:202106, compra:100.75},
+      {periodo:202107, compra:101.75},
+      {periodo:202108, compra:102.75},
+      {periodo:202109, compra:104},
+      {periodo:202110, compra:105},
+      {periodo:202111, compra:106},
+      {periodo:202112, compra:107.75},
+      {periodo:202201, compra:110.25},
+      {periodo:202202, compra:112.5},
+      {periodo:202203, compra:116},
+      {periodo:202204, compra:120.25},
+      {periodo:202205, compra:125.25},
+      {periodo:202206, compra:130},
+      {periodo:202207, compra:137.25},
+      {periodo:202208, compra:145},
+      {periodo:202209, compra:153.25},
+      {periodo:202210, compra:162.5},
+      {periodo:202211, compra:174.25},
+      {periodo:202212, compra:183.25},
+      {periodo:202301, compra:194},
+      {periodo:202302, compra:204},
+      {periodo:202303, compra:215.5},
+      {periodo:202304, compra:229},
+      {periodo:202305, compra:249},
+      {periodo:202306, compra:268},
+      {periodo:202307, compra:286.5},
+      {periodo:202308, compra:365.5},
+      {periodo:202309, compra:365.5},
+      {periodo:202310, compra:365.5},
+      {periodo:202311, compra:376},
+      {periodo:202312, compra:828.25},
+      {periodo:202401, compra:845.5},
+      {periodo:202402, compra:861},
+      {periodo:202403, compra:876},
+      {periodo:202404, compra:896},
+      {periodo:202405, compra:914},
+      {periodo:202406, compra:930.5},
+      {periodo:202407, compra:951.5},
+      {periodo:202408, compra:972},
+      {periodo:202409, compra:990},
+      {periodo:202410, compra:1011.5},
+      {periodo:202411, compra:1031},
+      {periodo:202412, compra:1052.5},
+      {periodo:202501, compra:1073.5},
+      {periodo:202502, compra:1084.25},
+      {periodo:202503, compra:1093.5},
+      {periodo:202504, compra:1190},
+      {periodo:202505, compra:1200},
+      {periodo:202506, compra:1215},
+      {periodo:202507, compra:1380},
+      {periodo:202508, compra:1360},
+      {periodo:202509, compra:1400},
+      {periodo:202510, compra:1475},
+      {periodo:202511, compra:1475},
+      {periodo:202512, compra:1480},
+      {periodo:202601, compra:1465},
+      {periodo:202602, compra:1420},
+      {periodo:202603, compra:1405},
+      {periodo:202604, compra:1415},
+      {periodo:202605, compra:1430},
+      {periodo:202606, compra:1500},
+      {periodo:202607, compra:1510},
+      {periodo:202608, compra:1530},
+    ];
+    DIC.idx_dolar_blue = [
+      {periodo:202001, compra:77.4},
+      {periodo:202002, compra:78.15},
+      {periodo:202003, compra:83.75},
+      {periodo:202004, compra:117.8},
+      {periodo:202005, compra:125.05},
+      {periodo:202006, compra:126.1},
+      {periodo:202007, compra:136.1},
+      {periodo:202008, compra:135.35},
+      {periodo:202009, compra:146.25},
+      {periodo:202010, compra:169},
+      {periodo:202011, compra:155.5},
+      {periodo:202012, compra:166},
+      {periodo:202101, compra:153},
+      {periodo:202102, compra:146},
+      {periodo:202103, compra:141},
+      {periodo:202104, compra:150},
+      {periodo:202105, compra:157},
+      {periodo:202106, compra:168},
+      {periodo:202107, compra:180.5},
+      {periodo:202108, compra:181.5},
+      {periodo:202109, compra:186},
+      {periodo:202110, compra:197.5},
+      {periodo:202111, compra:201.5},
+      {periodo:202112, compra:208},
+      {periodo:202201, compra:213},
+      {periodo:202202, compra:211},
+      {periodo:202203, compra:200},
+      {periodo:202204, compra:200.5},
+      {periodo:202205, compra:207},
+      {periodo:202206, compra:238},
+      {periodo:202207, compra:296},
+      {periodo:202208, compra:290},
+      {periodo:202209, compra:288},
+      {periodo:202210, compra:290},
+      {periodo:202211, compra:314},
+      {periodo:202212, compra:346},
+      {periodo:202301, compra:381},
+      {periodo:202302, compra:375},
+      {periodo:202303, compra:395},
+      {periodo:202304, compra:469},
+      {periodo:202305, compra:490},
+      {periodo:202306, compra:494},
+      {periodo:202307, compra:550},
+      {periodo:202308, compra:735},
+      {periodo:202309, compra:800},
+      {periodo:202310, compra:920},
+      {periodo:202311, compra:895},
+      {periodo:202312, compra:1025},
+      {periodo:202401, compra:1195},
+      {periodo:202402, compra:1030},
+      {periodo:202403, compra:1010},
+      {periodo:202404, compra:1040},
+      {periodo:202405, compra:1225},
+      {periodo:202406, compra:1365},
+      {periodo:202407, compra:1370},
+      {periodo:202408, compra:1305},
+      {periodo:202409, compra:1235},
+      {periodo:202410, compra:1180},
+      {periodo:202411, compra:1120},
+      {periodo:202412, compra:1230},
+      {periodo:202501, compra:1220},
+      {periodo:202502, compra:1230},
+      {periodo:202503, compra:1325},
+      {periodo:202504, compra:1185},
+      {periodo:202505, compra:1180},
+      {periodo:202506, compra:1215},
+      {periodo:202507, compra:1335},
+      {periodo:202508, compra:1345},
+      {periodo:202509, compra:1445},
+      {periodo:202510, compra:1445},
+      {periodo:202511, compra:1435},
+      {periodo:202512, compra:1530},
+      {periodo:202601, compra:1470},
+      {periodo:202602, compra:1425},
+      {periodo:202603, compra:1410},
+      {periodo:202604, compra:1400},
+      {periodo:202605, compra:1430},
+      {periodo:202606, compra:1515},
+      {periodo:202607, compra:1560},
+      {periodo:202608, compra:1555},
+    ];
+    DIC.idx_sueldos = [
+      {periodo:201401, ars:8785.03, pct:0.0173},
+      {periodo:201402, ars:9249.24, pct:0.0212},
+      {periodo:201403, ars:9634.8, pct:0.0291},
+      {periodo:201404, ars:10156.92, pct:0.0495},
+      {periodo:201405, ars:10295.06, pct:0.0314},
+      {periodo:201406, ars:10394.19, pct:0.03},
+      {periodo:201407, ars:10894.97, pct:0.0343},
+      {periodo:201408, ars:10946.23, pct:0.0228},
+      {periodo:201409, ars:11393.29, pct:0.0167},
+      {periodo:201410, ars:11730.73, pct:0.0156},
+      {periodo:201411, ars:11709.73, pct:0.0164},
+      {periodo:201412, ars:11953.56, pct:0.0101},
+      {periodo:201501, ars:11998, pct:0.0196},
+      {periodo:201502, ars:12410.77, pct:0.0092},
+      {periodo:201503, ars:12869.99, pct:0.0316},
+      {periodo:201504, ars:13077.34, pct:0.0139},
+      {periodo:201505, ars:13556.94, pct:0.029},
+      {periodo:201506, ars:14104.44, pct:0.0392},
+      {periodo:201507, ars:14535.84, pct:0.0352},
+      {periodo:201508, ars:14598.48, pct:0.0264},
+      {periodo:201509, ars:14983.42, pct:0.0182},
+      {periodo:201510, ars:15202.49, pct:0.0122},
+      {periodo:201511, ars:15526.19, pct:0.0219},
+      {periodo:201512, ars:15800.99, pct:0.016},
+      {periodo:201601, ars:15822.95, pct:0.0141},
+      {periodo:201602, ars:16520.57, pct:0.0132},
+      {periodo:201603, ars:16977.34, pct:0.0315},
+      {periodo:201604, ars:17691.33, pct:0.0412},
+      {periodo:201605, ars:18042.76, pct:0.0332},
+      {periodo:201606, ars:18277.67, pct:0.0192},
+      {periodo:201607, ars:18988.5, pct:0.0447},
+      {periodo:201608, ars:19216.84, pct:0.0275},
+      {periodo:201609, ars:19666.53, pct:0.0131},
+      {periodo:201610, ars:20069.32, pct:0.0237},
+      {periodo:201611, ars:20422.68, pct:0.0141},
+      {periodo:201612, ars:20690.22, pct:0.0136},
+      {periodo:201701, ars:21048.3, pct:0.0154},
+      {periodo:201702, ars:21483.11, pct:0.0132},
+      {periodo:201703, ars:22285.55, pct:0.0289},
+      {periodo:201704, ars:22650.63, pct:0.0351},
+      {periodo:201705, ars:23030.06, pct:0.016},
+      {periodo:201706, ars:23470.04, pct:0.0176},
+      {periodo:201707, ars:24489.26, pct:0.0399},
+      {periodo:201708, ars:24700.54, pct:0.0235},
+      {periodo:201709, ars:25136.41, pct:0.0141},
+      {periodo:201710, ars:25843.57, pct:0.0152},
+      {periodo:201711, ars:26177.42, pct:0.0156},
+      {periodo:201712, ars:26301.47, pct:0.0109},
+      {periodo:201801, ars:26929.9, pct:0.0111},
+      {periodo:201802, ars:27440.3, pct:0.0084},
+      {periodo:201803, ars:28072.39, pct:0.0191},
+      {periodo:201804, ars:28858.11, pct:0.0269},
+      {periodo:201805, ars:29338.86, pct:0.0152},
+      {periodo:201806, ars:29598.17, pct:0.0084},
+      {periodo:201807, ars:30283.89, pct:0.0263},
+      {periodo:201808, ars:30978.81, pct:0.0282},
+      {periodo:201809, ars:31523.68, pct:0.0291},
+      {periodo:201810, ars:33154.35, pct:0.0365},
+      {periodo:201811, ars:33733.87, pct:0.0292},
+      {periodo:201812, ars:34339.72, pct:0.0248},
+      {periodo:201901, ars:35362.36, pct:0.0308},
+      {periodo:201902, ars:36733.81, pct:0.0266},
+      {periodo:201903, ars:38884.59, pct:0.0395},
+      {periodo:201904, ars:39658.24, pct:0.0223},
+      {periodo:201905, ars:40911.24, pct:0.0282},
+      {periodo:201906, ars:41584.36, pct:0.02},
+      {periodo:201907, ars:43291.07, pct:0.0472},
+      {periodo:201908, ars:44092.97, pct:0.0244},
+      {periodo:201909, ars:45485.33, pct:0.0267},
+      {periodo:201910, ars:47834.45, pct:0.0324},
+      {periodo:201911, ars:48591.74, pct:0.0237},
+      {periodo:201912, ars:49574.49, pct:0.0262},
+      {periodo:202001, ars:53070.39, pct:0.0599},
+      {periodo:202002, ars:56386.69, pct:0.0385},
+      {periodo:202003, ars:56873.03, pct:0.0304},
+      {periodo:202004, ars:56955.79, pct:0.0017},
+      {periodo:202005, ars:57058.06, pct:-0.0007},
+      {periodo:202006, ars:58362.15, pct:0.006},
+      {periodo:202007, ars:60440.76, pct:0.0179},
+      {periodo:202008, ars:60767.44, pct:0.02},
+      {periodo:202009, ars:61910.11, pct:0.025},
+      {periodo:202010, ars:64756.42, pct:0.041},
+      {periodo:202011, ars:65571.97, pct:0.0329},
+      {periodo:202012, ars:66869.24, pct:0.0176},
+      {periodo:202101, ars:68100.97, pct:0.0327},
+      {periodo:202102, ars:72293.62, pct:0.0433},
+      {periodo:202103, ars:75809.39, pct:0.0502},
+      {periodo:202104, ars:80502.2, pct:0.0321},
+      {periodo:202105, ars:81464.74, pct:0.0284},
+      {periodo:202106, ars:84513.84, pct:0.0228},
+      {periodo:202107, ars:88274.31, pct:0.0491},
+      {periodo:202108, ars:90340.32, pct:0.0318},
+      {periodo:202109, ars:94157.71, pct:0.04},
+      {periodo:202110, ars:97538.78, pct:0.0403},
+      {periodo:202111, ars:100590.14, pct:0.0394},
+      {periodo:202112, ars:102589.87, pct:0.0257},
+      {periodo:202201, ars:107358.85, pct:0.0376},
+      {periodo:202202, ars:112413.82, pct:0.0313},
+      {periodo:202203, ars:121220.45, pct:0.0739},
+      {periodo:202204, ars:128406.32, pct:0.0496},
+      {periodo:202205, ars:133595.77, pct:0.0622},
+      {periodo:202206, ars:141289.4, pct:0.0484},
+      {periodo:202207, ars:148811.85, pct:0.0554},
+      {periodo:202208, ars:155611.28, pct:0.0652},
+      {periodo:202209, ars:165421.01, pct:0.0673},
+      {periodo:202210, ars:174436.9, pct:0.0514},
+      {periodo:202211, ars:184210.25, pct:0.0671},
+      {periodo:202212, ars:194175.11, pct:0.0527},
+      {periodo:202301, ars:201580.26, pct:0.0471},
+      {periodo:202302, ars:218543.91, pct:0.06},
+      {periodo:202303, ars:239882.73, pct:0.1011},
+      {periodo:202304, ars:263481.22, pct:0.0567},
+      {periodo:202305, ars:279820.37, pct:0.0749},
+      {periodo:202306, ars:302562.69, pct:0.0606},
+      {periodo:202307, ars:324997.28, pct:0.1102},
+      {periodo:202308, ars:344057.43, pct:0.0761},
+      {periodo:202309, ars:376594.32, pct:0.1168},
+      {periodo:202310, ars:420706.55, pct:0.0833},
+      {periodo:202311, ars:447079.57, pct:0.0906},
+      {periodo:202312, ars:484079.57, pct:0.0885},
+      {periodo:202401, ars:555269.16, pct:0.1644},
+      {periodo:202402, ars:619007.05, pct:0.1332},
+      {periodo:202403, ars:705832.58, pct:0.1027},
+      {periodo:202404, ars:819501.72, pct:0.1015},
+      {periodo:202405, ars:879483.08, pct:0.0832},
+      {periodo:202406, ars:933179.85, pct:0.0619},
+      {periodo:202407, ars:994681.38, pct:0.0747},
+      {periodo:202408, ars:1032410.48, pct:0.0565},
+      {periodo:202409, ars:1075145.08, pct:0.0471},
+      {periodo:202410, ars:1146474.18, pct:0.0459},
+      {periodo:202411, ars:1178925.33, pct:0.0384},
+      {periodo:202412, ars:1202927.89, pct:0.031},
+      {periodo:202501, ars:1234658.4, pct:0.0293},
+      {periodo:202502, ars:1310357.8, pct:0.0383},
+      {periodo:202503, ars:1363510.33, pct:0.0297},
+      {periodo:202504, ars:1402606.61, pct:0.0338},
+      {periodo:202505, ars:1428661.3, pct:0.0299},
+      {periodo:202506, ars:1468135.75, pct:0.0298},
+      {periodo:202507, ars:1510680.81, pct:0.0248},
+      {periodo:202508, ars:1530297.32, pct:0.0316},
+      {periodo:202509, ars:1551831.75, pct:0.0222},
+      {periodo:202510, ars:1593047.33, pct:0.025},
+      {periodo:202511, ars:1611851.61, pct:0.0178},
+      {periodo:202512, ars:1633547, pct:0.0161},
+      {periodo:202601, ars:1646344.54, pct:0.0254},
+      {periodo:202602, ars:1734357.18, pct:0.0243},
+      {periodo:202603, ars:1775664.12, pct:0.034},
+      {periodo:202604, ars:1837609.35, pct:0.0373},
+      {periodo:202605, ars:1849727.96, pct:0.0222},
+      {periodo:202606, ars:1915878.76, pct:0.0289},
     ];
       '<div class="demo-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>'
       +'Modo demo: datos de ejemplo en memoria (no se guardan). Completá SB_URL, SB_KEY y REDIRECT_URL en el código para conectar Supabase y activar el login.</div>';
