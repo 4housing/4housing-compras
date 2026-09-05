@@ -2426,8 +2426,8 @@ async function panolSyncSaldosAnalizar(){
       const cod=_syncNorm(rows[i][iCod]); if(!cod) continue;
       out.push({cod_articulo:cod, descripcion:iDesc>=0?_syncNorm(rows[i][iDesc]):'', cod_deposito:iDep>=0?_syncNorm(rows[i][iDep]):'',
         desc_deposito:iDepDesc>=0?_syncNorm(rows[i][iDepDesc]):'', um:iUm>=0?_syncNorm(rows[i][iUm]):'',
-        saldo:+rows[i][iSaldo]||0, cant_comprometida:iComp>=0?(+rows[i][iComp]||0):0, cant_a_recibir:iRec>=0?(+rows[i][iRec]||0):0,
-        punto_pedido:iPP>=0?(+rows[i][iPP]||0):0, actualizado_en:ahora});
+        saldo:_syncNum(rows[i][iSaldo]), cant_comprometida:iComp>=0?_syncNum(rows[i][iComp]):0, cant_a_recibir:iRec>=0?_syncNum(rows[i][iRec]):0,
+        punto_pedido:iPP>=0?_syncNum(rows[i][iPP]):0, actualizado_en:ahora});
     }
     if(!out.length) throw new Error('No encontré filas de datos.');
     if(DEMO_MODE){ DIC.stock_saldos=out; }
@@ -2466,11 +2466,8 @@ async function panolSyncPreciosAnalizar(){
       const cod=_syncNorm(rows[i][iCod]); if(!cod) continue;
       const art=(DIC.articulos||[]).find(a=>a.codigo===cod);
       if(!art){ sinMatch++; continue; }
-      const fechaRaw=iFecha>=0?rows[i][iFecha]:null;
-      let fecha='';
-      if(fechaRaw instanceof Date) fecha=fechaRaw.toISOString().slice(0,10);
-      else if(fechaRaw){ const d=new Date(fechaRaw); if(!isNaN(d)) fecha=d.toISOString().slice(0,10); }
-      updates.push({codigo:cod, costo_ars:iArs>=0?(+rows[i][iArs]||0):0, costo_usd:iUsd>=0?(+rows[i][iUsd]||0):0, costo_fecha:fecha, costo_proveedor:iProv>=0?_syncNorm(rows[i][iProv]):''});
+      const fecha=iFecha>=0?_syncFechaISO(rows[i][iFecha]):'';
+      updates.push({codigo:cod, costo_ars:iArs>=0?_syncNum(rows[i][iArs]):0, costo_usd:iUsd>=0?_syncNum(rows[i][iUsd]):0, costo_fecha:fecha, costo_proveedor:iProv>=0?_syncNorm(rows[i][iProv]):''});
     }
     if(!updates.length) throw new Error('No encontré artículos que coincidan por código con el diccionario.');
     msg.textContent='Actualizando '+updates.length+' artículos'+(sinMatch?' ('+sinMatch+' códigos del archivo no existen en el diccionario)':'')+'…';
@@ -5270,6 +5267,15 @@ function renderDic(){
 }
 function setDicTab(t){ DIC_TAB=t; DIC_SEARCH=''; renderDic(); }
 window.setDicTab=setDicTab;
+const DIC_SHOWALL={};
+function dicToggleShowAll(tab){ DIC_SHOWALL[tab]=!DIC_SHOWALL[tab]; paintDic(); }
+window.dicToggleShowAll=dicToggleShowAll;
+function dicCapNote(tab, total, cap){
+  if(total<=cap) return '';
+  return DIC_SHOWALL[tab]
+    ? '<div style="font-size:11.5px;color:var(--muted);padding:8px 15px">Mostrando las '+total+'. <a href="#" onclick="dicToggleShowAll(\''+tab+'\');return false">Mostrar solo '+cap+'</a>.</div>'
+    : '<div style="font-size:11.5px;color:var(--muted);padding:8px 15px">Mostrando '+cap+' de '+total+'. Usá el buscador para filtrar, o <a href="#" onclick="dicToggleShowAll(\''+tab+'\');return false">mostrar las '+total+'</a> (puede tardar un poco más en dibujarse).</div>';
+}
 function exportDicTab(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
   const q=DIC_SEARCH.trim().toLowerCase();
@@ -5415,6 +5421,15 @@ window.openSyncTango=openSyncTango;
 function _syncNorm(s){ return String(s==null?'':s).trim(); }
 function _syncFold(s){ return _syncNorm(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function _syncIdx(hdr, ...cands){ const H=hdr.map(_syncFold); for(const c of cands){ const i=H.indexOf(_syncFold(c)); if(i>=0) return i; } return -1; }
+function _syncNum(v){ if(typeof v==='number') return v; if(v==null) return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; }
+function _syncFechaISO(v){
+  if(v instanceof Date) return v.toISOString().slice(0,10);
+  if(v==null || v==='') return '';
+  const s=String(v).trim();
+  const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m){ const d=new Date(Date.UTC(+m[3], +m[2]-1, +m[1])); return isNaN(d)?'':d.toISOString().slice(0,10); }
+  const d=new Date(s); return isNaN(d)?'':d.toISOString().slice(0,10);
+}
 function _syncReadWb(file){
   return new Promise((resolve,reject)=>{
     if(!file){ reject(new Error('Falta un archivo')); return; }
@@ -6640,14 +6655,15 @@ function paintDic(){
     let rows=(DIC.articulos||[]).filter(r=>dicRowPass('articulos',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('articulos', rows);
+    const artCap=DIC_SHOWALL.articulos?rows.length:500;
     const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+'<th style="text-align:right">Costo ref.</th>'+'</tr></thead><tbody>'
-      +rows.slice(0,500).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td><td>'+esc(r.descripcion)+'</td>'
+      +rows.slice(0,artCap).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td><td>'+esc(r.descripcion)+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.desc_adicional||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.sinonimo||'—')+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.cuenta_cod||'—')+'</td>'
         +'<td style="font-size:12px">'+esc(r.cuenta||'—')+'</td>'
         +'<td style="text-align:right;font-size:11.5px">'+(r.costo_ars?('$ '+fmtNum(r.costo_ars,2)+' / US$ '+fmtNum(r.costo_usd||0,2)):'—')+(r.costo_fecha?'<div style="color:var(--muted);font-size:10.5px">'+fmtDate(r.costo_fecha)+'</div>':'')+'</td></tr>').join('')+'</tbody></table></div>'
-      +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);margin-top:8px;padding:0 15px">Mostrando 500 de '+rows.length+'. Usá el buscador para filtrar.</div>':'')
+      +dicCapNote('articulos', rows.length, 500)
       +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">La cuenta es la <em>por defecto</em>; puede variar según el destino (el auxiliar contable define el caso). Los códigos GC son los habilitados para compras.</div>';
     const syncBtn=ROLE.admin?'<button class="btn sm" onclick="openSyncTango()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:5px;vertical-align:-2px"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>Sincronizar con Tango</button>':'';
     const limpiarArtBtn=Object.keys(DIC_COL_FILTRO.articulos).length?'<button class="btn ghost sm" onclick="dicColFilterClearAll(\'articulos\')">Limpiar filtros</button>':'';
