@@ -2520,9 +2520,10 @@ function _dicFilterBase(tabKey){
   }
 }
 function dicColUnique(tabKey, col){
-  const s=new Set();
-  _dicFilterBase(tabKey).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); });
-  return [...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  const s=new Set(); let hasEmpty=false;
+  _dicFilterBase(tabKey).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
 }
 function dicColFilterActive(tabKey,col){ const f=DIC_COL_FILTRO[tabKey]; return !!(f && f[col] && f[col].length); }
 function dicRowPass(tabKey, row){
@@ -2535,7 +2536,7 @@ function openDicColFilter(tabKey, col, ev){
   ev.stopPropagation(); const btn=ev.currentTarget; closeDicColFilter();
   const vals=dicColUnique(tabKey,col);
   const sel = DIC_COL_FILTRO[tabKey][col] ? new Set(DIC_COL_FILTRO[tabKey][col]) : new Set(vals);
-  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+esc(v)+'</label>';
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
   const pop=document.createElement('div'); pop.id='dicFilterPop';
   pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
   pop.innerHTML='<input type="text" placeholder="Buscar" oninput="dicColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
@@ -5400,6 +5401,37 @@ async function guardarNuevoProv(){
 }
 window.guardarNuevoProv=guardarNuevoProv;
 
+/* ===== Editar costo de referencia de un artículo (a mano) ===== */
+function openEditarCostoArt(codigo){
+  if(!ROLE.admin){ toast('Solo un administrador puede editar el costo de referencia.'); return; }
+  const a=(DIC.articulos||[]).find(x=>x.codigo===codigo); if(!a) return;
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">'+esc(a.codigo)+' — '+esc(a.descripcion)+'</div>'
+    +'<div class="frow c2"><div class="field"><label>Precio ARS</label><input id="ca_ars" type="number" step="0.01" value="'+(a.costo_ars!=null?a.costo_ars:'')+'"></div>'
+    +'<div class="field"><label>Precio USD</label><input id="ca_usd" type="number" step="0.01" value="'+(a.costo_usd!=null?a.costo_usd:'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Proveedor ref.</label><input id="ca_prov" type="text" value="'+esc(a.costo_proveedor||'')+'"></div>'
+    +'<div class="field"><label>Fecha ref.</label><input id="ca_fecha" type="date" value="'+esc(a.costo_fecha||'')+'"></div></div>';
+  openModal('Editar costo de referencia', body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCostoArt(\''+esc(codigo)+'\')">Guardar</button>');
+}
+window.openEditarCostoArt=openEditarCostoArt;
+async function guardarCostoArt(codigo){
+  const a=(DIC.articulos||[]).find(x=>x.codigo===codigo); if(!a) return;
+  const arsRaw=document.getElementById('ca_ars').value, usdRaw=document.getElementById('ca_usd').value;
+  const obj={
+    costo_ars: arsRaw===''?null:+arsRaw,
+    costo_usd: usdRaw===''?null:+usdRaw,
+    costo_proveedor: (document.getElementById('ca_prov').value||'').trim(),
+    costo_fecha: document.getElementById('ca_fecha').value||null,
+  };
+  if(!DEMO_MODE){
+    try{ await sbFetch('/articulos?codigo=eq.'+encodeURIComponent(codigo),{method:'PATCH',body:JSON.stringify(obj),prefer:'return=minimal'}); }
+    catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
+  }
+  Object.assign(a,obj);
+  closeModal(); toast('Costo de referencia actualizado'); renderDic();
+}
+window.guardarCostoArt=guardarCostoArt;
+
 /* ===== Sincronización de artículos con Tango ===== */
 let SYNC_RESULT=null;
 function openSyncTango(){
@@ -6657,7 +6689,7 @@ function paintDic(){
     rows.forEach(r=>{ r._tc=(r.costo_ars&&r.costo_usd)?r.costo_ars/r.costo_usd:null; });
     rows=dicApplySort('articulos', rows);
     const artCap=DIC_SHOWALL.articulos?rows.length:500;
-    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+dicTh('articulos','Precio ARS','costo_ars')+dicTh('articulos','Precio USD','costo_usd')+dicTh('articulos','TC','_tc')+dicTh('articulos','Proveedor ref.','costo_proveedor')+dicTh('articulos','Fecha ref.','costo_fecha')+'</tr></thead><tbody>'
+    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+dicTh('articulos','Precio ARS','costo_ars')+dicTh('articulos','Precio USD','costo_usd')+dicTh('articulos','TC','_tc')+dicTh('articulos','Proveedor ref.','costo_proveedor')+dicTh('articulos','Fecha ref.','costo_fecha')+(ROLE.admin?'<th></th>':'')+'</tr></thead><tbody>'
       +rows.slice(0,artCap).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td><td>'+esc(r.descripcion)+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.desc_adicional||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.sinonimo||'—')+'</td>'
@@ -6667,7 +6699,8 @@ function paintDic(){
         +'<td style="text-align:right;font-size:11.5px">'+(r.costo_usd?('US$ '+fmtNum(r.costo_usd,2)):'—')+'</td>'
         +'<td style="text-align:right;font-size:11.5px;color:var(--muted)">'+(r._tc?fmtNum(r._tc,2):'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.costo_proveedor||'—')+'</td>'
-        +'<td style="font-size:11.5px;color:var(--muted)">'+(r.costo_fecha?fmtDate(r.costo_fecha):'—')+'</td></tr>').join('')+'</tbody></table></div>'
+        +'<td style="font-size:11.5px;color:var(--muted)">'+(r.costo_fecha?fmtDate(r.costo_fecha):'—')+'</td>'
+        +(ROLE.admin?('<td><button class="iconbtn" title="Editar costo de referencia" onclick="openEditarCostoArt(\''+esc(r.codigo)+'\')">'+ICO.edit+'</button></td>'):'')+'</tr>').join('')+'</tbody></table></div>'
       +dicCapNote('articulos', rows.length, 500)
       +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">La cuenta es la <em>por defecto</em>; puede variar según el destino (el auxiliar contable define el caso). Los códigos GC son los habilitados para compras.</div>';
     const syncBtn=ROLE.admin?'<button class="btn sm" onclick="openSyncTango()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:5px;vertical-align:-2px"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>Sincronizar con Tango</button>':'';
