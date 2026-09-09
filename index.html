@@ -2910,6 +2910,12 @@ function kpiPass(o){
 function setKpiFilter(kind){ KPI_FILTER=(KPI_FILTER===kind)?null:kind; renderCompras(); }
 window.setKpiFilter=setKpiFilter;
 function ogxName(n){ n=(n||'').trim(); if(!n) return '—'; const p=n.split(','); if(p.length>=2){ const ape=p[0].trim(); const nom=p[1].trim(); return ape+(nom?', '+nom.charAt(0).toUpperCase():''); } return n; }
+// Con gestión pendiente: le falta certificar/cerrar el 100%, O le falta terminar de cobrar lo
+// liberado. Solo queda "sin pendientes" una OG resuelta en las dos puntas a la vez.
+function ogTienePendiente(o){
+  const resuelto=(ogAcumPct(o.id)+ogCerradoPct(o))>=99.999;
+  return !(resuelto && ogPendPagoPct(o)<=0.01);
+}
 function ogxVal(o,f){
   if(f==='og') return o.numero?String(o.numero):'(sin N°)';
   if(f==='estado') return ogEstado(o);
@@ -2917,6 +2923,7 @@ function ogxVal(o,f){
   if(f==='solp') return (o.solp!=null&&o.solp!=='')?String(o.solp):'(sin SOLP)';
   if(f==='comprador') return o.comprador||'(sin comprador)';
   if(f==='certificador') return o.certificador||'(sin certificador)';
+  if(f==='pendiente') return ogTienePendiente(o)?'Con pendientes':'Sin pendientes';
   return '';
 }
 function ogxUnique(f){ const s=new Set(); (mem.ogs||[]).forEach(o=>{ if(f==='clasif'){ (o.items||[]).forEach(it=>{ if(it.centro_costos) s.add(it.centro_costos); }); } else { const v=ogxVal(o,f); if(v) s.add(v); } }); return [...s].sort((a,b)=>String(a).localeCompare(String(b),'es',{numeric:true})); }
@@ -2996,6 +3003,7 @@ async function renderCompras(){
         +'<td><strong>'+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+ogTotal(o).toLocaleString('es-AR')+'</strong></td>'
         +'<td style="min-width:110px">'+pbar(ogAcumPct(o.id))+'</td>'
         +'<td>'+badge(ogEstado(o))+'</td>'
+        +'<td>'+(ogTienePendiente(o)?'<span class="badge b-ambar">Con pendientes</span>':'<span class="badge b-verde">Sin pendientes</span>')+'</td>'
         +'<td><div class="row-actions">'
         +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
@@ -3007,7 +3015,7 @@ async function renderCompras(){
     const thx=(label,f,extra)=>'<th'+(extra||'')+'>'+label+' <button class="ogxbtn" onclick="ogxOpen(\''+f+'\',event)" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(ogxActive(f)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>';
     body='<table class="grid og-grid" style="font-size:12.5px"><thead><tr>'
       +thx('OG','og')+thx('Comprador','comprador')+thx('Certificador','certificador')+thx('Proveedor','proveedor')+thx('Clasificación','clasif')+thx('SOLP','solp')
-      +'<th>Detalle</th><th>Total</th><th>Avance</th>'+thx('Estado','estado')+'<th style="text-align:right">Acciones</th>'
+      +'<th>Detalle</th><th>Total</th><th>Avance</th>'+thx('Estado','estado')+thx('Pendiente','pendiente')+'<th style="text-align:right">Acciones</th>'
       +'</tr></thead><tbody>'+tr+'</tbody></table>';
   }
   const demoTag=DEMO_MODE?'<span class="demo-tag">DATOS DE EJEMPLO</span>':'';
@@ -3173,7 +3181,7 @@ function ogDetail(o){
       +(ogCerradoPct(o)>0.01?(' · Cerrado '+fmtMoney(ogCerradoMonto(o))+' ('+ogCerradoPct(o).toFixed(1).replace('.0','')+'%)'):'')
       +((puedeEditarOG(o)&&!o.anulada&&(100-ogAcumPct(o.id)-ogCerradoPct(o))>0.01)?' <button class="btn ghost sm" onclick="openCierre('+o.id+',null)">'+ICO.ban+'Cerrar saldo</button>':'')
       +'</div>';
-  return '<tr class="detail-row"><td colspan="11"><div class="detail-wrap">'
+  return '<tr class="detail-row"><td colspan="12"><div class="detail-wrap">'
     +'<div class="detail-h"><span>Renglones de OG '+esc(o.numero||'')+(o.proveedor?' · '+esc((o.proveedor_cod?o.proveedor_cod+' — ':'')+o.proveedor):'')+'</span>'
     +'<button class="btn ghost sm" onclick="openOG('+o.id+')">'+ICO.edit+'Editar OG</button></div>'+reng
     +certInner(o)+'</div></td></tr>';
