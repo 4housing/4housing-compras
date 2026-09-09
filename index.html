@@ -3591,13 +3591,23 @@ function proyeccionSemanal(ogs){
       return mon==='USD' ? m*tc : m/tc;
     };
     const items=(o.items&&o.items.length)?o.items:null;
+    // Todo lo que todavía no se pagó (esté sin certificar, certificado sin liberar, o liberado sin
+    // pagar) — no solo lo sin certificar. El pago se registra a nivel de OG, no por renglón, así que
+    // el monto ya pagado se prorratea entre los renglones según su peso (descontado lo cerrado, que
+    // no es costo y no se prorratea).
+    const pagadoOG=ogPagado(o);
     if(!items){
-      const pend=aMonPago(ogTotal(o)*Math.max(0,100-ogAcumPct(o.id)-ogCerradoPct(o))/100);
+      const pend=aMonPago(Math.max(0, ogTotal(o)-ogCerradoMonto(o)-pagadoOG));
       if(pend>0.5) add('sinfecha', monPago, pend);
       return;
     }
+    const pesos=items.map(it=>itemTotal(it)*Math.max(0,100-itemCerradoPct(it))/100);
+    const bonifFactor=1-(+o.bonif_pct||0)/100;
+    const sumPeso=pesos.reduce((a,p)=>a+p,0)*bonifFactor;
     items.forEach((it,idx)=>{
-      const pend=aMonPago(itemTotal(it)*Math.max(0,100-itemAcumPct(o,idx)-itemCerradoPct(it))/100);
+      const peso=pesos[idx]*bonifFactor;
+      if(peso<=0) return;
+      const pend=aMonPago(sumPeso>0 ? peso-(peso/sumPeso)*Math.min(pagadoOG,sumPeso) : peso);
       if(pend<=0.5) return;
       const fe=it.fecha_entrega;
       if(!fe){ add('sinfecha', monPago, pend); return; }
@@ -3647,7 +3657,7 @@ function proyeccionSemanalHtml(ogs){
   }).join('');
   return '<div class="card" style="margin-top:14px"><div class="card-h"><h3>Previsión semana a semana</h3><span class="meta">Según la Fecha de entrega de cada renglón · corte los viernes (día de pago)</span></div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Semana</th><th style="text-align:right">Necesita en pesos</th><th style="text-align:right">Necesita en dólares</th><th style="text-align:right">Acumulado</th></tr></thead><tbody>'+rows+'</tbody></table>'
-    +'<div style="font-size:11px;color:var(--muted);padding:10px 15px">Se calcula sobre lo que cada renglón todavía tiene sin certificar ni cerrar (lo cerrado nunca se paga). "Sin fecha estimada" son renglones sin Fecha de entrega cargada y OGs sin renglones — no se pueden ubicar en el calendario todavía.</div></div>';
+    +'<div style="font-size:11px;color:var(--muted);padding:10px 15px">Se calcula sobre todo lo que cada renglón todavía tiene sin pagar (esté sin certificar, certificado sin liberar, o liberado sin pagar) — lo cerrado se excluye, porque no es costo y nunca se paga. "Sin fecha estimada" son renglones sin Fecha de entrega cargada y OGs sin renglones — no se pueden ubicar en el calendario todavía.</div></div>';
 }
 window.proyeccionSemanalHtml=proyeccionSemanalHtml;
 
