@@ -4332,9 +4332,12 @@ async function savePago(ogId){
   const tolMonto=ogTotal(o)*0.01;                 // tolerancia de redondeo de caja: 1% de la OG
   if(diffPend>tolMonto){ toast('El importe supera lo pendiente en más del 1% de la OG ('+(monOG==='USD'?'US$ ':'$ ')+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+')'); return; }
   const redondear=(document.getElementById('pg_redondear')||{}).checked;
-  // Dentro de tolerancia: si el tesorero tildó "Redondear", se registra el monto real con el ajuste aparte
-  // (Small Balance) y la OG queda saldada; si no, es un pago parcial genuino y el resto queda pendiente.
-  const ajusteRedondeo = (redondear && Math.abs(diffPend)>0.01) ? diffPend : 0;
+  // Dentro de tolerancia (≤1% de la OG) y si el tesorero tildó "Redondear": se registra el monto real
+  // con el ajuste aparte (Small Balance) y la OG queda saldada; si no, es un pago parcial genuino y el
+  // resto queda pendiente. El tope de tolerancia es obligatorio acá: sin él, dejar "Redondear" tildado
+  // (que es el valor por defecto del casillero) convertía cualquier pago parcial grande en un "ajuste
+  // de redondeo" que daba la OG por saldada sin haberse pagado.
+  const ajusteRedondeo = (redondear && Math.abs(diffPend)>0.01 && Math.abs(diffPend)<=tolMonto) ? diffPend : 0;
   const pct=ogTotal(o)? montoOG/ogTotal(o)*100 : 0;
   const monPago=document.getElementById('pg_moneda').value;
   const tc=+document.getElementById('pg_tc').value||0;
