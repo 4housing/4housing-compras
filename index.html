@@ -880,12 +880,12 @@ function puedeLiberarOG(o){ return puedeEditarOG(o); } // liberar a pago = compr
 // Cabecera (Proveedor/Fecha/Condición/Moneda/Cotización) bloqueada una vez que la OG tiene algo certificado o cerrado.
 // El admin puede seguir editándola igual (para corregir errores); el resto, no.
 function ogCabeceraBloqueada(o){ return !ROLE.admin && o && ((ogAcumPct(o.id)+ogCerradoPct(o))>0.001); }
-function setDemoRole(v){ DEMO_ROLE=v; applyDemoRole(); buildNav(); go((current==='tesoreria' && !ROLE.tesorero)?'compras':current); }
+function setDemoRole(v){ DEMO_ROLE=v; applyDemoRole(); buildNav(); go(current); }
 window.setDemoRole=setDemoRole;
 
 function buildNav(){
   const nav=document.getElementById('nav');
-  const views=ORDER.filter(v=> v!=='tesoreria' || ROLE.tesorero);
+  const views=ORDER;   // Tesorería es visible para todos (ver estado de pago); las acciones siguen restringidas por canPago().
   nav.innerHTML='<div class="nav-group-lbl">Operaciones</div>'+views.map(v=>{
     const s=SCHEMAS[v];
     return '<button class="navbtn'+(v===current?' active':'')+'" data-view="'+v+'">'+s.icon+'<span>'+esc(s.title)+'</span></button>';
@@ -909,7 +909,7 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML='';
   }else if(view==='seguimiento'){
     document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportSeguimientoExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'');
-  }else if(view==='indices'||view==='precios'||view==='panol'){
+  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'){
     document.getElementById('topActions').innerHTML='';
   }else{
     document.getElementById('topActions').innerHTML=
@@ -937,7 +937,6 @@ function setMantYear(y){ MANT_YEAR=+y; render('mantenimiento'); }
 window.setMantYear=setMantYear;
 
 async function go(view){
-  if(view==='tesoreria' && !ROLE.tesorero) view='compras';
   current=view;
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
   setHeader(view);
@@ -3419,7 +3418,7 @@ function renderTesoreria(){
   else if(tab==='op') body=opsView();
   else if(tab==='proy') body=proyectadoView();
   else body=colaView(cola);
-  const roleNote='<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Sección de <strong>Tesorería</strong>. En producción se restringe al rol tesorero (Azure + Supabase); acá se ve en demo.</div>';
+  const roleNote=canPago() ? '' : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Sección de <strong>Tesorería</strong>: podés ver el estado de pago de las OG. Registrar pagos, cargar N° de asiento e ingresar fondos está reservado al rol Tesorero (o Admin).</div>';
   C().innerHTML=kpis+tabs+roleNote+body;
 }
 function setTesTab(t){ TES_TAB=t; renderTesoreria(); }
