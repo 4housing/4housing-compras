@@ -908,7 +908,7 @@ function setHeader(view){
   }else if(view==='diccionarios'){
     document.getElementById('topActions').innerHTML='';
   }else if(view==='seguimiento'){
-    document.getElementById('topActions').innerHTML='';
+    document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportSeguimientoExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'');
   }else if(view==='indices'||view==='precios'||view==='panol'){
     document.getElementById('topActions').innerHTML='';
   }else{
@@ -3109,11 +3109,27 @@ function renderSeguimiento(){
       +segPersonas().map(n=>'<option value="'+esc(n)+'"'+(SEG_PERSONA===n?' selected':'')+'>'+esc(n)+'</option>').join('')
       +'</select>'
     : (MI_NOMBRE?'<span style="font-size:12.5px;color:var(--muted)">Mi gestión: <strong>'+esc(MI_NOMBRE)+'</strong></span>':'<span style="font-size:12.5px;color:#b4554e">Tu usuario no tiene un nombre de comprador/certificador asociado — pedile a un admin que lo cargue en Diccionario de usuarios.</span>');
+  SEG_LIST=list;
   C().innerHTML='<div class="kpi-grid">'+kpis+'</div>'
     +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'+personaSel+'<span style="font-size:11.5px;color:var(--muted);margin-left:auto">'+list.length+' de '+scope.length+(SEG_FILTER?'':' pendientes')+'</span></div>'
     +'<div class="card"><div class="card-h"><h3>'+(SEG_FILTER?SEG_LBL[SEG_FILTER]:'Pendientes de seguimiento')+'</h3><span class="meta">Por vencer = dentro de los próximos '+SEG_DIAS_POR_VENCER+' días</span></div>'+tabla+'</div>';
 }
 window.renderSeguimiento=renderSeguimiento;
+let SEG_LIST=[];
+function exportSeguimientoExcel(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  if(!SEG_LIST.length){ toast('No hay filas para exportar.'); return; }
+  const aoa=[['OG','Proveedor','Renglón / detalle','Comprador','Certificador','Entrega','Estado','Vencimiento']];
+  SEG_LIST.forEach(r=>{
+    const o=r.o;
+    const venc = r.estado==='cumplida' ? '—' : r.dias==null ? 'Sin fecha cargada' : r.dias<0 ? 'Vencida hace '+(-r.dias)+' día'+(-r.dias===1?'':'s') : r.dias===0 ? 'Vence hoy' : 'Vence en '+r.dias+' día'+(r.dias===1?'':'s');
+    aoa.push([o.numero||'', o.proveedor||'', r.label, o.comprador?ogxName(o.comprador):'', o.certificador?ogxName(o.certificador):'', r.fechaEntrega?fmtDate(r.fechaEntrega):'', SEG_LBL[r.estado], venc]);
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Seguimiento');
+  XLSX.writeFile(wb, 'Seguimiento_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+window.exportSeguimientoExcel=exportSeguimientoExcel;
 
 function certInner(o){
   const certs=certsOf(o.id); let acum=0;
@@ -4650,7 +4666,7 @@ async function liberarCert(ogId, id){
     if(DEMO_MODE){ const r=mem.certificados.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,patch); }
     else { await sbFetch('/og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
   }catch(e){ toast('No se pudo liberar: '+(e&&e.message?e.message:e)); return; }
-  toast('Certificado liberado al pago'); openLiberarPanel(); renderCompras();
+  toast('Certificado liberado al pago'); openLiberarPanel(); render(current);
 }
 window.liberarCert=liberarCert;
 function renderCertPanel(){
@@ -5204,7 +5220,7 @@ async function saveCert(ogId, id){
   if(DEMO_MODE){ if(id==null||id==='null'){ obj.id=Math.max(0,...mem.certificados.map(r=>+r.id||0))+1; mem.certificados.push(obj); } else { const r=mem.certificados.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,obj); } }
   else { if(id==null||id==='null') await sbFetch('/og_certificados',{method:'POST',body:JSON.stringify(obj)}); else await sbFetch('/og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)}); await reloadDB(); }
   OG_EXPANDED.add(ogId);
-  closeModal(); toast('Certificado guardado'); renderCompras();
+  closeModal(); toast('Certificado guardado'); render(current);
   const certIdNuevo=(id!=null&&id!=='null')?id:(certsOf(ogId).find(c=>c.numero===obj.numero)||{}).id;
   if(certIdNuevo!=null && confirm('Certificado guardado.\n¿Querés imprimirlo ahora?')) exportCert(ogId, certIdNuevo);
 }
