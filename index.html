@@ -2548,7 +2548,7 @@ function openDicColFilter(tabKey, col, ev){
   pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
   setTimeout(()=>document.addEventListener('mousedown', dicColFilterOutside, true),0);
 }
-function dicColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ el.style.display=el.getAttribute('data-v').toLowerCase().includes(q)?'flex':'none'; }); }
+function dicColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
 function dicColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
 function dicColFilterApply(tabKey,col){
   const all=[...document.querySelectorAll('#dicfList .dicfchk')];
@@ -2851,7 +2851,7 @@ function openResFilter(col, ev){
   pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
   setTimeout(()=>document.addEventListener('mousedown', resFilterOutside, true),0);
 }
-function resFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#resfList .resfitem').forEach(el=>{ el.style.display=el.getAttribute('data-v').toLowerCase().includes(q)?'flex':'none'; }); }
+function resFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#resfList .resfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.resfchk'); if(c) c.checked=m; } }); }
 function resFilterToggleAll(ck){ document.querySelectorAll('#resfList .resfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.resfchk'); if(c) c.checked=ck; } }); }
 function resFilterApply(col){ const all=[...document.querySelectorAll('#resfList .resfchk')]; const chk=all.filter(c=>c.checked).map(c=>c.value); if(chk.length===all.length){ delete RES_FILTRO[col]; } else { RES_FILTRO[col]=chk; } closeResFilter(); renderCompras(); }
 function resFilterClear(col){ delete RES_FILTRO[col]; closeResFilter(); renderCompras(); }
@@ -3445,7 +3445,7 @@ function xlfOpen(ns,col,ev){
   pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
   setTimeout(()=>document.addEventListener('mousedown', xlfOutside, true),0);
 }
-function xlfSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#xlfList .xlfitem').forEach(el=>{ el.style.display=el.getAttribute('data-v').toLowerCase().includes(q)?'flex':'none'; }); }
+function xlfSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#xlfList .xlfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.xlfchk'); if(c) c.checked=m; } }); }
 function xlfToggleAll(ck){ document.querySelectorAll('#xlfList .xlfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.xlfchk'); if(c) c.checked=ck; } }); }
 function xlfApply(){
   const pop=document.getElementById('xlfPop'); if(!pop) return; const ns=pop.dataset.ns, col=pop.dataset.col;
@@ -3525,6 +3525,7 @@ function proyectadoView(){
   const resumen='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
     +card('Necesita en pesos','ARS',tot.ARS)+card('Necesita en dólares','USD',tot.USD)+'</div>';
   // Detalle por OG
+  PROY_DETAIL=detail;
   const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''))).map(d=>{
     const o=d.o, mon=d.mon;
     return '<tr><td><strong>'+esc(o.numero||'')+'</strong></td>'
@@ -3536,11 +3537,41 @@ function proyectadoView(){
       +'<td style="text-align:right">'+(d.lp?mfmt(mon,d.lp):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+mfmt(mon,d.sc+d.cl+d.lp)+'</strong></td></tr>';
   }).join('');
-  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾.</span>'+xlfClearAllBtn('proy')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody></table></div>';
+  const footRows=['ARS','USD'].map(mon=>{
+    const b=tot[mon]; const t=b.sc+b.cl+b.lp; if(t<=0.005) return '';
+    return '<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="4" style="text-align:right">Total mostrado ('+(mon==='USD'?'US$':'$')+')</td>'
+      +'<td style="text-align:right">'+(b.sc?mfmt(mon,b.sc):'—')+'</td>'
+      +'<td style="text-align:right">'+(b.cl?mfmt(mon,b.cl):'—')+'</td>'
+      +'<td style="text-align:right">'+(b.lp?mfmt(mon,b.lp):'—')+'</td>'
+      +'<td style="text-align:right">'+mfmt(mon,t)+'</td></tr>';
+  }).join('');
+  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
   return resumen+detalle+proyeccionSemanalHtml(ogs);
 }
 window.proyectadoView=proyectadoView;
+let PROY_DETAIL=[];
+function exportProyectadoExcel(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  if(!PROY_DETAIL.length){ toast('No hay OG con saldo pendiente para exportar.'); return; }
+  const r2=x=>Math.round((+x||0)*100)/100;
+  const aoa=[['OG','Proveedor','Clasificación','Moneda','Sin certificar','Cert. pend. liberar','Liberado por pagar','Total pendiente']];
+  const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
+  PROY_DETAIL.slice().sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})).forEach(d=>{
+    const o=d.o;
+    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
+    tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp;
+  });
+  aoa.push([]);
+  ['ARS','USD'].forEach(mon=>{
+    const b=tot[mon]; const t=b.sc+b.cl+b.lp; if(t<=0.005) return;
+    aoa.push(['Total ('+mon+')','','','', r2(b.sc)||'', r2(b.cl)||'', r2(b.lp)||'', r2(t)]);
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Proyectado');
+  XLSX.writeFile(wb, 'Tesoreria_Proyectado_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+window.exportProyectadoExcel=exportProyectadoExcel;
 
 /* ---- Previsión de caja semana a semana (según Fecha de entrega de cada renglón, corte los viernes) ---- */
 function fridayOf(d){ const f=new Date(d); const dow=f.getDay(); f.setDate(f.getDate()+(5-dow+7)%7); return f; }
@@ -3662,7 +3693,7 @@ function openOpFilter(col, ev){
   pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-300)))+'px';
   setTimeout(()=>document.addEventListener('mousedown', opFilterOutside, true),0);
 }
-function opFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#opfList .opfitem').forEach(el=>{ el.style.display = el.getAttribute('data-v').toLowerCase().includes(q)?'flex':'none'; }); }
+function opFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#opfList .opfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.opfchk'); if(c) c.checked=m; } }); }
 function opFilterToggleAll(ck){ document.querySelectorAll('#opfList .opfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.opfchk'); if(c) c.checked=ck; } }); }
 function opFilterApply(col){ const all=[...document.querySelectorAll('#opfList .opfchk')]; const chk=all.filter(c=>c.checked).map(c=>c.value); if(chk.length===all.length){ delete OP_FILTRO[col]; } else { OP_FILTRO[col]=chk; } closeOpFilter(); renderTesoreria(); }
 function opFilterClear(col){ delete OP_FILTRO[col]; closeOpFilter(); renderTesoreria(); }
