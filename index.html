@@ -3475,29 +3475,58 @@ window.xlfOpen=xlfOpen; window.xlfSearch=xlfSearch; window.xlfToggleAll=xlfToggl
 window.xlfOpenDate=xlfOpenDate; window.xlfDateApply=xlfDateApply; window.xlfDateClear=xlfDateClear;
 
 /* ---- Vista Proyectado: cuánto falta pagar, por situación y moneda ---- */
+// Un registro por cada renglón con saldo pendiente de una OG (o uno solo, sin fecha, si la OG no
+// tiene renglones cargados). Es la fuente única para "Detalle por OG" y para la Previsión semanal:
+// si las dos salieran de cálculos separados, cualquier diferencia de criterio hace que dejen de
+// coincidir apenas una OG tiene renglones con fechas de entrega distintas.
+function ogDetalleItems(o){
+  const mon=ogMonedaCode(o);
+  const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
+  const scOG=Math.max(0,total-cert-cerrado), clOG=Math.max(0,cert-lib), lpOG=Math.max(0,lib-pag);
+  const sumCat=scOG+clOG+lpOG;
+  const hoy=new Date().toISOString().slice(0,10);
+  if(!(o.items&&o.items.length)){
+    if(sumCat<=0.005) return [];
+    return [{o, mon, sc:scOG, cl:clOG, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:false}];
+  }
+  return ogItemsPend(o).map(({pend, it})=>{
+    const sc = sumCat>0 ? pend*(scOG/sumCat) : pend;
+    const cl = sumCat>0 ? pend*(clOG/sumCat) : 0;
+    const lp = sumCat>0 ? pend*(lpOG/sumCat) : 0;
+    const fe=it.fecha_entrega||null;
+    return { o, mon, sc, cl, lp,
+      fechaEntrega:fe,
+      fechaPago: fe ? fridayOf(new Date(fe+'T00:00:00')).toISOString().slice(0,10) : null,
+      atrasado: !!(fe && fe<hoy) };
+  }).filter(x=>x.sc+x.cl+x.lp>0.005);
+}
 function proyectadoView(){
-  xlfRegister('proy', { rows:()=>(mem.ogs||[]).filter(o=>!o.anulada), onChange:renderTesoreria,
-    dateVal: o=>ogFechaPagoEstimada(o),
-    val:(o,col)=>{
+  const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const mfmt=(mon,v)=>(mon==='USD'?'US$ ':'$ ')+fmt2(v);
+  const allItems=[];
+  (mem.ogs||[]).filter(o=>!o.anulada).forEach(o=>{ ogDetalleItems(o).forEach(x=>allItems.push(x)); });
+  xlfRegister('proy', { rows:()=>allItems, onChange:renderTesoreria,
+    dateVal: x=>x.fechaPago,
+    val:(x,col)=>{
+      const o=x.o;
       if(col==='og') return o.numero?String(o.numero):'(sin N°)';
       if(col==='prov') return o.proveedor_cod||o.proveedor||'(sin proveedor)';
       if(col==='clasif') return o.clasif_og||'(sin clasificación)';
       if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
       return '';
     } });
-  const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const mfmt=(mon,v)=>(mon==='USD'?'US$ ':'$ ')+fmt2(v);
-  const ogs=(mem.ogs||[]).filter(o=>!o.anulada).filter(o=>xlfPass('proy',o));
-  const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
-  const detail=[];
-  ogs.forEach(o=>{
-    const mon=ogMonedaCode(o);
-    const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o);
-    const sc=Math.max(0,total-cert), cl=Math.max(0,cert-lib), lp=Math.max(0,lib-pag);
-    if(sc+cl+lp<=0.005) return;
-    tot[mon].sc+=sc; tot[mon].cl+=cl; tot[mon].lp+=lp;
-    detail.push({o,mon,sc,cl,lp});
+  const items=allItems.filter(x=>xlfPass('proy',x));
+  // Agrupa por OG + semana de pago para no mostrar un renglón de la OG por fila: si varios renglones
+  // de la misma OG caen en la misma fecha estimada, se muestran juntos.
+  const grupos={};
+  items.forEach(x=>{
+    const k=x.o.id+'||'+(x.fechaPago||'');
+    const g=(grupos[k]=grupos[k]||{o:x.o, mon:x.mon, sc:0, cl:0, lp:0, fechaPago:x.fechaPago, atrasado:false});
+    g.sc+=x.sc; g.cl+=x.cl; g.lp+=x.lp; if(x.atrasado) g.atrasado=true;
   });
+  const detail=Object.values(grupos);
+  const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
+  detail.forEach(d=>{ tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp; });
   const totalUSD=tot.USD.sc+tot.USD.cl+tot.USD.lp, totalARS=tot.ARS.sc+tot.ARS.cl+tot.ARS.lp;
   if(!detail.length) return '<div class="card"><div class="empty">'+(xlfHasAny('proy')?'Ninguna OG coincide con los filtros.':'No hay OG con saldo pendiente de pago.')+'</div>'+(xlfHasAny('proy')?'<div style="padding:0 16px 16px"><button class="btn ghost sm" onclick="xlfClearAll(\'proy\')">Limpiar filtros</button></div>':'')+'</div>';
   const COL={sc:'#c9c49f', cl:'#5f7a4e', lp:'#37432c'};   // colores de las 3 situaciones
@@ -3527,11 +3556,10 @@ function proyectadoView(){
     +card('Necesita en pesos','ARS',tot.ARS)+card('Necesita en dólares','USD',tot.USD)+'</div>';
   // Detalle por OG
   PROY_DETAIL=detail;
-  const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''))).map(d=>{
+  const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})||String(a.fechaPago||'').localeCompare(String(b.fechaPago||''))).map(d=>{
     const o=d.o, mon=d.mon;
-    const fechaPago=ogFechaPagoEstimada(o);
-    const fechaTxt = fechaPago
-      ? '<span'+(fechaPago<new Date().toISOString().slice(0,10)?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(fechaPago)+'</span>'
+    const fechaTxt = d.fechaPago
+      ? '<span'+(d.atrasado?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(d.fechaPago)+'</span>'
       : '<span style="color:var(--muted)">Sin fecha</span>';
     return '<tr><td><strong>'+esc(o.numero||'')+'</strong></td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
@@ -3553,7 +3581,7 @@ function proyectadoView(){
   }).join('');
   const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ (la fecha de pago se puede filtrar por rango) — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+xlfTh('proy','Fecha est. pago','__fecha__')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
-  return resumen+detalle+proyeccionSemanalHtml(ogs);
+  return resumen+detalle+proyeccionSemanalHtml(items);
 }
 window.proyectadoView=proyectadoView;
 let PROY_DETAIL=[];
@@ -3564,8 +3592,8 @@ function exportProyectadoExcel(){
   const aoa=[['OG','Proveedor','Clasificación','Moneda','Fecha est. pago','Sin certificar','Cert. pend. liberar','Liberado por pagar','Total pendiente']];
   const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
   PROY_DETAIL.slice().sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})).forEach(d=>{
-    const o=d.o; const fechaPago=ogFechaPagoEstimada(o);
-    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', fechaPago?fmtDate(fechaPago):'Sin fecha', r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
+    const o=d.o;
+    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', d.fechaPago?fmtDate(d.fechaPago):'Sin fecha', r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
     tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp;
   });
   aoa.push([]);
@@ -3599,21 +3627,16 @@ function ogItemsPend(o){
   });
   return out;
 }
-// Viernes en el que se estima pagar una OG: el siguiente al renglón pendiente con la Fecha de entrega
-// más próxima. null si no hay renglones pendientes con fecha (o la OG no tiene renglones).
-function ogFechaPagoEstimada(o){
-  const fechas=ogItemsPend(o).map(({it})=>it.fecha_entrega).filter(Boolean).sort();
-  if(!fechas.length) return null;
-  return fridayOf(new Date(fechas[0]+'T00:00:00')).toISOString().slice(0,10);
-}
-function proyeccionSemanal(ogs){
-  const hoy=new Date(); hoy.setHours(0,0,0,0);
+// Reparte los mismos registros que ya arma ogDetalleItems (uno por renglón con saldo pendiente) en
+// baldes semanales, para que la Previsión coincida siempre con "Detalle por OG" — vienen de la misma
+// fuente, filtrada igual (recibe "items", la lista ya filtrada por ▾ en proyectadoView).
+function proyeccionSemanal(items){
   const buckets={};
   const add=(key,mon,monto)=>{ buckets[key]=buckets[key]||{ARS:0,USD:0}; buckets[key][mon]+=monto; };
-  ogs.forEach(o=>{
-    const monPago=ogMonedaPagoCode(o);
+  items.forEach(x=>{
+    const o=x.o, monPago=ogMonedaPagoCode(o);
     if(!monPago) return;   // compensación: no mueve caja, no entra en la previsión de caja
-    const mon=ogMonedaCode(o);   // moneda en la que está pactado/expresado el monto de la OG
+    const mon=x.mon;   // moneda en la que está pactado/expresado el monto de la OG
     const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
     // Convierte un monto pactado en "mon" a la moneda en la que efectivamente se paga (monPago).
     // Sin TC cargado: mejor esfuerzo, no convierte (subestima/sobreestima, pero no rompe la previsión).
@@ -3621,25 +3644,16 @@ function proyeccionSemanal(ogs){
       if(mon===monPago || !tc) return m;
       return mon==='USD' ? m*tc : m/tc;
     };
-    const items=(o.items&&o.items.length)?o.items:null;
-    if(!items){
-      const pend=aMonPago(Math.max(0, ogTotal(o)-ogCerradoMonto(o)-ogPagado(o)));
-      if(pend>0.5) add('sinfecha', monPago, pend);
-      return;
-    }
-    ogItemsPend(o).forEach(({it,pend})=>{
-      const pendConv=aMonPago(pend);
-      const fe=it.fecha_entrega;
-      if(!fe){ add('sinfecha', monPago, pendConv); return; }
-      const d=new Date(fe+'T00:00:00');
-      if(d<hoy){ add('atrasado', monPago, pendConv); return; }
-      add(fridayOf(d).toISOString().slice(0,10), monPago, pendConv);
-    });
+    const pend=aMonPago(x.sc+x.cl+x.lp);
+    if(pend<=0.5) return;
+    if(x.atrasado){ add('atrasado', monPago, pend); return; }
+    if(!x.fechaPago){ add('sinfecha', monPago, pend); return; }
+    add(x.fechaPago, monPago, pend);
   });
   return buckets;
 }
-function proyeccionSemanalHtml(ogs){
-  const buckets=proyeccionSemanal(ogs);
+function proyeccionSemanalHtml(items){
+  const buckets=proyeccionSemanal(items);
   const hoy=new Date(); hoy.setHours(0,0,0,0);
   const HORIZONTE=8; // semanas hacia adelante antes de agrupar en "Más adelante"
   const semanas=[]; let f=fridayOf(hoy);
