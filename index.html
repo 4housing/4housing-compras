@@ -2913,6 +2913,7 @@ function ogxName(n){ n=(n||'').trim(); if(!n) return '—'; const p=n.split(',')
 // Con gestión pendiente: le falta certificar/cerrar el 100%, O le falta terminar de cobrar lo
 // liberado. Solo queda "sin pendientes" una OG resuelta en las dos puntas a la vez.
 function ogTienePendiente(o){
+  if(o.anulada) return false;   // anulada: no se certifica ni se paga, no queda nada pendiente
   const resuelto=(ogAcumPct(o.id)+ogCerradoPct(o))>=99.999;
   return !(resuelto && ogPendPagoPct(o)<=0.01);
 }
