@@ -1827,6 +1827,18 @@ async function fetchUSD(){
   }catch(e){ /* sin conexión / CORS: la cotización queda vacía y se puede cargar a mano */ }
 }
 window.fetchUSD=fetchUSD;
+let USD_OFIC_COMPRA=null, USD_OFIC_VENTA=null, USD_OFIC_FECHA='';
+async function fetchUSDOficial(){
+  try{
+    const r=await fetch('https://dolarapi.com/v1/dolares/oficial',{cache:'no-store'});
+    const j=await r.json();
+    if(j && j.compra){
+      USD_OFIC_COMPRA=j.compra; USD_OFIC_VENTA=j.venta||null; USD_OFIC_FECHA=(j.fechaActualizacion||'').slice(0,10);
+      if(USD_OFIC_FECHA) await usdDiarioOficialUpsert(USD_OFIC_FECHA, j.compra, j.venta, 'dolarapi');
+    }
+  }catch(e){ /* sin conexión / CORS: la cotización queda vacía y se puede cargar a mano */ }
+}
+window.fetchUSDOficial=fetchUSDOficial;
 
 /* ===== Cotización USD día a día (Diccionario) =====
    Registro propio de la app (no depende de que dolarapi tenga histórico): cada vez que
@@ -1845,6 +1857,19 @@ async function usdDiarioUpsert(fecha, compra, venta, fuente){
   }
 }
 window.usdDiarioUpsert=usdDiarioUpsert;
+// Igual que usdDiarioUpsert pero para USD Oficial (tabla usd_diario_oficial), que el EERR usa
+// como "USD Oficial" dia a dia (siempre toma la venta, ver EERR/index.html: cargarDiccionarioSupabase).
+async function usdDiarioOficialUpsert(fecha, compra, venta, fuente){
+  DIC.usd_diario_oficial=DIC.usd_diario_oficial||[];
+  const i=DIC.usd_diario_oficial.findIndex(r=>r.fecha===fecha);
+  const row={fecha, compra:+compra, venta:venta!=null&&venta!==''?+venta:null, fuente:fuente||'manual'};
+  if(i>=0) DIC.usd_diario_oficial[i]=row; else DIC.usd_diario_oficial.push(row);
+  if(!DEMO_MODE){
+    try{ await sbFetch('/usd_diario_oficial',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
+    catch(e){ /* si la tabla no existe todavía, queda solo en memoria */ }
+  }
+}
+window.usdDiarioOficialUpsert=usdDiarioOficialUpsert;
 // Promedio comprador/vendedor de una cotización; si falta uno de los dos (registros viejos, antes
 // de sumar "venta"), cae al que haya.
 function usdProm(r){
@@ -1895,6 +1920,9 @@ const IDX_DEF={
   uva:{ nombre:'UVA (BCRA)', tabla:'idx_uva', diaEsperado:null,
     fuenteUrl:'https://www.bcra.gob.ar/principales-variables-datos/?serie=7913',
     campos:[ {k:'valor', label:'UVA'} ] },
+  facpce:{ nombre:'FACPCE (IPC Nac. empalme IPIM, ajuste por inflación / AXI)', tabla:'idx_facpce', diaEsperado:null,
+    fuenteUrl:'https://www.facpce.org.ar/indices-facpce/',
+    campos:[ {k:'valor', label:'Índice FACPCE'} ] },
   dolar_oficial:{ nombre:'Dólar Oficial (BNA)', tabla:'idx_dolar_oficial', diaEsperado:null,
     fuenteUrl:'https://www.bna.com.ar/Personas',
     campos:[ {k:'compra', label:'TC Vendedor'} ] },
@@ -7434,6 +7462,7 @@ window.reloadDB=reloadDB;
 
 (async function start(){
   try{ fetchUSD(); }catch(e){}
+  try{ fetchUSDOficial(); }catch(e){}
   const ok = await initAuth();
   if(!ok) return; // pantalla de login ya mostrada
 
