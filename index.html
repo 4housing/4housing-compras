@@ -273,7 +273,7 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
   <aside class="side">
     <div class="brand">4housing</div>
     <div class="brand-sub">Compras &amp; Operaciones</div>
-    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 09-09-2026 · tesorería para todos</div>
+    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 18-09-2026 · fix scroll al expandir OG</div>
     <nav id="nav"></nav>
     <div class="sp"></div>
     <div class="data-actions">
@@ -1810,7 +1810,12 @@ const OG_EXPANDED=new Set();
 let OG_VISIBLE_IDS=[];   // ids de las OG mostradas en la última renderCompras() (según filtros activos), para expandir/contraer todas
 // Expandir/contraer un renglón reconstruye toda la tabla (innerHTML) — sin esto, el navegador vuelve
 // el scroll a 0 cada vez, y hay que volver a buscar la OG en la que estabas.
-function renderComprasKeepScroll(){ const y=window.scrollY; renderCompras(); window.scrollTo(0,y); }
+function renderComprasKeepScroll(){
+  const y=window.scrollY;
+  renderCompras();
+  window.scrollTo(0,y);
+  requestAnimationFrame(()=>window.scrollTo(0,y));   // por si el navegador todavía está acomodando el layout nuevo
+}
 function expandAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.add(id)); renderComprasKeepScroll(); }
 function collapseAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.delete(id)); renderComprasKeepScroll(); }
 function expandPendingOG(){ OG_VISIBLE_IDS.forEach(id=>{ const o=ogById(id); if(o && (ogAcumPct(id)+ogCerradoPct(o))<99.999) OG_EXPANDED.add(id); }); renderComprasKeepScroll(); }
@@ -2958,7 +2963,6 @@ function clearAllFiltersCompras(){ OGX={}; KPI_FILTER=null; renderCompras(); }
 window.ogxOpen=ogxOpen; window.ogxSearch=ogxSearch; window.ogxToggleAll=ogxToggleAll; window.ogxApply=ogxApply; window.ogxClear=ogxClear; window.ogxClearAll=ogxClearAll; window.clearAllFiltersCompras=clearAllFiltersCompras;
 
 async function renderCompras(){
-  C().innerHTML='<div class="empty">Cargando…</div>';
   let ogsAll;
   try{ ogsAll = (mem.ogs||[]).slice(); }
   catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
