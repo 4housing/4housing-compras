@@ -1808,9 +1808,12 @@ window.confirmDelHerr=confirmDelHerr;
    ================================================================ */
 const OG_EXPANDED=new Set();
 let OG_VISIBLE_IDS=[];   // ids de las OG mostradas en la última renderCompras() (según filtros activos), para expandir/contraer todas
-function expandAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.add(id)); renderCompras(); }
-function collapseAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.delete(id)); renderCompras(); }
-function expandPendingOG(){ OG_VISIBLE_IDS.forEach(id=>{ const o=ogById(id); if(o && (ogAcumPct(id)+ogCerradoPct(o))<99.999) OG_EXPANDED.add(id); }); renderCompras(); }
+// Expandir/contraer un renglón reconstruye toda la tabla (innerHTML) — sin esto, el navegador vuelve
+// el scroll a 0 cada vez, y hay que volver a buscar la OG en la que estabas.
+function renderComprasKeepScroll(){ const y=window.scrollY; renderCompras(); window.scrollTo(0,y); }
+function expandAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.add(id)); renderComprasKeepScroll(); }
+function collapseAllOG(){ OG_VISIBLE_IDS.forEach(id=>OG_EXPANDED.delete(id)); renderComprasKeepScroll(); }
+function expandPendingOG(){ OG_VISIBLE_IDS.forEach(id=>{ const o=ogById(id); if(o && (ogAcumPct(id)+ogCerradoPct(o))<99.999) OG_EXPANDED.add(id); }); renderComprasKeepScroll(); }
 window.expandAllOG=expandAllOG; window.collapseAllOG=collapseAllOG; window.expandPendingOG=expandPendingOG;
 let TES_TAB='proy';
 let OG_FILTRO={comprador:'',certificador:'',proveedor:'',clasifRenglon:'',estado:'todas'};
@@ -3216,7 +3219,7 @@ function ogDetail(o){
     +'<button class="btn ghost sm" onclick="openOG('+o.id+')">'+ICO.edit+'Editar OG</button></div>'+reng
     +certInner(o)+'</div></td></tr>';
 }
-function toggleOG(id){ if(OG_EXPANDED.has(id)) OG_EXPANDED.delete(id); else OG_EXPANDED.add(id); renderCompras(); }
+function toggleOG(id){ if(OG_EXPANDED.has(id)) OG_EXPANDED.delete(id); else OG_EXPANDED.add(id); renderComprasKeepScroll(); }
 window.toggleOG=toggleOG;
 
 /* ================================================================
