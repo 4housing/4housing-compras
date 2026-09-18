@@ -3010,6 +3010,7 @@ async function renderCompras(){
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
         +(puedeCrearOG()?'<button class="iconbtn" title="Duplicar OG (crea una copia abierta, sin certificar ni pagar)" onclick="duplicateOG('+o.id+')">'+ICO.copy+'</button>':'')
         +((puedeEditarOG(o)&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
+        +(ROLE.admin?'<button class="iconbtn del" title="Eliminar OG definitivamente (no se puede deshacer, solo admin)" onclick="askDelOG('+o.id+')">'+ICO.del+'</button>':'')
         +'</div></td></tr>';
       return head+(exp?ogDetail(o):'');
     }).join('');
@@ -5141,10 +5142,21 @@ async function confirmAnularOG(id){
   closeModal(); toast('OG anulada'); renderCompras();
 }
 window.confirmAnularOG=confirmAnularOG;
+function askDelOG(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar una OG definitivamente.'); return; }
+  const o=ogById(id); if(!o) return;
+  if(pagosOf(id).length>0){ toast('No se puede eliminar: la OG tiene pagos. El tesorero debe eliminarlos primero.'); return; }
+  openModal('Eliminar OG '+esc(o.numero)+' definitivamente',
+    '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">A diferencia de "Anular", esto <strong>borra la OG y sus certificados para siempre</strong> — no queda ningún registro ni se puede deshacer. Usalo solo para corregir errores de carga (OGs duplicadas o mal armadas), no para OGs que ya tuvieron actividad real. ¿Confirmás?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelOG('+id+')">Eliminar definitivamente</button>');
+}
+window.askDelOG=askDelOG;
 async function confirmDelOG(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar una OG definitivamente.'); return; }
+  if(pagosOf(id).length>0){ toast('La OG tiene pagos; no se puede eliminar.'); return; }
   if(DEMO_MODE){ mem.ogs=mem.ogs.filter(o=>String(o.id)!==String(id)); mem.certificados=mem.certificados.filter(c=>String(c.og_id)!==String(id)); }
   else { await sbFetch('/og_certificados?og_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await sbFetch('/ogs?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
-  closeModal(); toast('Eliminada'); renderCompras();
+  closeModal(); toast('OG eliminada definitivamente'); render(current);
 }
 window.confirmDelOG=confirmDelOG;
 
