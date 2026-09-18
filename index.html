@@ -2642,6 +2642,7 @@ function certMonto(c, og){
 function ogAcumMonto(og){ return certsOf(og.id).reduce((a,c)=>a+certMonto(c,og),0); }
 function ogAcumPct(ogId){ const og=ogById(ogId)||{}; const t=ogTotal(og); return t? ogAcumMonto(og)/t*100 : 0; }
 function itemAcumPct(og, idx){ return certsOf(og.id).reduce((a,c)=>a+(+(((c.avances||{})[idx]))||0),0); }
+function itemLiberadoPct(og, idx){ return certsOf(og.id).filter(c=>c.aprobacion==='SI' && c.estado==='Liberado').reduce((a,c)=>a+(+(((c.avances||{})[idx]))||0),0); }
 /* Cierre de saldo: parte de un renglón (o de la OG sin renglones) que se cancela sin certificar ni pagar,
    con motivo justificado. No es costo: se excluye de lo pendiente de certificar/pagar, pero el total de la OG no cambia. */
 const MOTIVOS_CIERRE=['No entregó conforme lo acordado','No cumple con los requisitos técnicos','No cumple con los plazos acordados','Error de diseño','Error de cálculo'];
@@ -3531,17 +3532,28 @@ window.xlfOpenDate=xlfOpenDate; window.xlfDateApply=xlfDateApply; window.xlfDate
 function ogDetalleItems(o){
   const mon=ogMonedaCode(o);
   const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
-  const scOG=Math.max(0,total-cert-cerrado), clOG=Math.max(0,cert-lib), lpOG=Math.max(0,lib-pag);
-  const sumCat=scOG+clOG+lpOG;
   const hoy=new Date().toISOString().slice(0,10);
   if(!(o.items&&o.items.length)){
-    if(sumCat<=0.005) return [];
+    const scOG=Math.max(0,total-cert-cerrado), clOG=Math.max(0,cert-lib), lpOG=Math.max(0,lib-pag);
+    if(scOG+clOG+lpOG<=0.005) return [];
     return [{o, mon, sc:scOG, cl:clOG, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:false}];
   }
-  return ogItemsPend(o).map(({pend, it})=>{
-    const sc = sumCat>0 ? pend*(scOG/sumCat) : pend;
-    const cl = sumCat>0 ? pend*(clOG/sumCat) : 0;
-    const lp = sumCat>0 ? pend*(lpOG/sumCat) : 0;
+  // Por renglón, con el avance real de ESE renglón (no un reparto proporcional a nivel de OG): "sin
+  // certificar" y "certificado sin liberar" salen de itemAcumPct/itemLiberadoPct de cada renglón. El
+  // pago (que se registra a nivel de OG, no por renglón) se prorratea sólo contra "liberado por pagar",
+  // repartido según cuánto liberó cada renglón — así un renglón 100% liberado no le "presta" avance a
+  // otro que todavía no certificó nada.
+  const bonifFactor=1-(+o.bonif_pct||0)/100;
+  const libPorItem=o.items.map((it,idx)=>itemTotal(it)*bonifFactor*(itemLiberadoPct(o,idx)/100));
+  const sumLib=libPorItem.reduce((a,v)=>a+v,0);
+  return o.items.map((it,idx)=>{
+    const tBonif=itemTotal(it)*bonifFactor;
+    const itCerrado=tBonif*(itemCerradoPct(it)/100);
+    const itCert=tBonif*(itemAcumPct(o,idx)/100);
+    const itLib=libPorItem[idx];
+    const sc=Math.max(0, tBonif-itCert-itCerrado);
+    const cl=Math.max(0, itCert-itLib);
+    const lp= sumLib>0 ? Math.max(0, itLib-(itLib/sumLib)*Math.min(pag,sumLib)) : 0;
     const fe=it.fecha_entrega||null;
     return { o, mon, sc, cl, lp,
       fechaEntrega:fe,
@@ -3658,24 +3670,6 @@ window.exportProyectadoExcel=exportProyectadoExcel;
 
 /* ---- Previsión de caja semana a semana (según Fecha de entrega de cada renglón, corte los viernes) ---- */
 function fridayOf(d){ const f=new Date(d); const dow=f.getDay(); f.setDate(f.getDate()+(5-dow+7)%7); return f; }
-// Renglones de una OG que todavía tienen saldo sin pagar (sin certificar, certificado sin liberar, o
-// liberado sin pagar — no solo "sin certificar"), con cuánto de cada uno falta pagar. El pago se
-// registra a nivel de OG, no por renglón, así que el monto ya pagado se prorratea entre los renglones
-// según su peso (descontado lo cerrado, que no es costo y no se prorratea). En moneda de la OG.
-function ogItemsPend(o){
-  const items=(o.items&&o.items.length)?o.items:null; if(!items) return [];
-  const pagadoOG=ogPagado(o);
-  const pesos=items.map(it=>itemTotal(it)*Math.max(0,100-itemCerradoPct(it))/100);
-  const bonifFactor=1-(+o.bonif_pct||0)/100;
-  const sumPeso=pesos.reduce((a,p)=>a+p,0)*bonifFactor;
-  const out=[];
-  items.forEach((it,idx)=>{
-    const peso=pesos[idx]*bonifFactor; if(peso<=0) return;
-    const pend=sumPeso>0 ? peso-(peso/sumPeso)*Math.min(pagadoOG,sumPeso) : peso;
-    if(pend>0.5) out.push({it, idx, pend});
-  });
-  return out;
-}
 // Reparte los mismos registros que ya arma ogDetalleItems (uno por renglón con saldo pendiente) en
 // baldes semanales, para que la Previsión coincida siempre con "Detalle por OG" — vienen de la misma
 // fuente, filtrada igual (recibe "items", la lista ya filtrada por ▾ en proyectadoView).
@@ -4782,8 +4776,8 @@ function openOG(id){
     +'<div class="frow c2" id="og_lugarPagoWrap" style="display:'+(pagoUsdShow?'grid':'none')+'"><div class="field"><label>Lugar de pago</label><select id="og_lugar_pago">'+lugarOpts+'</select></div>'
     +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="og_lugar_pago_txt" type="text" value="'+esc(cur.lugar_pago_txt||'')+'" placeholder="Escribí la ubicación…"></div></div>'
     +'<div class="field"><label>Tipo de cambio (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:(usdProm(tcDiaAnterior(cur.fecha||hoy))!=null?usdProm(tcDiaAnterior(cur.fecha||hoy)):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
-    +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"></div>'
-    +'<div class="field"><label>Método de anticipo</label><select id="og_antmet">'+metOpts+'</select></div></div></div>'
+    +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"'+dis+'></div>'
+    +'<div class="field"><label>Método de anticipo</label><select id="og_antmet"'+disSel+'>'+metOpts+'</select></div></div></div>'
     +'<div class="field"><label>Observaciones</label><textarea id="og_obs" rows="2" style="font-size:13px;min-height:36px;line-height:1.4" placeholder="Detalle de la condición (plazos, % de anticipo, aclaraciones)…">'+esc(cur.observaciones||'')+'</textarea></div>'
     // ----- Renglones -----
     +'<div class="field"><label>Renglones (Cód Art · Artículo · Clasificación · Centro de costos)</label><div id="ogItemsBox" style="overflow-x:auto"></div>'
