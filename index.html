@@ -5273,16 +5273,40 @@ async function saveCert(ogId, id){
   if(certIdNuevo!=null && confirm('Certificado guardado.\n¿Querés imprimirlo ahora?')) exportCert(ogId, certIdNuevo);
 }
 window.saveCert=saveCert;
+// Cuánto quedaría pagable (ogMaxPagable) en la OG si se borrara este certificado — 0 si el
+// certificado no estaba liberado, así que borrarlo no cambia nada de lo pagable (ni de la parte del
+// anticipo, que no depende de los certificados). Sirve para no bloquear por las dudas: lo único
+// realmente riesgoso es dejar pagable menos de lo que ya se pagó.
+function ogLiberadoSinCert(og, certId){
+  return certsOf(og.id).filter(c=>c.aprobacion==='SI' && c.estado==='Liberado' && String(c.id)!==String(certId)).reduce((a,c)=>a+certMonto(c,og),0);
+}
+function ogMaxPagableSinCert(og, certId){
+  const cert=ogLiberadoSinCert(og, certId);
+  if(og.condicion!=='CON ANTICIPO') return cert;
+  const ant=ogAnticipoMonto(og); const antPct=(+og.anticipo_pct||0)/100;
+  if(og.anticipo_metodo==='B') return Math.max(ant, cert);
+  return ant + cert*(1-antPct);
+}
+// Bloquear solo si ESTE certificado puntual está liberado y borrarlo dejaría pagable menos de lo que
+// ya se pagó — no por el solo hecho de que la OG tenga algún pago. Un certificado todavía "Pendiente"
+// (sin aprobar/liberar) nunca contó para lo pagable, así que borrarlo es siempre seguro.
+function ogDelCertRiesgoso(o, id){
+  const c=certsOf(o.id).find(x=>String(x.id)===String(id));
+  const eraLiberado=!!(c && c.aprobacion==='SI' && c.estado==='Liberado');
+  return eraLiberado && ogMaxPagableSinCert(o,id) < ogPagado(o)-0.01;
+}
 function delCert(id, ogId){
-  if(!puedeCertificarOG(ogById(ogId))){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
-  if(pagosOf(ogId).length>0){ toast('La OG tiene pagos registrados. El tesorero debe eliminar el pago antes de tocar los certificados.'); return; }
+  const o=ogById(ogId);
+  if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
+  if(ogDelCertRiesgoso(o,id)){ toast('No se puede eliminar: es un certificado liberado y borrarlo dejaría pagable menos de lo que ya se pagó. El tesorero debe eliminar el pago antes de tocar este certificado.'); return; }
   openModal('Eliminar certificado','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este certificado? (no queda registro)</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelCert('+id+','+ogId+')">Eliminar</button>');
 }
 window.delCert=delCert;
 async function confirmDelCert(id, ogId){
-  if(!puedeCertificarOG(ogById(ogId))){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
-  if(pagosOf(ogId).length>0){ toast('La OG tiene pagos; no se puede eliminar el certificado.'); return; }
+  const o=ogById(ogId);
+  if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
+  if(ogDelCertRiesgoso(o,id)){ toast('No se puede eliminar: es un certificado liberado y borrarlo dejaría pagable menos de lo que ya se pagó.'); return; }
   if(DEMO_MODE){ mem.certificados=mem.certificados.filter(c=>String(c.id)!==String(id)); }
   else { await sbFetch('/og_certificados?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
   OG_EXPANDED.add(ogId);
