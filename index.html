@@ -811,6 +811,30 @@ async function sbFetchAll(pathWithSelect){
   }
   return all;
 }
+async function sbAuthToken(){
+  let token=SB_KEY;
+  try{ const { data }=await sbClient.auth.getSession(); if(data && data.session && data.session.access_token) token=data.session.access_token; }catch(e){}
+  return token;
+}
+// Sube un archivo (File/Blob) a un bucket de Supabase Storage. El bucket es privado: la descarga se
+// hace siempre con URL firmada (sbStorageSignedUrl), nunca con una URL pública.
+async function sbStorageUpload(bucket, path, file){
+  const token=await sbAuthToken();
+  const res=await fetch(SB_URL+'/storage/v1/object/'+bucket+'/'+path, {
+    method:'POST', headers:{ 'apikey':SB_KEY, 'Authorization':'Bearer '+token, 'Content-Type':file.type||'application/octet-stream', 'x-upsert':'true' }, body:file
+  });
+  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error('No se pudo subir el archivo ('+res.status+'): '+t); }
+  return path;
+}
+async function sbStorageSignedUrl(bucket, path, expiresIn){
+  const token=await sbAuthToken();
+  const res=await fetch(SB_URL+'/storage/v1/object/sign/'+bucket+'/'+path, {
+    method:'POST', headers:{ 'apikey':SB_KEY, 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify({expiresIn:expiresIn||3600})
+  });
+  if(!res.ok) throw new Error('No pude generar el link de descarga.');
+  const j=await res.json();
+  return SB_URL+'/storage/v1'+j.signedURL;
+}
 
 const Data = {
   async list(view){
@@ -3446,18 +3470,340 @@ function renderTesoreria(){
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'
     +'<button class="mtab'+(tab==='proy'?' active':'')+'" onclick="setTesTab(\'proy\')">Proyectado</button>'
     +'<button class="mtab'+(tab==='cola'?' active':'')+'" onclick="setTesTab(\'cola\')">Pagos pendientes</button>'
+    +'<button class="mtab'+(tab==='solic'?' active':'')+'" onclick="setTesTab(\'solic\')">Solicitudes de pago</button>'
     +'<button class="mtab'+(tab==='op'?' active':'')+'" onclick="setTesTab(\'op\')">Órdenes de pago</button>'
     +'<button class="mtab'+(tab==='arqueo'?' active':'')+'" onclick="setTesTab(\'arqueo\')">Arqueo de caja</button></div>';
   let body;
   if(tab==='arqueo') body=arqueoView();
   else if(tab==='op') body=opsView();
   else if(tab==='proy') body=proyectadoView();
+  else if(tab==='solic') body=solicitudesPagoView();
   else body=colaView(cola);
   const roleNote=canPago() ? '' : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Sección de <strong>Tesorería</strong>: podés ver el estado de pago de las OG. Registrar pagos, cargar N° de asiento e ingresar fondos está reservado al rol Tesorero (o Admin).</div>';
   C().innerHTML=kpis+tabs+roleNote+body;
 }
 function setTesTab(t){ TES_TAB=t; renderTesoreria(); }
 window.setTesTab=setTesTab; window.renderTesoreria=renderTesoreria;
+
+/* ===== Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas =====
+   Referencia (DIC.oc_informe): foto del reporte de Tango "Informe OC" (Mis Consultas Externas),
+   se reimporta cuando haga falta — sirve para autocompletar OC/Proyecto/Comprador/Remito a partir
+   del N° de factura, o para sugerir OCs del proveedor cuando la factura todavía no aparece ahí
+   (porque el remito y la factura recién se muestran juntos una vez que están las dos cargadas). */
+function puedeCrearSolicitudPago(){ return ROLE.comprador||ROLE.tesorero||ROLE.admin; }
+window.puedeCrearSolicitudPago=puedeCrearSolicitudPago;
+
+function openImportOCInforme(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "Informe OC" (Mis Consultas Externas). Reemplaza toda la tabla — es una foto del momento; volvé a importarlo cuando haga falta tener los datos al día.</div>'
+    +'<div class="field"><label>Informe OC (.xlsx) *</label><input id="ocinf_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="ocinfMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="ocInformeAnalizar()">Importar</button>';
+  openModal('Importar Informe OC de Tango', body, foot);
+}
+window.openImportOCInforme=openImportOCInforme;
+async function ocInformeAnalizar(){
+  const f=(document.getElementById('ocinf_file').files||[])[0];
+  const msg=document.getElementById('ocinfMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'NRO ORDEN COMPRA')>=0 && _syncIdx(h,'COD CLASIFICACIÓN','COD CLASIFICACION')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "NRO ORDEN COMPRA" y "COD CLASIFICACIÓN".');
+    const H=rows[0];
+    const idx={
+      fecha:_syncIdx(H,'FECHA EMISION'), clasif:_syncIdx(H,'COD CLASIFICACIÓN','COD CLASIFICACION'),
+      oc:_syncIdx(H,'NRO ORDEN COMPRA'), renglon:_syncIdx(H,'RENGLÓN','RENGLON'), remito:_syncIdx(H,'NRO REMITO'),
+      prov:_syncIdx(H,'COD PROVEEDOR'), art:_syncIdx(H,'COD ARTÍCULO','COD ARTICULO'), desc:_syncIdx(H,'DESCRIPCIÓN','DESCRIPCION'),
+      cantPed:_syncIdx(H,'CANTIDAD_PEDIDA'), cantRec:_syncIdx(H,'CANTIDAD_RECIBIDA'), cantPend:_syncIdx(H,'CANTIDAD_PENDIENTE'),
+      importe:_syncIdx(H,'IMPORTE_NETO'), estadoOC:_syncIdx(H,'ESTADO OC'), obs:_syncIdx(H,'OBSERVACIO'),
+      fEntrega:_syncIdx(H,'FECHA ENTREGA'), dep:_syncIdx(H,'DEPÓSITO','DEPOSITO'), comprador:_syncIdx(H,'NOMBRE DEL COMPRADOR'),
+      totSinIva:_syncIdx(H,'TOTAL_SIN_IVA_DE_LA_OC'), totConIva:_syncIdx(H,'TOTAL_CON_IVA_DE_LA_OC'),
+      cond:_syncIdx(H,'CONDICIÓN DE COMPRA','CONDICION DE COMPRA'), tipoComp:_syncIdx(H,'TIPO COMP.','TIPO COMP'),
+      comp:_syncIdx(H,'NRO. COMPROBANTE','NRO COMPROBANTE'), descComp:_syncIdx(H,'DESC.COMPROBANTE','DESC COMPROBANTE'),
+      estadoPago:_syncIdx(H,'ESTADO')
+    };
+    const out=[];
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]; const oc=_syncNorm(row[idx.oc]); if(!oc) continue;
+      out.push({
+        fecha_emision: idx.fecha>=0?(_syncFechaISO(row[idx.fecha])||null):null,
+        clasif_cod: idx.clasif>=0?_syncNorm(row[idx.clasif]):'',
+        oc_numero: oc,
+        renglon: idx.renglon>=0?(+row[idx.renglon]||null):null,
+        remito_numero: idx.remito>=0?_syncNorm(row[idx.remito]):'',
+        proveedor_cod: idx.prov>=0?_syncNorm(row[idx.prov]):'',
+        cod_articulo: idx.art>=0?_syncNorm(row[idx.art]):'',
+        descripcion: idx.desc>=0?_syncNorm(row[idx.desc]):'',
+        cantidad_pedida: idx.cantPed>=0?_syncNum(row[idx.cantPed]):null,
+        cantidad_recibida: idx.cantRec>=0?_syncNum(row[idx.cantRec]):null,
+        cantidad_pendiente: idx.cantPend>=0?_syncNum(row[idx.cantPend]):null,
+        importe_neto: idx.importe>=0?_syncNum(row[idx.importe]):null,
+        estado_oc: idx.estadoOC>=0?_syncNorm(row[idx.estadoOC]):'',
+        observacion: idx.obs>=0?_syncNorm(row[idx.obs]):'',
+        fecha_entrega: idx.fEntrega>=0?(_syncFechaISO(row[idx.fEntrega])||null):null,
+        deposito: idx.dep>=0?_syncNorm(row[idx.dep]):'',
+        comprador: idx.comprador>=0?_syncNorm(row[idx.comprador]):'',
+        total_sin_iva_oc: idx.totSinIva>=0?_syncNum(row[idx.totSinIva]):null,
+        total_con_iva_oc: idx.totConIva>=0?_syncNum(row[idx.totConIva]):null,
+        condicion_compra: idx.cond>=0?_syncNorm(row[idx.cond]):'',
+        tipo_comprobante: idx.tipoComp>=0?_syncNorm(row[idx.tipoComp]):'',
+        comprobante_numero: idx.comp>=0?_syncNorm(row[idx.comp]):'',
+        desc_comprobante: idx.descComp>=0?_syncNorm(row[idx.descComp]):'',
+        estado_pago: idx.estadoPago>=0?_syncNorm(row[idx.estadoPago]):''
+      });
+    }
+    if(!out.length) throw new Error('No encontré filas de datos.');
+    if(DEMO_MODE){ DIC.oc_informe=out; }
+    else{
+      await sbFetch('/oc_informe?oc_numero=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+      for(let k=0;k<out.length;k+=500){ await sbFetch('/oc_informe',{method:'POST', body:JSON.stringify(out.slice(k,k+500))}); }
+      DIC.oc_informe=out;
+    }
+    closeModal(); toast('Informe OC actualizado: '+out.length+' filas'); renderTesoreria();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.ocInformeAnalizar=ocInformeAnalizar;
+
+// Busca en el Informe OC importado las filas de una factura por su N° de comprobante (tolera espacios/mayúsculas).
+function ocInformeBuscarFactura(nroFactura){
+  const q=_syncNorm(nroFactura).toUpperCase(); if(!q) return [];
+  return (DIC.oc_informe||[]).filter(r=>String(r.comprobante_numero||'').toUpperCase().trim()===q);
+}
+// OCs del proveedor que en el informe todavía no tienen ni remito ni factura (candidatas a ser ésta),
+// agrupadas por N° de OC — para sugerir cuando la factura no matchea directo (remito y factura solo
+// aparecen juntos en el informe una vez que están las dos cargadas en Tango).
+function ocInformeSugerirOCs(proveedorCod){
+  const cod=_syncNorm(proveedorCod).toUpperCase(); if(!cod) return [];
+  const rows=(DIC.oc_informe||[]).filter(r=>String(r.proveedor_cod||'').toUpperCase()===cod && !r.comprobante_numero && !r.remito_numero
+    && !String(r.estado_oc||'').toUpperCase().includes('ANULADA'));
+  const porOC={};
+  rows.forEach(r=>{ const g=(porOC[r.oc_numero]=porOC[r.oc_numero]||{oc_numero:r.oc_numero, clasif_cod:r.clasif_cod, comprador:r.comprador, fecha_emision:r.fecha_emision, estado_oc:r.estado_oc, importe:0}); g.importe+=(+r.importe_neto||0); });
+  return Object.values(porOC).sort((a,b)=>String(b.fecha_emision||'').localeCompare(String(a.fecha_emision||'')));
+}
+
+let SOLPAGO_FILTRO='todas', SOLPAGO_SUGERIDAS=[];
+function setSolPagoFiltro(v){ SOLPAGO_FILTRO=v; renderTesoreria(); }
+window.setSolPagoFiltro=setSolPagoFiltro;
+function solicitudesPagoView(){
+  const list=(mem.solicitudes_pago||[]).slice();
+  const filtro=SOLPAGO_FILTRO;
+  const shown = filtro==='todas' ? list : list.filter(s=>(s.estado||'Pendiente')===filtro);
+  const chip=(v,label)=>'<button class="mtab'+(filtro===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setSolPagoFiltro(\''+v+'\')">'+label+'</button>';
+  const filtros='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+chip('todas','Todas ('+list.length+')')
+    +chip('Pendiente','Pendiente ('+list.filter(s=>(s.estado||'Pendiente')==='Pendiente').length+')')
+    +chip('En gestión','En gestión ('+list.filter(s=>s.estado==='En gestión').length+')')
+    +chip('Pagada','Pagada ('+list.filter(s=>s.estado==='Pagada').length+')')+'</div>';
+  const nuevaBtn = puedeCrearSolicitudPago() ? '<button class="btn sm" onclick="openSolicitudPagoForm()">'+ICO.plus+'Nueva solicitud</button>' : '';
+  const importBtn = '<button class="btn ghost sm" style="margin-left:8px" onclick="openImportOCInforme()">Importar Informe OC de Tango</button>';
+  const header='<div class="card-h"><h3>Solicitudes de pago</h3><span class="meta">Pedidos de Compras a Finanzas para cargar y pagar una factura — reemplaza el mail; queda todo con fecha y responsable.</span>'+nuevaBtn+importBtn+'</div>';
+  if(!shown.length) return '<div class="card">'+header+filtros+'<div class="empty" style="padding:20px">No hay solicitudes'+(filtro!=='todas'?' en este estado':'')+'.</div></div>';
+  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
+  const rows=shown.slice().sort((a,b)=>(b.id||0)-(a.id||0)).map(s=>{
+    const hist=(s.historial||[]);
+    const ultimo=hist.length?hist[hist.length-1]:null;
+    const estColor=ESTADO_CLR[s.estado||'Pendiente']||'b-gris';
+    return '<tr>'
+      +'<td><strong>'+esc(s.nro_factura||'—')+'</strong>'+(s.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoSolicitud('+s.id+')">'+ICO.pdf+'</button>':'')+'</td>'
+      +'<td style="font-size:11px">'+esc(s.proveedor_cod||'')+' '+esc(s.proveedor||'')+'</td>'
+      +'<td>'+esc(s.oc_numero||'—')+'</td>'
+      +'<td>'+esc(s.proyecto_cod||'—')+'</td>'
+      +'<td style="font-size:11px">'+esc(s.comprador||'')+'</td>'
+      +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
+      +'<td><span class="badge '+estColor+'">'+esc(s.estado||'Pendiente')+'</span></td>'
+      +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(ultimo?esc(ultimo.texto||'')+'<div style="font-size:10px">'+esc(ultimo.autor||'')+' · '+fmtDate((ultimo.fecha||'').slice(0,10))+'</div>':'—')+'</td>'
+      +'<td><button class="btn ghost sm" onclick="openSolicitudPagoDetalle('+s.id+')">Abrir</button></td></tr>';
+  }).join('');
+  return '<div class="card">'+header+filtros
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Factura</th><th>Proveedor</th><th>OC</th><th>Proyecto</th><th>Comprador</th><th style="text-align:right">Monto</th><th>Estado</th><th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+window.solicitudesPagoView=solicitudesPagoView;
+
+function comboProvSol(){
+  const inp=document.getElementById('sp_proveedor'); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  const src=(typeof DIC!=='undefined'?DIC.proveedores:[])||[];
+  const items=(q?src.filter(p=>((p.codigo||'')+' '+(p.razon||'')+' '+(p.comercial||'')).toLowerCase().includes(q)):src).slice(0,80)
+    .map(p=>({code:p.codigo, name:(p.razon||p.comercial||'')}));
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; renderSugeridasSolPago(); });
+}
+window.comboProvSol=comboProvSol;
+function renderSugeridasSolPago(){
+  const box=document.getElementById('spSugeridas'); if(!box) return;
+  const prov=resolveProv((document.getElementById('sp_proveedor')||{}).value||'');
+  if(!prov){ box.innerHTML=''; SOLPAGO_SUGERIDAS=[]; return; }
+  SOLPAGO_SUGERIDAS=ocInformeSugerirOCs(prov.codigo);
+  if(!SOLPAGO_SUGERIDAS.length){ box.innerHTML='<div style="font-size:11px;color:var(--muted);margin-top:4px">No hay OC de este proveedor pendientes de remito/factura en el informe importado.</div>'; return; }
+  box.innerHTML='<div style="font-size:11.5px;color:var(--ink);font-weight:600;margin-top:8px;margin-bottom:4px">OC de '+esc(prov.codigo)+' sin remito ni factura en el informe — elegí si corresponde:</div>'
+    +'<div style="display:flex;flex-direction:column;gap:4px;max-height:140px;overflow:auto">'
+    +SOLPAGO_SUGERIDAS.slice(0,20).map((o,k)=>'<button type="button" class="btn ghost sm" style="text-align:left;justify-content:flex-start" onclick="elegirOCSugerida('+k+')">OC '+esc(o.oc_numero)+' · '+esc(o.clasif_cod||'')+' · '+esc(o.comprador||'')+' · '+fmtDate(o.fecha_emision)+' · $ '+fmtNum(o.importe,2)+'</button>').join('')
+    +'</div>';
+}
+window.renderSugeridasSolPago=renderSugeridasSolPago;
+function elegirOCSugerida(k){
+  const o=SOLPAGO_SUGERIDAS[k]; if(!o) return;
+  const ocEl=document.getElementById('sp_oc'); if(ocEl) ocEl.value=o.oc_numero||'';
+  const proyEl=document.getElementById('sp_proyecto'); if(proyEl && o.clasif_cod) proyEl.value=o.clasif_cod;
+  const compEl=document.getElementById('sp_comprador'); if(compEl && o.comprador && nombresComp().includes(o.comprador)) compEl.value=o.comprador;
+  const msg=document.getElementById('spMsg'); if(msg){ msg.style.color='#4f8a53'; msg.textContent='OC '+o.oc_numero+' asignada.'; }
+}
+window.elegirOCSugerida=elegirOCSugerida;
+function solPagoFacturaBlur(){
+  const nro=(document.getElementById('sp_factura')||{}).value||'';
+  const matches=ocInformeBuscarFactura(nro);
+  const msg=document.getElementById('spMsg');
+  if(matches.length){
+    const m=matches[0];
+    const ocEl=document.getElementById('sp_oc'); if(ocEl && !ocEl.value) ocEl.value=m.oc_numero||'';
+    const remEl=document.getElementById('sp_remito'); if(remEl && !remEl.value) remEl.value=m.remito_numero||'';
+    const proyEl=document.getElementById('sp_proyecto'); if(proyEl && !proyEl.value) proyEl.value=m.clasif_cod||'';
+    const compEl=document.getElementById('sp_comprador'); if(compEl && !compEl.value && nombresComp().includes(m.comprador)) compEl.value=m.comprador;
+    if(msg){ msg.style.color='#4f8a53'; msg.textContent='Encontrada en el Informe OC: se completó OC/Remito/Proyecto solo.'; }
+    const box=document.getElementById('spSugeridas'); if(box) box.innerHTML='';
+  } else if(msg){ msg.style.color='var(--muted)'; msg.textContent='No la encontré en el Informe OC importado — completá a mano, o elegí de las sugeridas.'; renderSugeridasSolPago(); }
+}
+window.solPagoFacturaBlur=solPagoFacturaBlur;
+
+function openSolicitudPagoForm(id){
+  const s=id!=null?(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)):null;
+  const cur=s||{};
+  const provVal = cur.proveedor_cod ? (cur.proveedor_cod+' — '+(cur.proveedor||'')) : '';
+  const compOpts = nombresComp().map(n=>'<option'+(n===cur.comprador?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const proyOpts = auxOpts('3').map(o=>'<option value="'+esc(o.cod)+'"'+(cur.proyecto_cod===o.cod?' selected':'')+'>'+esc(o.cod)+' · '+esc(o.desc)+'</option>').join('');
+  const monOpts = ['ARS','USD'].map(m=>'<option value="'+m+'"'+((cur.moneda||'ARS')===m?' selected':'')+'>'+(m==='USD'?'Dólares':'Pesos')+'</option>').join('');
+  const body='<div class="field"><label>Proveedor</label><input id="sp_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProvSol()" oninput="comboProvSol()" onblur="comboHideDelayed()"></div>'
+    +'<div class="frow c2"><div class="field"><label>N° de factura</label><input id="sp_factura" type="text" value="'+esc(cur.nro_factura||'')+'" placeholder="Ej. A0000700005352" onblur="solPagoFacturaBlur()"></div>'
+    +'<div class="field"><label>Comprador</label><select id="sp_comprador"><option value="">— elegí —</option>'+compOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>N° de OC (Tango)</label><input id="sp_oc" type="text" value="'+esc(cur.oc_numero||'')+'"></div>'
+    +'<div class="field"><label>N° de Remito</label><input id="sp_remito" type="text" value="'+esc(cur.remito_numero||'')+'"></div></div>'
+    +'<div class="field"><label>Proyecto / Auxiliar</label><select id="sp_proyecto"><option value="">— elegí —</option>'+proyOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Monto</label><input id="sp_monto" type="number" step="0.01" value="'+(cur.monto!=null?cur.monto:'')+'"></div>'
+    +'<div class="field"><label>Moneda</label><select id="sp_moneda">'+monOpts+'</select></div></div>'
+    +'<div class="field"><label>Adjuntar factura (PDF)</label><input id="sp_file" type="file" accept="application/pdf,image/*">'+(cur.adjunto_nombre?'<div style="font-size:11px;color:var(--muted);margin-top:4px">Ya tiene adjunto: '+esc(cur.adjunto_nombre)+' (subí uno nuevo para reemplazarlo)</div>':'')+'</div>'
+    +'<div class="field"><label>Comentario'+(id!=null?'':' inicial')+' (opcional)</label><textarea id="sp_comentario" rows="2" placeholder="Alguna aclaración para Finanzas…"></textarea></div>'
+    +'<div id="spSugeridas"></div>'
+    +'<div id="spMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarSolicitudPago('+(id!=null?id:'null')+')">Guardar</button>';
+  openModal(id!=null?'Editar solicitud de pago':'Nueva solicitud de pago', body, foot, 'wide');
+  if(cur.nro_factura) solPagoFacturaBlur(); else if(cur.proveedor_cod) renderSugeridasSolPago();
+}
+window.openSolicitudPagoForm=openSolicitudPagoForm;
+
+async function guardarSolicitudPago(id){
+  const provRaw=(document.getElementById('sp_proveedor').value||'').trim();
+  const prov=resolveProv(provRaw);
+  if(!prov){ toast('Elegí un proveedor de la lista.'); return; }
+  const nro_factura=(document.getElementById('sp_factura').value||'').trim();
+  if(!nro_factura){ toast('Ingresá el N° de factura.'); return; }
+  const comprador=document.getElementById('sp_comprador').value||'';
+  const oc_numero=(document.getElementById('sp_oc').value||'').trim();
+  const remito_numero=(document.getElementById('sp_remito').value||'').trim();
+  const proyecto_cod=document.getElementById('sp_proyecto').value||'';
+  const monto=+document.getElementById('sp_monto').value||0;
+  const moneda=document.getElementById('sp_moneda').value||'ARS';
+  const comentario=(document.getElementById('sp_comentario').value||'').trim();
+  const msg=document.getElementById('spMsg');
+  const cur=id!=null?(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)):null;
+  const row={ proveedor_cod:prov.codigo, proveedor:(prov.razon||prov.comercial||''), comprador, oc_numero, remito_numero, proyecto_cod, nro_factura, monto, moneda };
+  try{
+    const f=(document.getElementById('sp_file').files||[])[0];
+    if(f){
+      if(msg){ msg.style.color='var(--muted)'; msg.textContent='Subiendo adjunto…'; }
+      const path=(id!=null?id:'nueva-'+Date.now())+'/'+Date.now()+'_'+f.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+      if(!DEMO_MODE) await sbStorageUpload('facturas', path, f);
+      row.adjunto_path=path; row.adjunto_nombre=f.name;
+    }
+    const ahora=new Date().toISOString();
+    const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+    if(id==null){
+      const hist=[]; if(comentario) hist.push({fecha:ahora, autor, texto:comentario});
+      row.estado='Pendiente'; row.historial=hist; row.creado_en=ahora; row.creado_por=autor;
+      if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
+      else{ await sbFetch('/solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
+    } else {
+      row.actualizado_en=ahora;
+      if(comentario){ const hist=(cur.historial||[]).slice(); hist.push({fecha:ahora, autor, texto:comentario}); row.historial=hist; }
+      if(DEMO_MODE){ Object.assign(cur,row); }
+      else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); await reloadDB(); }
+    }
+    closeModal(); toast('Solicitud guardada'); renderTesoreria();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); } }
+}
+window.guardarSolicitudPago=guardarSolicitudPago;
+
+function openSolicitudPagoDetalle(id){
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const hist=(s.historial||[]);
+  const histHtml=hist.length? hist.slice().reverse().map(h=>'<div style="border-bottom:1px solid var(--line);padding:8px 0"><div style="font-size:12.5px">'+esc(h.texto||'')+'</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+esc(h.autor||'')+' · '+(h.fecha?new Date(h.fecha).toLocaleString('es-AR'):'')+(h.estado_nuevo?' · pasó a "'+esc(h.estado_nuevo)+'"':'')+'</div></div>').join('') : '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">Sin comentarios todavía.</div>';
+  const estados=['Pendiente','En gestión','Pagada'];
+  const estadoBtns = canPago() ? '<div style="display:flex;gap:6px;margin:10px 0">'+estados.map(e=>'<button class="btn '+((s.estado||'Pendiente')===e?'':'ghost')+' sm" onclick="cambiarEstadoSolicitud('+s.id+',\''+e+'\')">'+e+'</button>').join('')+'</div>' : '';
+  const body='<div style="font-size:12.5px;line-height:1.7">'
+    +'<strong>Proveedor:</strong> '+esc(s.proveedor_cod||'')+' — '+esc(s.proveedor||'')+'<br>'
+    +'<strong>Factura:</strong> '+esc(s.nro_factura||'—')+(s.adjunto_path?' · <a href="#" onclick="verAdjuntoSolicitud('+s.id+');return false">ver adjunto</a>':'')+'<br>'
+    +'<strong>OC:</strong> '+esc(s.oc_numero||'—')+' &nbsp; <strong>Remito:</strong> '+esc(s.remito_numero||'—')+'<br>'
+    +'<strong>Proyecto:</strong> '+esc(s.proyecto_cod||'—')+' &nbsp; <strong>Comprador:</strong> '+esc(s.comprador||'—')+'<br>'
+    +'<strong>Monto:</strong> '+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'<br>'
+    +'<strong>Estado:</strong> '+esc(s.estado||'Pendiente')
+    +'</div>'+estadoBtns
+    +'<div style="font-weight:700;font-size:12.5px;margin-top:12px;margin-bottom:4px">Historial</div>'
+    +'<div style="max-height:220px;overflow:auto">'+histHtml+'</div>'
+    +(puedeCrearSolicitudPago()?'<div class="field" style="margin-top:10px"><label>Agregar comentario</label><textarea id="sp_nuevoComentario" rows="2" placeholder="Ej: se carga esta semana, se paga el viernes…"></textarea></div>':'');
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
+    +(puedeCrearSolicitudPago()?'<button class="btn ghost" onclick="openSolicitudPagoForm('+s.id+')">Editar</button><button class="btn" onclick="agregarComentarioSolicitud('+s.id+')">Comentar</button>':'')
+    +(ROLE.admin?'<button class="btn ghost" style="color:#b3261e" onclick="askDelSolicitud('+s.id+')">Eliminar</button>':'');
+  openModal('Solicitud de pago', body, foot, 'wide');
+}
+window.openSolicitudPagoDetalle=openSolicitudPagoDetalle;
+
+async function cambiarEstadoSolicitud(id, nuevo){
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const ahora=new Date().toISOString();
+  const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:'Cambió el estado a "'+nuevo+'"', estado_nuevo:nuevo});
+  const patch={estado:nuevo, historial:hist, actualizado_en:ahora};
+  if(DEMO_MODE){ Object.assign(s,patch); }
+  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
+  toast('Estado actualizado'); openSolicitudPagoDetalle(id); renderTesoreria();
+}
+window.cambiarEstadoSolicitud=cambiarEstadoSolicitud;
+
+async function agregarComentarioSolicitud(id){
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const txt=(document.getElementById('sp_nuevoComentario')||{}).value||'';
+  if(!txt.trim()){ toast('Escribí un comentario.'); return; }
+  const ahora=new Date().toISOString();
+  const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:txt.trim()});
+  const patch={historial:hist, actualizado_en:ahora};
+  if(DEMO_MODE){ Object.assign(s,patch); }
+  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
+  toast('Comentario agregado'); openSolicitudPagoDetalle(id); renderTesoreria();
+}
+window.agregarComentarioSolicitud=agregarComentarioSolicitud;
+
+async function verAdjuntoSolicitud(id){
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s || !s.adjunto_path) return;
+  try{
+    if(DEMO_MODE){ toast('En modo demo no hay archivos reales guardados.'); return; }
+    const url=await sbStorageSignedUrl('facturas', s.adjunto_path, 3600);
+    window.open(url, '_blank');
+  }catch(e){ toast('No pude abrir el adjunto: '+(e.message||e)); }
+}
+window.verAdjuntoSolicitud=verAdjuntoSolicitud;
+
+function askDelSolicitud(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar una solicitud de pago.'); return; }
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  openModal('Eliminar solicitud de pago',
+    '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">Se borra la solicitud de la factura '+esc(s.nro_factura||'')+' y todo su historial de comentarios — no se puede deshacer. ¿Confirmás?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelSolicitud('+id+')">Eliminar</button>');
+}
+window.askDelSolicitud=askDelSolicitud;
+async function confirmDelSolicitud(id){
+  if(!ROLE.admin) return;
+  if(DEMO_MODE){ mem.solicitudes_pago=(mem.solicitudes_pago||[]).filter(s=>String(s.id)!==String(id)); }
+  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
+  closeModal(); toast('Solicitud eliminada'); renderTesoreria();
+}
+window.confirmDelSolicitud=confirmDelSolicitud;
 
 /* ===== Filtro tipo Excel genérico (reutilizable por namespace) =====
    Se usa en Proyectado / Pagos pendientes / Arqueo de caja: mismo look & feel
@@ -7431,6 +7777,15 @@ async function reloadDB(){
       const sal = await sbFetchAll('/stock_saldos?select=*&order=cod_articulo.asc');
       if(sal) DIC.stock_saldos = sal.map(r=>({...r, saldo:+r.saldo||0, cant_comprometida:+r.cant_comprometida||0, cant_a_recibir:+r.cant_a_recibir||0, punto_pedido:+r.punto_pedido||0}));
     }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    // Informe OC de Tango (Compras + Remitos + Facturas): foto de referencia para armar/matchear
+    // Solicitudes de pago — se reemplaza entera en cada importación, no es un histórico.
+    try{
+      const oci = await sbFetchAll('/oc_informe?select=*&order=oc_numero.asc');
+      if(oci) DIC.oc_informe = oci;
+    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
+    // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
+    try{ mem.solicitudes_pago = await sbFetchAll('/solicitudes_pago?select=*&order=id.desc'); }
+    catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; }
     // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
     try{
       const mot = await sbFetchAll('/motivos_cierre?select=id,descripcion,activo&order=id.asc');
