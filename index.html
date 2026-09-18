@@ -3538,28 +3538,31 @@ function ogDetalleItems(o){
     if(scOG+clOG+lpOG<=0.005) return [];
     return [{o, mon, sc:scOG, cl:clOG, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:false}];
   }
-  // Por renglón, con el avance real de ESE renglón (no un reparto proporcional a nivel de OG): "sin
-  // certificar" y "certificado sin liberar" salen de itemAcumPct/itemLiberadoPct de cada renglón. El
-  // pago (que se registra a nivel de OG, no por renglón) se prorratea sólo contra "liberado por pagar",
-  // repartido según cuánto liberó cada renglón — así un renglón 100% liberado no le "presta" avance a
-  // otro que todavía no certificó nada.
+  // "Sin certificar" y "certificado sin liberar" van por renglón, con el avance real de CADA UNO
+  // (itemAcumPct/itemLiberadoPct), así arrastran la fecha de entrega propia de ese renglón — sirve
+  // para proyectar cuándo va a estar listo para pagarse. "Liberado por pagar" ya está aprobado: no
+  // depende de la fecha de entrega de ningún renglón en particular (está listo para pagarse YA), así
+  // que va en una única línea por OG, marcada "pagar ya", en vez de repartirse artificialmente entre
+  // las fechas de los renglones que aportaron ese avance.
   const bonifFactor=1-(+o.bonif_pct||0)/100;
-  const libPorItem=o.items.map((it,idx)=>itemTotal(it)*bonifFactor*(itemLiberadoPct(o,idx)/100));
-  const sumLib=libPorItem.reduce((a,v)=>a+v,0);
-  return o.items.map((it,idx)=>{
+  const out=[];
+  o.items.forEach((it,idx)=>{
     const tBonif=itemTotal(it)*bonifFactor;
     const itCerrado=tBonif*(itemCerradoPct(it)/100);
     const itCert=tBonif*(itemAcumPct(o,idx)/100);
-    const itLib=libPorItem[idx];
+    const itLib=tBonif*(itemLiberadoPct(o,idx)/100);
     const sc=Math.max(0, tBonif-itCert-itCerrado);
     const cl=Math.max(0, itCert-itLib);
-    const lp= sumLib>0 ? Math.max(0, itLib-(itLib/sumLib)*Math.min(pag,sumLib)) : 0;
+    if(sc+cl<=0.005) return;
     const fe=it.fecha_entrega||null;
-    return { o, mon, sc, cl, lp,
+    out.push({ o, mon, sc, cl, lp:0,
       fechaEntrega:fe,
       fechaPago: fe ? fridayOf(new Date(fe+'T00:00:00')).toISOString().slice(0,10) : null,
-      atrasado: !!(fe && fe<hoy) };
-  }).filter(x=>x.sc+x.cl+x.lp>0.005);
+      atrasado: !!(fe && fe<hoy) });
+  });
+  const lpOG=Math.max(0, lib-pag);
+  if(lpOG>0.005) out.push({ o, mon, sc:0, cl:0, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:true, liberadoYa:true });
+  return out;
 }
 function proyectadoView(){
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -3581,8 +3584,8 @@ function proyectadoView(){
   // de la misma OG caen en la misma fecha estimada, se muestran juntos.
   const grupos={};
   items.forEach(x=>{
-    const k=x.o.id+'||'+(x.fechaPago||'');
-    const g=(grupos[k]=grupos[k]||{o:x.o, mon:x.mon, sc:0, cl:0, lp:0, fechaPago:x.fechaPago, atrasado:false});
+    const k=x.o.id+'||'+(x.fechaPago||'')+(x.liberadoYa?'|LIB':'');
+    const g=(grupos[k]=grupos[k]||{o:x.o, mon:x.mon, sc:0, cl:0, lp:0, fechaPago:x.fechaPago, atrasado:false, liberadoYa:!!x.liberadoYa});
     g.sc+=x.sc; g.cl+=x.cl; g.lp+=x.lp; if(x.atrasado) g.atrasado=true;
   });
   const detail=Object.values(grupos);
@@ -3617,11 +3620,13 @@ function proyectadoView(){
     +card('Necesita en pesos','ARS',tot.ARS)+card('Necesita en dólares','USD',tot.USD)+'</div>';
   // Detalle por OG
   PROY_DETAIL=detail;
-  const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})||String(a.fechaPago||'').localeCompare(String(b.fechaPago||''))).map(d=>{
+  const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})||(b.liberadoYa-a.liberadoYa)||String(a.fechaPago||'').localeCompare(String(b.fechaPago||''))).map(d=>{
     const o=d.o, mon=d.mon;
-    const fechaTxt = d.fechaPago
-      ? '<span'+(d.atrasado?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(d.fechaPago)+'</span>'
-      : '<span style="color:var(--muted)">Sin fecha</span>';
+    const fechaTxt = d.liberadoYa
+      ? '<span style="color:#b4554e;font-weight:700">Liberado — pagar ya</span>'
+      : (d.fechaPago
+        ? '<span'+(d.atrasado?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(d.fechaPago)+'</span>'
+        : '<span style="color:var(--muted)">Sin fecha</span>');
     return '<tr><td><strong>'+esc(o.numero||'')+'</strong></td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+esc(o.clasif_og||'')+'</td>'
@@ -3654,7 +3659,7 @@ function exportProyectadoExcel(){
   const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
   PROY_DETAIL.slice().sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})).forEach(d=>{
     const o=d.o;
-    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', d.fechaPago?fmtDate(d.fechaPago):'Sin fecha', r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
+    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', d.liberadoYa?'Liberado — pagar ya':(d.fechaPago?fmtDate(d.fechaPago):'Sin fecha'), r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
     tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp;
   });
   aoa.push([]);
