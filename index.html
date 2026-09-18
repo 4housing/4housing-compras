@@ -273,7 +273,7 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
   <aside class="side">
     <div class="brand">4housing</div>
     <div class="brand-sub">Compras &amp; Operaciones</div>
-    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 18-09-2026 · fix scroll al expandir OG</div>
+    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 18-09-2026 v2 · expandir OG sin re-render</div>
     <nav id="nav"></nav>
     <div class="sp"></div>
     <div class="data-actions">
@@ -3223,7 +3223,24 @@ function ogDetail(o){
     +'<button class="btn ghost sm" onclick="openOG('+o.id+')">'+ICO.edit+'Editar OG</button></div>'+reng
     +certInner(o)+'</div></td></tr>';
 }
-function toggleOG(id){ if(OG_EXPANDED.has(id)) OG_EXPANDED.delete(id); else OG_EXPANDED.add(id); renderComprasKeepScroll(); }
+// Expandir/contraer una sola OG toca solo esa fila (inserta/saca el <tr> de detalle a mano) en vez de
+// reconstruir toda la tabla — así el resto de la página no se mueve y el scroll queda donde estaba,
+// sin depender de "adivinar" cuándo terminó de acomodarse el layout nuevo.
+function toggleOG(id){
+  const tr=document.getElementById('ogrow-'+id), o=ogById(id);
+  if(!tr || !o){ if(OG_EXPANDED.has(id)) OG_EXPANDED.delete(id); else OG_EXPANDED.add(id); renderComprasKeepScroll(); return; }
+  const btn=tr.querySelector('.iconbtn');
+  if(OG_EXPANDED.has(id)){
+    OG_EXPANDED.delete(id);
+    if(btn) btn.textContent='▸';
+    const next=tr.nextElementSibling;
+    if(next && next.classList.contains('detail-row')) next.remove();
+  } else {
+    OG_EXPANDED.add(id);
+    if(btn) btn.textContent='▾';
+    tr.insertAdjacentHTML('afterend', ogDetail(o));
+  }
+}
 window.toggleOG=toggleOG;
 
 /* ================================================================
