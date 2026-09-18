@@ -648,6 +648,10 @@ const SCHEMAS = {
     title:'Tesorería', sub:'Pagos pendientes, arqueo de caja (pesos y dólares) y asiento', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10h19"/><circle cx="12" cy="14.5" r="1.6"/></svg>',
   },
+  solicitudes: {
+    title:'Solicitudes de pago', sub:'Pedidos de Compras a Finanzas para cargar y pagar una factura — reemplaza el mail', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2.5h9l3 3v16h-12z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>',
+  },
   seguimiento: {
     title:'Seguimiento', sub:'Semáforo de OGs por fecha de entrega: vencidas, por vencer y proyectadas', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="2" width="8" height="20" rx="4"/><circle cx="12" cy="6.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg>',
@@ -766,7 +770,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
   },
 };
-const ORDER=['compras','seguimiento','tesoreria','deposito','panol','mantenimiento','logistica','diccionarios','indices','precios'];
+const ORDER=['compras','seguimiento','tesoreria','solicitudes','deposito','panol','mantenimiento','logistica','diccionarios','indices','precios'];
 
 /* ================================================================
    CAPA DE DATOS
@@ -933,7 +937,7 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML='';
   }else if(view==='seguimiento'){
     document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportSeguimientoExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'');
-  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'){
+  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'){
     document.getElementById('topActions').innerHTML='';
   }else{
     document.getElementById('topActions').innerHTML=
@@ -974,6 +978,7 @@ async function render(view){
   if(view==='compras'){ return renderCompras(); }
   if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='tesoreria'){ return renderTesoreria(); }
+  if(view==='solicitudes'){ return renderSolicitudesPago(); }
   if(view==='diccionarios'){ return renderDic(); }
   if(view==='indices'){ return renderIndices(); }
   if(view==='precios'){ return renderActualizacionPrecios(); }
@@ -3470,14 +3475,12 @@ function renderTesoreria(){
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'
     +'<button class="mtab'+(tab==='proy'?' active':'')+'" onclick="setTesTab(\'proy\')">Proyectado</button>'
     +'<button class="mtab'+(tab==='cola'?' active':'')+'" onclick="setTesTab(\'cola\')">Pagos pendientes</button>'
-    +'<button class="mtab'+(tab==='solic'?' active':'')+'" onclick="setTesTab(\'solic\')">Solicitudes de pago</button>'
     +'<button class="mtab'+(tab==='op'?' active':'')+'" onclick="setTesTab(\'op\')">Órdenes de pago</button>'
     +'<button class="mtab'+(tab==='arqueo'?' active':'')+'" onclick="setTesTab(\'arqueo\')">Arqueo de caja</button></div>';
   let body;
   if(tab==='arqueo') body=arqueoView();
   else if(tab==='op') body=opsView();
   else if(tab==='proy') body=proyectadoView();
-  else if(tab==='solic') body=solicitudesPagoView();
   else body=colaView(cola);
   const roleNote=canPago() ? '' : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Sección de <strong>Tesorería</strong>: podés ver el estado de pago de las OG. Registrar pagos, cargar N° de asiento e ingresar fondos está reservado al rol Tesorero (o Admin).</div>';
   C().innerHTML=kpis+tabs+roleNote+body;
@@ -3560,7 +3563,7 @@ async function ocInformeAnalizar(){
       for(let k=0;k<out.length;k+=500){ await sbFetch('/oc_informe',{method:'POST', body:JSON.stringify(out.slice(k,k+500))}); }
       DIC.oc_informe=out;
     }
-    closeModal(); toast('Informe OC actualizado: '+out.length+' filas'); renderTesoreria();
+    closeModal(); toast('Informe OC actualizado: '+out.length+' filas'); renderSolicitudesPago();
   }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
 }
 window.ocInformeAnalizar=ocInformeAnalizar;
@@ -3585,6 +3588,8 @@ function ocInformeSugerirOCs(proveedorCod){
 let SOLPAGO_FILTRO='todas', SOLPAGO_SUGERIDAS=[];
 function setSolPagoFiltro(v){ SOLPAGO_FILTRO=v; renderTesoreria(); }
 window.setSolPagoFiltro=setSolPagoFiltro;
+function renderSolicitudesPago(){ C().innerHTML=solicitudesPagoView(); }
+window.renderSolicitudesPago=renderSolicitudesPago;
 function solicitudesPagoView(){
   const list=(mem.solicitudes_pago||[]).slice();
   const filtro=SOLPAGO_FILTRO;
@@ -3726,7 +3731,7 @@ async function guardarSolicitudPago(id){
       if(DEMO_MODE){ Object.assign(cur,row); }
       else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); await reloadDB(); }
     }
-    closeModal(); toast('Solicitud guardada'); renderTesoreria();
+    closeModal(); toast('Solicitud guardada'); renderSolicitudesPago();
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); } }
 }
 window.guardarSolicitudPago=guardarSolicitudPago;
@@ -3762,7 +3767,7 @@ async function cambiarEstadoSolicitud(id, nuevo){
   const patch={estado:nuevo, historial:hist, actualizado_en:ahora};
   if(DEMO_MODE){ Object.assign(s,patch); }
   else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
-  toast('Estado actualizado'); openSolicitudPagoDetalle(id); renderTesoreria();
+  toast('Estado actualizado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
 }
 window.cambiarEstadoSolicitud=cambiarEstadoSolicitud;
 
@@ -3775,7 +3780,7 @@ async function agregarComentarioSolicitud(id){
   const patch={historial:hist, actualizado_en:ahora};
   if(DEMO_MODE){ Object.assign(s,patch); }
   else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
-  toast('Comentario agregado'); openSolicitudPagoDetalle(id); renderTesoreria();
+  toast('Comentario agregado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
 }
 window.agregarComentarioSolicitud=agregarComentarioSolicitud;
 
@@ -3801,7 +3806,7 @@ async function confirmDelSolicitud(id){
   if(!ROLE.admin) return;
   if(DEMO_MODE){ mem.solicitudes_pago=(mem.solicitudes_pago||[]).filter(s=>String(s.id)!==String(id)); }
   else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
-  closeModal(); toast('Solicitud eliminada'); renderTesoreria();
+  closeModal(); toast('Solicitud eliminada'); renderSolicitudesPago();
 }
 window.confirmDelSolicitud=confirmDelSolicitud;
 
