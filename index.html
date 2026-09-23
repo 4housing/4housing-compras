@@ -7786,14 +7786,20 @@ async function initAuth(){
 async function reloadDB(){
   if(DEMO_MODE) return;
   try{
-    mem.ogs          = await sbFetch('/ogs?select=*&order=id.desc') || [];
+    const [ogs, certificados, pagos, ingresos, cajas] = await Promise.all([
+      sbFetch('/ogs?select=*&order=id.desc'),
+      sbFetch('/og_certificados?select=*&order=id.asc'),
+      sbFetch('/pagos?select=*&order=id.asc'),
+      sbFetch('/caja_ingresos?select=*&order=id.asc').catch(()=>[]),
+      sbFetch('/caja?select=*'),
+    ]);
+    mem.ogs = ogs || [];
     mem.ogs.forEach(ogNormalizeCondicion);
-    mem.certificados = await sbFetch('/og_certificados?select=*&order=id.asc') || [];
-    mem.pagos        = await sbFetch('/pagos?select=*&order=id.asc') || [];
-    mem.ingresos     = await sbFetch('/caja_ingresos?select=*&order=id.asc').catch(()=>[]) || [];
-    const cajas      = await sbFetch('/caja?select=*') || [];
+    mem.certificados = certificados || [];
+    mem.pagos = pagos || [];
+    mem.ingresos = ingresos || [];
     mem.caja = mem.caja || {};
-    cajas.forEach(c=>{ if(c.moneda==='ARS') mem.caja.ARS_ini=+c.saldo_inicial||0; if(c.moneda==='USD') mem.caja.USD_ini=+c.saldo_inicial||0; });
+    (cajas||[]).forEach(c=>{ if(c.moneda==='ARS') mem.caja.ARS_ini=+c.saldo_inicial||0; if(c.moneda==='USD') mem.caja.USD_ini=+c.saldo_inicial||0; });
     // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
     try{
       let provs;
