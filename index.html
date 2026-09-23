@@ -3912,8 +3912,16 @@ function ogDetalleItems(o){
   const mon=ogMonedaCode(o);
   const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
   const hoy=new Date().toISOString().slice(0,10);
+  // El pago (por anticipo) puede haberse cobrado ANTES de que haya nada liberado — o incluso antes de
+  // certificar. Primero se resta de "liberado por pagar" (lo normal); lo que sobra se resta de
+  // "certificado sin liberar" y, si todavía sobra, de "sin certificar" — si no, un anticipo grande
+  // "desaparece" sin bajar nunca el total pendiente mostrado.
   if(!(o.items&&o.items.length)){
-    const scOG=Math.max(0,total-cert-cerrado), clOG=Math.max(0,cert-lib), lpOG=Math.max(0,lib-pag);
+    const clOG0=Math.max(0,cert-lib), scOG0=Math.max(0,total-cert-cerrado);
+    let restante=Math.max(0,pag-lib);
+    const clOG=Math.max(0,clOG0-restante); restante=Math.max(0,restante-clOG0);
+    const scOG=Math.max(0,scOG0-restante);
+    const lpOG=Math.max(0,lib-pag);
     if(scOG+clOG+lpOG<=0.005) return [];
     return [{o, mon, sc:scOG, cl:clOG, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:false}];
   }
@@ -3924,14 +3932,21 @@ function ogDetalleItems(o){
   // que va en una única línea por OG, marcada "pagar ya", en vez de repartirse artificialmente entre
   // las fechas de los renglones que aportaron ese avance.
   const bonifFactor=1-(+o.bonif_pct||0)/100;
-  const out=[];
-  o.items.forEach((it,idx)=>{
+  const items=o.items.map((it,idx)=>{
     const tBonif=itemTotal(it)*bonifFactor;
     const itCerrado=tBonif*(itemCerradoPct(it)/100);
     const itCert=tBonif*(itemAcumPct(o,idx)/100);
     const itLib=tBonif*(itemLiberadoPct(o,idx)/100);
-    const sc=Math.max(0, tBonif-itCert-itCerrado);
-    const cl=Math.max(0, itCert-itLib);
+    return { it, itLib, cl0:Math.max(0,itCert-itLib), sc0:Math.max(0, tBonif-itCert-itCerrado) };
+  });
+  const sumCl0=items.reduce((a,x)=>a+x.cl0,0), sumSc0=items.reduce((a,x)=>a+x.sc0,0);
+  let excedente=Math.max(0,pag-lib);   // lo que el pago cubre más allá de lo liberado
+  const usoCl=Math.min(excedente,sumCl0); excedente-=usoCl;
+  const usoSc=Math.min(excedente,sumSc0);
+  const out=[];
+  items.forEach(({it,cl0,sc0})=>{
+    const cl = sumCl0>0 ? Math.max(0, cl0-(cl0/sumCl0)*usoCl) : 0;
+    const sc = sumSc0>0 ? Math.max(0, sc0-(sc0/sumSc0)*usoSc) : 0;
     if(sc+cl<=0.005) return;
     const fe=it.fecha_entrega||null;
     out.push({ o, mon, sc, cl, lp:0,
