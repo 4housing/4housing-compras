@@ -1,0 +1,17 @@
+{
+  "carpeta_sharepoint": "Backups-Apps",
+  "unidades": [
+    {
+      "nombre": "compras",
+      "descripcion": "App de Compras (base Supabase propia)",
+      "supabase_ref": "aaqpzamcdxldhqyuqlgm",
+      "repos": ["4housing-compras"]
+    },
+    {
+      "nombre": "plataforma",
+      "descripcion": "Base Supabase compartida por Comercial (CRM), Labo Comercial, Diseño, Planificación Taller y Portal",
+      "supabase_ref": "wcpkpwxhqdcdljfwzcmy",
+      "repos": ["4housing-comercial", "labo-comercial", "diseno-4housing", "planificacion-taller", "portal"]
+    }
+  ]
+}

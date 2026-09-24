@@ -1,0 +1,64 @@
+name: Backup de apps
+
+# Backup diario de todas las apps a SharePoint (cifrado con age).
+# Ver backup/README.md para la configuración y backup/RESTAURAR.md para restaurar.
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 03:00 hora Argentina
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-apps
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - unidad: compras
+            clave: COMPRAS
+          - unidad: plataforma
+            clave: PLATAFORMA
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Instalar cliente Postgres 17 y age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y > /dev/null
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Backup ${{ matrix.unidad }}
+        env:
+          DB_URL: ${{ secrets[format('DB_URL_{0}', matrix.clave)] }}
+          SUPABASE_SERVICE_KEY: ${{ secrets[format('SERVICE_KEY_{0}', matrix.clave)] }}
+          AGE_RECIPIENTS: ${{ vars.BACKUP_AGE_RECIPIENTS }}
+          GH_TOKEN: ${{ secrets.BACKUP_GH_TOKEN }}
+          SP_TENANT_ID: ${{ vars.SP_TENANT_ID }}
+          SP_CLIENT_ID: ${{ vars.SP_CLIENT_ID }}
+          SP_CLIENT_SECRET: ${{ secrets.SP_CLIENT_SECRET }}
+          SP_SITE: ${{ vars.SP_SITE }}
+        run: backup/run_backup.sh "${{ matrix.unidad }}"
+
+      - name: Avisar falla por Teams
+        if: failure()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.BACKUP_TEAMS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -z "$TEAMS_WEBHOOK_URL" ] && exit 0
+          curl -sS -X POST -H 'Content-Type: application/json' "$TEAMS_WEBHOOK_URL" \
+            -d "{\"text\":\"⚠️ Falló el backup de ${{ matrix.unidad }}. Ver $RUN_URL\"}"
