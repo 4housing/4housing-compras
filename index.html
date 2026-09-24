@@ -6846,7 +6846,7 @@ async function syncAuxAplicar(){
     await reloadDB(); closeModal(); toast('Auxiliares sincronizados'); paintDic();
   }catch(e){
     const em=String(e.message||e);
-    if(msg)msg.textContent=/aux_opciones/i.test(em)?'La tabla aux_opciones necesita clave única en (tipo_cod, cod) para el upsert. Avisá a Pablo.':'Error al guardar: '+em;
+    if(msg)msg.textContent=/no unique or exclusion constraint/i.test(em)?'La tabla aux_opciones necesita clave única en (tipo_cod, cod) para el upsert. — '+em:'Error al guardar: '+em;
   }
 }
 window.syncAuxAplicar=syncAuxAplicar;
