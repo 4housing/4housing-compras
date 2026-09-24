@@ -6840,7 +6840,7 @@ async function syncAuxAplicar(){
   if(msg)msg.textContent='Guardando '+recs.length+' en Supabase…';
   try{
     for(let i=0;i<recs.length;i+=500){
-      await sbFetch('/aux_opciones',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(recs.slice(i,i+500))});
+      await sbFetch('/aux_opciones?on_conflict=tipo_cod,cod',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(recs.slice(i,i+500))});
     }
     if(msg)msg.textContent='Listo: '+recs.length+' auxiliares actualizados.';
     await reloadDB(); closeModal(); toast('Auxiliares sincronizados'); paintDic();
