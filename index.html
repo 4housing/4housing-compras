@@ -7841,102 +7841,105 @@ async function reloadDB(){
     mem.ingresos = ingresos || [];
     mem.caja = mem.caja || {};
     (cajas||[]).forEach(c=>{ if(c.moneda==='ARS') mem.caja.ARS_ini=+c.saldo_inicial||0; if(c.moneda==='USD') mem.caja.USD_ini=+c.saldo_inicial||0; });
-    // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
-    try{
-      let provs;
-      try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
-      catch(colErr){ try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva&order=codigo.asc'); }
-        catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
-      if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}));
-    }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ }
-    // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
-    // reciente: si la columna todavía no existe en producción, cae al select clásico.
-    try{
-      let arts;
-      try{ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
-      catch(colErr){ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
-      if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||'',
-        costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||''}));
-    }catch(e){ /* queda el ejemplo embebido */ }
-    // Depósitos: diccionario nuevo, sincronizado desde Tango
-    try{
-      const deps = await sbFetchAll('/depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
-      if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Pañol: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
-    try{
-      const egs = await sbFetchAll('/panol_egresos?select=*&order=fecha.desc,id.desc');
-      if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    try{
-      const sal = await sbFetchAll('/stock_saldos?select=*&order=cod_articulo.asc');
-      if(sal) DIC.stock_saldos = sal.map(r=>({...r, saldo:+r.saldo||0, cant_comprometida:+r.cant_comprometida||0, cant_a_recibir:+r.cant_a_recibir||0, punto_pedido:+r.punto_pedido||0}));
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Informe OC de Tango (Compras + Remitos + Facturas): foto de referencia para armar/matchear
-    // Solicitudes de pago — se reemplaza entera en cada importación, no es un histórico.
-    try{
-      const oci = await sbFetchAll('/oc_informe?select=*&order=oc_numero.asc');
-      if(oci) DIC.oc_informe = oci;
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
-    try{ mem.solicitudes_pago = await sbFetchAll('/solicitudes_pago?select=*&order=id.desc'); }
-    catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; }
-    // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
-    try{
-      const mot = await sbFetchAll('/motivos_cierre?select=id,descripcion,activo&order=id.asc');
-      if(mot) DIC.motivos_cierre = mot.map(m=>({id:m.id, descripcion:m.descripcion||'', activo:m.activo!==false}));
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Cotización USD día a día: registro propio de la app, no viene de Tango
-    try{
-      const ud = await sbFetchAll('/usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
-      if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
-    for(const ns of Object.keys(IDX_DEF)){
-      try{
+    // Los siguientes diccionarios/tablas son independientes entre sí (cada uno escribe su propia
+    // variable y atrapa sus propios errores) — antes se pedían en secuencia, una espera atrás de
+    // otra; ahora se disparan todos en paralelo para que la carga inicial no sea la suma de ~16
+    // round-trips de red sino solo el más lento de ellos.
+    await Promise.all([
+      // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
+      (async()=>{ try{
+        let provs;
+        try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
+        catch(colErr){ try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva&order=codigo.asc'); }
+          catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
+        if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}));
+      }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ } })(),
+      // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
+      // reciente: si la columna todavía no existe en producción, cae al select clásico.
+      (async()=>{ try{
+        let arts;
+        try{ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
+        catch(colErr){ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
+        if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||'',
+          costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||''}));
+      }catch(e){ /* queda el ejemplo embebido */ } })(),
+      // Depósitos: diccionario nuevo, sincronizado desde Tango
+      (async()=>{ try{
+        const deps = await sbFetchAll('/depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
+        if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Pañol: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
+      (async()=>{ try{
+        const egs = await sbFetchAll('/panol_egresos?select=*&order=fecha.desc,id.desc');
+        if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const sal = await sbFetchAll('/stock_saldos?select=*&order=cod_articulo.asc');
+        if(sal) DIC.stock_saldos = sal.map(r=>({...r, saldo:+r.saldo||0, cant_comprometida:+r.cant_comprometida||0, cant_a_recibir:+r.cant_a_recibir||0, punto_pedido:+r.punto_pedido||0}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Informe OC de Tango (Compras + Remitos + Facturas): foto de referencia para armar/matchear
+      (async()=>{ try{
+        const oci = await sbFetchAll('/oc_informe?select=*&order=oc_numero.asc');
+        if(oci) DIC.oc_informe = oci;
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
+      (async()=>{ try{ mem.solicitudes_pago = await sbFetchAll('/solicitudes_pago?select=*&order=id.desc'); }
+      catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; } })(),
+      // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
+      (async()=>{ try{
+        const mot = await sbFetchAll('/motivos_cierre?select=id,descripcion,activo&order=id.asc');
+        if(mot) DIC.motivos_cierre = mot.map(m=>({id:m.id, descripcion:m.descripcion||'', activo:m.activo!==false}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Cotización USD día a día: registro propio de la app, no viene de Tango
+      (async()=>{ try{
+        const ud = await sbFetchAll('/usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
+        if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
+      ...Object.keys(IDX_DEF).map(ns=>(async()=>{ try{
         const rows = await sbFetchAll('/'+IDX_DEF[ns].tabla+'?select=*&order=periodo.asc');
         if(rows) DIC['idx_'+ns] = rows.map(r=>({...r, periodo:+r.periodo}));
-      }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    }
-    // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
-    try{
-      const cu=await sbFetchAll('/cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
-      if(cu&&cu.length) CONTA_DB.cuentas=cu.map(r=>({cod:r.cod,desc:r.descripcion||'',clase:r.clase||'',tipo:r.tipo||'',saldo:r.saldo||'',usa_aux:r.usa_aux||'',habil:r.habil||'',confidencial:!!r.confidencial}));
-    }catch(e){}
-    try{
-      const tp=await sbFetch('/aux_tipos?select=cod,descripcion,confidencial&order=cod.asc');
-      if(tp&&tp.length) CONTA_DB.tipos=tp.map(t=>({cod:t.cod,desc:t.descripcion||'',confidencial:!!t.confidencial}));
-      const op=await sbFetchAll('/aux_opciones?select=tipo_cod,cod,descripcion,habil,confidencial&order=tipo_cod.asc');
-      if(op&&op.length){ const m={}; op.forEach(o=>{ (m[o.tipo_cod]=m[o.tipo_cod]||[]).push({cod:o.cod,desc:o.descripcion||'',habil:o.habil||'',confidencial:!!o.confidencial}); }); CONTA_DB.auxopc=m; }
-    }catch(e){}
-    // Reglas del motor de asiento por clasificación (Supabase pisa la semilla embebida; un vacío no pisa)
-    try{
-      const cr=await sbFetch('/clasif_renglon?select=codigo,eerr,cuenta_cod,aux,nqnable,migrado');
-      if(cr&&cr.length){ let n=0; cr.forEach(r=>{ const cod=String(r.codigo||'').toUpperCase().trim();
-        if(cod && r.eerr){ CLASIF_RULES[cod]={eerr:r.eerr, cuenta:r.cuenta_cod||null, aux:r.aux||'none', nqnable:!!r.nqnable, migrado:!!r.migrado}; n++; } });
-        window.__clasifRulesN=n; }
-    }catch(e){ /* si la tabla no tiene las columnas del motor, queda la semilla embebida */ }
-    // Combo de clasificación de renglón (lista seleccionable con "habilitado para compras") — Supabase pisa la semilla embebida
-    try{
-      const cc=await sbFetchAll('/clasif_comprobantes?select=cod,descripcion,habil_comp,categoria&order=cod.asc');
-      if(cc&&cc.length){
-        CLASIF_ALL.length=0;
-        cc.forEach(r=>CLASIF_ALL.push({cod:r.cod, desc:r.descripcion||r.cod, habil_comp:r.habil_comp||'No', categoria:(r.categoria||'').trim()||_catDe(r.cod)}));
-        const habilitados=CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({codigo:r.cod, desc:r.desc}));
-        if(habilitados.length){ CLASIF_RENGLON.length=0; habilitados.forEach(r=>CLASIF_RENGLON.push(r)); }
-        CLASIF_FROM_SUPABASE=true;
-      }
-    }catch(e){ /* si la tabla no existe todavía, queda la semilla embebida */ }
-    // Series activas (individualización de módulos/herramientas/rodados/muebles con su depósito actual)
-    try{
-      const sa=await sbFetchAll('/series_activas?select=serie,familia,cod_deposito,desc_deposito,cod_articulo,descripcion,comentario,adicional_1,adicional_2,codigo_barras,partida,numero_despacho&order=serie.asc');
-      if(sa&&sa.length){ SERIES_ACTIVAS.length=0; sa.forEach(r=>SERIES_ACTIVAS.push({...r})); SERIES_FROM_SUPABASE=true; }
-    }catch(e){ /* si la tabla no existe todavía, queda vacío */ }
-    // Usuarios (para desplegables Comprador / Certifica la OG) — desde la vista pública (solo nombre + flags)
-    try{
-      const us=await sbFetch('/usuarios_publicos?select=nombre,es_comprador,es_certificador&order=nombre.asc');
-      if(us) USUARIOS=us;
-    }catch(e){ /* si la vista no existe o no se puede leer, queda vacío */ }
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })()),
+      // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
+      (async()=>{ try{
+        const cu=await sbFetchAll('/cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
+        if(cu&&cu.length) CONTA_DB.cuentas=cu.map(r=>({cod:r.cod,desc:r.descripcion||'',clase:r.clase||'',tipo:r.tipo||'',saldo:r.saldo||'',usa_aux:r.usa_aux||'',habil:r.habil||'',confidencial:!!r.confidencial}));
+      }catch(e){} })(),
+      (async()=>{ try{
+        const tp=await sbFetch('/aux_tipos?select=cod,descripcion,confidencial&order=cod.asc');
+        if(tp&&tp.length) CONTA_DB.tipos=tp.map(t=>({cod:t.cod,desc:t.descripcion||'',confidencial:!!t.confidencial}));
+        const op=await sbFetchAll('/aux_opciones?select=tipo_cod,cod,descripcion,habil,confidencial&order=tipo_cod.asc');
+        if(op&&op.length){ const m={}; op.forEach(o=>{ (m[o.tipo_cod]=m[o.tipo_cod]||[]).push({cod:o.cod,desc:o.descripcion||'',habil:o.habil||'',confidencial:!!o.confidencial}); }); CONTA_DB.auxopc=m; }
+      }catch(e){} })(),
+      // Reglas del motor de asiento por clasificación (Supabase pisa la semilla embebida; un vacío no pisa)
+      (async()=>{ try{
+        const cr=await sbFetch('/clasif_renglon?select=codigo,eerr,cuenta_cod,aux,nqnable,migrado');
+        if(cr&&cr.length){ let n=0; cr.forEach(r=>{ const cod=String(r.codigo||'').toUpperCase().trim();
+          if(cod && r.eerr){ CLASIF_RULES[cod]={eerr:r.eerr, cuenta:r.cuenta_cod||null, aux:r.aux||'none', nqnable:!!r.nqnable, migrado:!!r.migrado}; n++; } });
+          window.__clasifRulesN=n; }
+      }catch(e){ /* si la tabla no tiene las columnas del motor, queda la semilla embebida */ } })(),
+      // Combo de clasificación de renglón (lista seleccionable con "habilitado para compras") — Supabase pisa la semilla embebida
+      (async()=>{ try{
+        const cc=await sbFetchAll('/clasif_comprobantes?select=cod,descripcion,habil_comp,categoria&order=cod.asc');
+        if(cc&&cc.length){
+          CLASIF_ALL.length=0;
+          cc.forEach(r=>CLASIF_ALL.push({cod:r.cod, desc:r.descripcion||r.cod, habil_comp:r.habil_comp||'No', categoria:(r.categoria||'').trim()||_catDe(r.cod)}));
+          const habilitados=CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({codigo:r.cod, desc:r.desc}));
+          if(habilitados.length){ CLASIF_RENGLON.length=0; habilitados.forEach(r=>CLASIF_RENGLON.push(r)); }
+          CLASIF_FROM_SUPABASE=true;
+        }
+      }catch(e){ /* si la tabla no existe todavía, queda la semilla embebida */ } })(),
+      // Series activas (individualización de módulos/herramientas/rodados/muebles con su depósito actual)
+      (async()=>{ try{
+        const sa=await sbFetchAll('/series_activas?select=serie,familia,cod_deposito,desc_deposito,cod_articulo,descripcion,comentario,adicional_1,adicional_2,codigo_barras,partida,numero_despacho&order=serie.asc');
+        if(sa&&sa.length){ SERIES_ACTIVAS.length=0; sa.forEach(r=>SERIES_ACTIVAS.push({...r})); SERIES_FROM_SUPABASE=true; }
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Usuarios (para desplegables Comprador / Certifica la OG) — desde la vista pública (solo nombre + flags)
+      (async()=>{ try{
+        const us=await sbFetch('/usuarios_publicos?select=nombre,es_comprador,es_certificador&order=nombre.asc');
+        if(us) USUARIOS=us;
+      }catch(e){ /* si la vista no existe o no se puede leer, queda vacío */ } })(),
+    ]);
   }catch(e){ toast('No se pudieron cargar los datos desde la nube.'); }
 }
 window.reloadDB=reloadDB;
