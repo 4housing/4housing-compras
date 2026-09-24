@@ -6739,6 +6739,10 @@ async function syncAuxAnalizar(){
   if(typeof XLSX==='undefined'){ if(msg)msg.textContent='Necesitás conexión para leer los Excel.'; return; }
   if(msg)msg.textContent='Leyendo '+files.length+' archivo(s)…';
   const norm=v=>String(v==null?'':v).trim();
+  // Códigos puramente numéricos se comparan sin ceros a la izquierda ("07" y "7" son el mismo código,
+  // como vienen las planillas de sueldos/préstamos por legajo); un código alfanumérico (ej. "PL0090")
+  // se compara tal cual, en mayúsculas, porque ahí los ceros sí son parte del código.
+  const codKey=cod=>/^\d+$/.test(cod) ? String(parseInt(cod,10)) : cod.toUpperCase();
   const union={}; const fileNames=files.map(f=>f.name);
   try{
     for(let fi=0; fi<files.length; fi++){
@@ -6758,19 +6762,19 @@ async function syncAuxAnalizar(){
         if(tipo==='01') continue;                       // Aux 01 no se usa
         if(hab.toLowerCase()!=='si'&&hab.toLowerCase()!=='sí') continue;  // solo habilitados
         const tipoNum=String(parseInt(tipo,10));
-        const key=tipoNum+'||'+cod.toUpperCase();
+        const key=tipoNum+'||'+codKey(cod);
         const u=union[key]=union[key]||{tipo:tipoNum, cod, descs:new Set(), enArch:new Set()};
         u.descs.add(desc); u.enArch.add(fileNames[fi]);
       }
     }
     // clasificar vs estado actual (CONTA_DB.auxopc)
     const curIdx={};
-    Object.keys(CONTA_DB.auxopc||{}).forEach(t=>{ (CONTA_DB.auxopc[t]||[]).forEach(o=>{ curIdx[t+'||'+String(o.cod).toUpperCase()]={desc:o.desc,habil:o.habil}; }); });
+    Object.keys(CONTA_DB.auxopc||{}).forEach(t=>{ (CONTA_DB.auxopc[t]||[]).forEach(o=>{ curIdx[t+'||'+codKey(String(o.cod))]={desc:o.desc,habil:o.habil}; }); });
     const altas=[], cambios=[], iguales=[], conflictos=[];
     Object.values(union).forEach(u=>{
       const desc=[...u.descs][0]||'';
       if(u.descs.size>1){ conflictos.push({...u, descsArr:[...u.descs]}); return; }
-      const cur=curIdx[u.tipo+'||'+u.cod.toUpperCase()];
+      const cur=curIdx[u.tipo+'||'+codKey(u.cod)];
       if(!cur) altas.push({tipo:u.tipo, cod:u.cod, desc});
       else if(norm(cur.desc)!==desc) cambios.push({tipo:u.tipo, cod:u.cod, desc, descAnt:cur.desc});
       else iguales.push(1);
@@ -6786,30 +6790,49 @@ function renderSyncAuxReport(){
   const s=SYNC_AUX; if(!s){ box.innerHTML=''; return; }
   if(msg)msg.textContent='Leídos: '+s.fileNames.join(' · ');
   const tipoNom=t=>{ const x=(CONTA_DB.tipos||[]).find(y=>String(y.cod)===String(t)); return t+(x?' '+x.desc:''); };
-  const tabla=(arr,cols)=>'<div class="dic-scroll" style="max-height:230px"><table class="grid" style="font-size:11.5px"><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+arr.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  // Cada fila de Altas/Cambios trae su propio tilde: se puede elegir qué traer y qué dejar afuera,
+  // en vez de que "Aplicar" sea todo o nada.
+  const tablaSel=(arr,cols,kind)=>'<div class="dic-scroll" style="max-height:230px"><table class="grid" style="font-size:11.5px"><thead><tr><th style="width:1%"><input type="checkbox" checked title="Tildar/destildar todas" onchange="syncAuxToggleAll(\''+kind+'\',this.checked)"></th>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'
+    +arr.map((r,i)=>'<tr><td><input type="checkbox" class="syncaChk" data-kind="'+kind+'" data-idx="'+i+'" checked onchange="syncAuxRecalc()"></td>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')
+    +'</tbody></table></div>';
   let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     +'<span class="badge b-verde">Altas: '+s.altas.length+'</span>'
     +'<span class="badge b-ambar">Cambios de descripción: '+s.cambios.length+'</span>'
     +'<span class="badge">Sin cambios: '+s.iguales+'</span>'
     +'<span class="badge b-rojo">Conflictos: '+s.conflictos.length+'</span></div>';
-  if(s.altas.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Altas nuevas</div>'+tabla(s.altas.slice(0,400),[['Tipo',r=>tipoNom(r.tipo)],['Código',r=>r.cod],['Descripción',r=>r.desc]]);
-  if(s.cambios.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Cambios de descripción</div>'+tabla(s.cambios.slice(0,400),[['Tipo',r=>tipoNom(r.tipo)],['Código',r=>r.cod],['Antes',r=>r.descAnt],['Ahora',r=>r.desc]]);
-  if(s.conflictos.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#c62828">Conflictos (mismo código con descripciones distintas entre archivos — resolvé en Tango, no se tocan)</div>'+tabla(s.conflictos.slice(0,400),[['Tipo',r=>tipoNom(r.tipo)],['Código',r=>r.cod],['Descripciones',r=>r.descsArr.join('  |  ')]]);
+  if(s.altas.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Altas nuevas — destildá las que no quieras traer</div>'+tablaSel(s.altas.slice(0,400),[['Tipo',r=>tipoNom(r.tipo)],['Código',r=>r.cod],['Descripción',r=>r.desc]],'alta');
+  if(s.cambios.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Cambios de descripción — destildá los que no quieras traer</div>'+tablaSel(s.cambios.slice(0,400),[['Tipo',r=>tipoNom(r.tipo)],['Código',r=>r.cod],['Antes',r=>r.descAnt],['Ahora',r=>r.desc]],'cambio');
+  if(s.conflictos.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#c62828">Conflictos (mismo código con descripciones distintas entre archivos — resolvé en Tango, no se tocan)</div>'+'<div class="dic-scroll" style="max-height:230px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Tipo</th><th>Código</th><th>Descripciones</th></tr></thead><tbody>'+s.conflictos.slice(0,400).map(r=>'<tr><td>'+esc(tipoNom(r.tipo))+'</td><td>'+esc(r.cod)+'</td><td>'+esc(r.descsArr.join('  |  '))+'</td></tr>').join('')+'</tbody></table></div>';
   if(!s.altas.length&&!s.cambios.length) h+='<div style="font-size:12px;color:var(--muted);margin-top:8px">No hay altas ni cambios para aplicar.</div>';
   box.innerHTML=h;
-  const btn=document.getElementById('syncaApplyBtn');
-  if(btn){ if(s.altas.length||s.cambios.length){ btn.textContent='Aplicar ('+(s.altas.length+s.cambios.length)+')'; btn.setAttribute('onclick','syncAuxAplicar()'); } else { btn.textContent='Analizar'; btn.setAttribute('onclick','syncAuxAnalizar()'); } }
+  syncAuxRecalc();
 }
 window.renderSyncAuxReport=renderSyncAuxReport;
+function syncAuxToggleAll(kind, val){
+  document.querySelectorAll('.syncaChk[data-kind="'+kind+'"]').forEach(c=>c.checked=val);
+  syncAuxRecalc();
+}
+window.syncAuxToggleAll=syncAuxToggleAll;
+function syncAuxRecalc(){
+  const btn=document.getElementById('syncaApplyBtn'); if(!btn) return;
+  const s=SYNC_AUX;
+  if(!s || (!s.altas.length && !s.cambios.length)){ btn.textContent='Analizar'; btn.setAttribute('onclick','syncAuxAnalizar()'); return; }
+  const n=document.querySelectorAll('.syncaChk:checked').length;
+  btn.textContent=n?('Aplicar ('+n+')'):'Nada tildado';
+  btn.setAttribute('onclick','syncAuxAplicar()');
+}
+window.syncAuxRecalc=syncAuxRecalc;
 
 async function syncAuxAplicar(){
   const s=SYNC_AUX; if(!s){ return; }
   const msg=document.getElementById('syncaMsg');
+  const selAltas=new Set([...document.querySelectorAll('.syncaChk[data-kind="alta"]:checked')].map(c=>+c.dataset.idx));
+  const selCambios=new Set([...document.querySelectorAll('.syncaChk[data-kind="cambio"]:checked')].map(c=>+c.dataset.idx));
   const recs=[].concat(
-    s.altas.map(a=>({tipo_cod:a.tipo, cod:a.cod, descripcion:a.desc, habil:'Si'})),
-    s.cambios.map(c=>({tipo_cod:c.tipo, cod:c.cod, descripcion:c.desc, habil:'Si'}))
+    s.altas.filter((a,i)=>selAltas.has(i)).map(a=>({tipo_cod:a.tipo, cod:a.cod, descripcion:a.desc, habil:'Si'})),
+    s.cambios.filter((c,i)=>selCambios.has(i)).map(c=>({tipo_cod:c.tipo, cod:c.cod, descripcion:c.desc, habil:'Si'}))
   );
-  if(!recs.length){ if(msg)msg.textContent='Nada para aplicar.'; return; }
+  if(!recs.length){ if(msg)msg.textContent='No hay nada tildado para aplicar.'; return; }
   if(DEMO_MODE){
     recs.forEach(r=>{ const t=String(parseInt(r.tipo_cod,10)); CONTA_DB.auxopc[t]=CONTA_DB.auxopc[t]||[]; const ex=CONTA_DB.auxopc[t].find(o=>String(o.cod).toUpperCase()===r.cod.toUpperCase()); if(ex){ex.desc=r.descripcion;} else CONTA_DB.auxopc[t].push({cod:r.cod,desc:r.descripcion,habil:'Si'}); });
     if(msg)msg.textContent='Listo (demo): '+recs.length+' aplicados.'; closeModal(); paintDic(); return;
