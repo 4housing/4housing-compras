@@ -322,8 +322,8 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
    Mientras estos valores digan TU-PROYECTO / TU-ANON-KEY, la app
    corre en MODO DEMO (datos de ejemplo en memoria, sin nube, sin login).
    Al pegar el proyecto real y la anon key, se activa nube + login Azure. */
-const SB_URL = 'https://aaqpzamcdxldhqyuqlgm.supabase.co';
-const SB_KEY = 'sb_publishable_WCez44YAKCcOOAJ8hCDe5Q_8IC5Ckpx';
+const SB_URL = 'https://wcpkpwxhqdcdljfwzcmy.supabase.co';
+const SB_KEY = 'sb_publishable_08decRYdCRUdtO5zogvJVg_VEBCN9pf';
 const REDIRECT_URL = 'https://4housing.github.io/4housing-compras/'; // GitHub Pages (para el login Azure)
 
 const SB_REST = SB_URL + '/rest/v1';
@@ -506,7 +506,7 @@ function uiPrefSet(sig, value){
   try{ localStorage.setItem(sig, JSON.stringify(value)); }catch(e){}
   if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
     UI_PREFS_COLW=UI_PREFS_COLW||{}; UI_PREFS_COLW[sig]=value;
-    sbFetch('/ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW}),prefer:'resolution=merge-duplicates,return=minimal'})
+    sbFetch('/compras_ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW}),prefer:'resolution=merge-duplicates,return=minimal'})
       .catch(()=>{ /* sin conexión: ya quedó en localStorage, se reintenta en el próximo ajuste */ });
   }
 }
@@ -551,7 +551,7 @@ document.addEventListener('mouseup', ()=>{
 async function uiPrefsLoad(){
   if(DEMO_MODE || !AUTH_USER || !AUTH_USER.email){ UI_PREFS_COLW={}; return; }
   try{
-    const rows=await sbFetch('/ui_prefs?user_email=eq.'+encodeURIComponent(AUTH_USER.email)+'&select=colwidths');
+    const rows=await sbFetch('/compras_ui_prefs?user_email=eq.'+encodeURIComponent(AUTH_USER.email)+'&select=colwidths');
     UI_PREFS_COLW=(rows&&rows[0]&&rows[0].colwidths)||{};
   }catch(e){ UI_PREFS_COLW={}; }
   document.querySelectorAll('table.grid[data-colresize-init]').forEach(colResizeApplySaved);
@@ -891,7 +891,7 @@ async function loadRole(){
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
-    const rows=await sbFetch('/usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
+    const rows=await sbFetch('/compras_usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
     const u=rows&&rows[0];
     if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
@@ -1095,7 +1095,7 @@ window.confirmDel=confirmDel;
 async function mantList(){
   let rows;
   if(DEMO_MODE) rows=(mem.mantenimiento||[]).slice();
-  else rows=await sbFetch('/mantenimiento?select=*&anio=eq.'+MANT_YEAR+'&order=id.desc');
+  else rows=await sbFetch('/compras_mantenimiento?select=*&anio=eq.'+MANT_YEAR+'&order=id.desc');
   return rows.filter(r=>(+r.anio||MANT_YEAR)===MANT_YEAR);
 }
 
@@ -1331,7 +1331,7 @@ window.confirmDelUnidad=confirmDelUnidad;
 
 async function saveUnidades(taskId, uds){
   if(DEMO_MODE){ const r=mem.mantenimiento.find(x=>String(x.id)===String(taskId)); if(r) r.unidades=uds; }
-  else await sbFetch('/mantenimiento?id=eq.'+taskId,{method:'PATCH',body:JSON.stringify({unidades:uds})});
+  else await sbFetch('/compras_mantenimiento?id=eq.'+taskId,{method:'PATCH',body:JSON.stringify({unidades:uds})});
 }
 
 /* ================================================================
@@ -1424,7 +1424,7 @@ async function saveInsp(itemId){
   const obj={ item_id:itemId, periodo:periodoDeFecha(fecha), fecha, sitio:sitioValue('c_sitio'),
     resultados, observaciones:document.getElementById('c_obs').value, accion:document.getElementById('c_accion').value };
   if(DEMO_MODE){ const arr=mem.inspecciones; obj.id=Math.max(0,...arr.map(r=>+r.id||0))+1; arr.push(obj); }
-  else await sbFetch('/inspecciones',{method:'POST',body:JSON.stringify(obj)});
+  else await sbFetch('/compras_inspecciones',{method:'POST',body:JSON.stringify(obj)});
   await markMonthDone(it, fecha);
   closeModal(); toast('Inspección guardada · mes marcado realizado ('+obj.periodo+')'); renderCtrl();
 }
@@ -1435,7 +1435,7 @@ async function markMonthDone(item, fecha){
   const meses=Object.assign({}, item.meses||{});
   meses[m]={e:'hecho', f:fecha};
   if(DEMO_MODE){ const r=mem.mantenimiento.find(x=>String(x.id)===String(item.id)); if(r) r.meses=meses; }
-  else await sbFetch('/mantenimiento?id=eq.'+item.id,{method:'PATCH',body:JSON.stringify({meses})});
+  else await sbFetch('/compras_mantenimiento?id=eq.'+item.id,{method:'PATCH',body:JSON.stringify({meses})});
 }
 
 function viewInsp(inspId){
@@ -1475,7 +1475,7 @@ window.addChk=addChk; window.delChk=delChk;
 async function saveChk(itemId){
   const chk=INSP_CHK.map(s=>String(s).trim()).filter(Boolean);
   if(DEMO_MODE){ const r=mem.mantenimiento.find(x=>String(x.id)===String(itemId)); if(r) r.checklist=chk; }
-  else await sbFetch('/mantenimiento?id=eq.'+itemId,{method:'PATCH',body:JSON.stringify({checklist:chk})});
+  else await sbFetch('/compras_mantenimiento?id=eq.'+itemId,{method:'PATCH',body:JSON.stringify({checklist:chk})});
   closeModal(); toast('Checklist guardado'); renderCtrl();
 }
 window.saveChk=saveChk;
@@ -1765,8 +1765,8 @@ async function saveOp(herrId, tipo, opId){
     if(opId==null||opId==='null'){ obj.id=Math.max(0,...arr.map(r=>+r.id||0))+1; arr.push(obj); }
     else { const r=arr.find(x=>String(x.id)===String(opId)); if(r) Object.assign(r,obj); }
   }else{
-    if(opId==null||opId==='null') await sbFetch('/herr_operaciones',{method:'POST',body:JSON.stringify(obj)});
-    else await sbFetch('/herr_operaciones?id=eq.'+opId,{method:'PATCH',body:JSON.stringify(obj)});
+    if(opId==null||opId==='null') await sbFetch('/compras_herr_operaciones',{method:'POST',body:JSON.stringify(obj)});
+    else await sbFetch('/compras_herr_operaciones?id=eq.'+opId,{method:'PATCH',body:JSON.stringify(obj)});
   }
   HERR_EXPANDED.add(herrId);
   closeModal(); toast('Guardado'); renderHerr();
@@ -1780,7 +1780,7 @@ function delOp(opId, herrId){
 window.delOp=delOp;
 async function confirmDelOp(opId, herrId){
   if(DEMO_MODE){ mem.herr_ops=mem.herr_ops.filter(o=>String(o.id)!==String(opId)); }
-  else await sbFetch('/herr_operaciones?id=eq.'+opId,{method:'DELETE',prefer:'return=minimal'});
+  else await sbFetch('/compras_herr_operaciones?id=eq.'+opId,{method:'DELETE',prefer:'return=minimal'});
   HERR_EXPANDED.add(herrId);
   closeModal(); toast('Eliminada'); renderHerr();
 }
@@ -1812,8 +1812,8 @@ async function saveHerr(id){
     if(id==null||id==='null'){ const arr=mem.herramientas; obj.id=Math.max(0,...arr.map(r=>+r.id||0))+1; arr.push(obj); }
     else { const r=mem.herramientas.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,obj); }
   }else{
-    if(id==null||id==='null') await sbFetch('/herramientas',{method:'POST',body:JSON.stringify(obj)});
-    else await sbFetch('/herramientas?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
+    if(id==null||id==='null') await sbFetch('/compras_herramientas',{method:'POST',body:JSON.stringify(obj)});
+    else await sbFetch('/compras_herramientas?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
   }
   closeModal(); toast('Guardado'); renderHerr();
 }
@@ -1825,7 +1825,7 @@ function askDelHerr(id){
 window.askDelHerr=askDelHerr;
 async function confirmDelHerr(id){
   if(DEMO_MODE){ mem.herramientas=mem.herramientas.filter(h=>String(h.id)!==String(id)); mem.herr_ops=mem.herr_ops.filter(o=>String(o.herr_id)!==String(id)); }
-  else { await sbFetch('/herr_operaciones?herr_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await sbFetch('/herramientas?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
+  else { await sbFetch('/compras_herr_operaciones?herr_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await sbFetch('/compras_herramientas?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
   closeModal(); toast('Eliminada'); renderHerr();
 }
 window.confirmDelHerr=confirmDelHerr;
@@ -1889,7 +1889,7 @@ async function usdDiarioUpsert(fecha, compra, venta, fuente){
   const row={fecha, compra:+compra, venta:venta!=null&&venta!==''?+venta:null, fuente:fuente||'manual'};
   if(i>=0) DIC.usd_diario[i]=row; else DIC.usd_diario.push(row);
   if(!DEMO_MODE){
-    try{ await sbFetch('/usd_diario',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
+    try{ await sbFetch('/compras_usd_diario',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
     catch(e){ /* si la tabla no existe todavía, queda solo en memoria */ }
   }
 }
@@ -1902,7 +1902,7 @@ async function usdDiarioOficialUpsert(fecha, compra, venta, fuente){
   const row={fecha, compra:+compra, venta:venta!=null&&venta!==''?+venta:null, fuente:fuente||'manual'};
   if(i>=0) DIC.usd_diario_oficial[i]=row; else DIC.usd_diario_oficial.push(row);
   if(!DEMO_MODE){
-    try{ await sbFetch('/usd_diario_oficial',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
+    try{ await sbFetch('/compras_usd_diario_oficial',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
     catch(e){ /* si la tabla no existe todavía, queda solo en memoria */ }
   }
 }
@@ -2415,8 +2415,8 @@ async function guardarPanolEgreso(id){
     else{ const r=DIC.panol_egresos.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,row); }
   }else{
     row.creado_por=(AUTH_USER&&AUTH_USER.email)||'';
-    if(id==null) await sbFetch('/panol_egresos',{method:'POST',body:JSON.stringify(row)});
-    else await sbFetch('/panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
+    if(id==null) await sbFetch('/compras_panol_egresos',{method:'POST',body:JSON.stringify(row)});
+    else await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
     await reloadDB();
   }
   closeModal(); toast('Guardado'); renderPanol();
@@ -2429,7 +2429,7 @@ function askPanolEgresoDel(id){
 }
 window.askPanolEgresoDel=askPanolEgresoDel;
 async function confirmPanolEgresoDel(id){
-  if(!DEMO_MODE){ try{ await sbFetch('/panol_egresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(e){ toast('No se pudo eliminar'); return; } }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(e){ toast('No se pudo eliminar'); return; } }
   DIC.panol_egresos=(DIC.panol_egresos||[]).filter(r=>String(r.id)!==String(id));
   closeModal(); toast('Eliminado'); renderPanol();
 }
@@ -2454,7 +2454,7 @@ async function panolMarcarExportados(rows){
   const ahora=new Date().toISOString();
   if(DEMO_MODE){ rows.forEach(r=>{ r.exportado=true; r.exportado_en=ahora; }); }
   else{
-    for(const r of rows){ try{ await sbFetch('/panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify({exportado:true, exportado_en:ahora}),prefer:'return=minimal'}); }catch(e){} }
+    for(const r of rows){ try{ await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify({exportado:true, exportado_en:ahora}),prefer:'return=minimal'}); }catch(e){} }
     await reloadDB();
   }
   toast('Egreso generado ('+rows.length+' movimientos) y marcado como exportado'); renderPanol();
@@ -2496,8 +2496,8 @@ async function panolSyncSaldosAnalizar(){
     if(!out.length) throw new Error('No encontré filas de datos.');
     if(DEMO_MODE){ DIC.stock_saldos=out; }
     else{
-      await sbFetch('/stock_saldos?cod_articulo=not.is.null',{method:'DELETE',prefer:'return=minimal'});
-      for(let i=0;i<out.length;i+=500){ await sbFetch('/stock_saldos',{method:'POST', body:JSON.stringify(out.slice(i,i+500))}); }
+      await sbFetch('/compras_stock_saldos?cod_articulo=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+      for(let i=0;i<out.length;i+=500){ await sbFetch('/compras_stock_saldos',{method:'POST', body:JSON.stringify(out.slice(i,i+500))}); }
       DIC.stock_saldos=out;
     }
     closeModal(); toast('Saldos actualizados: '+out.length+' filas'); renderPanol();
@@ -2538,7 +2538,7 @@ async function panolSyncPreciosAnalizar(){
     if(DEMO_MODE){
       updates.forEach(u=>{ const a=DIC.articulos.find(x=>x.codigo===u.codigo); if(a) Object.assign(a,u); });
     }else{
-      for(const u of updates){ await sbFetch('/articulos?codigo=eq.'+encodeURIComponent(u.codigo),{method:'PATCH',body:JSON.stringify({costo_ars:u.costo_ars,costo_usd:u.costo_usd,costo_fecha:u.costo_fecha||null,costo_proveedor:u.costo_proveedor}),prefer:'return=minimal'}); }
+      for(const u of updates){ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(u.codigo),{method:'PATCH',body:JSON.stringify({costo_ars:u.costo_ars,costo_usd:u.costo_usd,costo_fecha:u.costo_fecha||null,costo_proveedor:u.costo_proveedor}),prefer:'return=minimal'}); }
       await reloadDB();
     }
     closeModal(); toast('Costos actualizados: '+updates.length+' artículos'); renderPanol();
@@ -3592,8 +3592,8 @@ async function ocInformeAnalizar(){
     if(!out.length) throw new Error('No encontré filas de datos.');
     if(DEMO_MODE){ DIC.oc_informe=out; }
     else{
-      await sbFetch('/oc_informe?oc_numero=not.is.null',{method:'DELETE',prefer:'return=minimal'});
-      for(let k=0;k<out.length;k+=500){ await sbFetch('/oc_informe',{method:'POST', body:JSON.stringify(out.slice(k,k+500))}); }
+      await sbFetch('/compras_oc_informe?oc_numero=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+      for(let k=0;k<out.length;k+=500){ await sbFetch('/compras_oc_informe',{method:'POST', body:JSON.stringify(out.slice(k,k+500))}); }
       DIC.oc_informe=out;
     }
     closeModal(); toast('Informe OC actualizado: '+out.length+' filas'); renderSolicitudesPago();
@@ -3757,12 +3757,12 @@ async function guardarSolicitudPago(id){
       const hist=[]; if(comentario) hist.push({fecha:ahora, autor, texto:comentario});
       row.estado='Pendiente'; row.historial=hist; row.creado_en=ahora; row.creado_por=autor;
       if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
-      else{ await sbFetch('/solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
+      else{ await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
     } else {
       row.actualizado_en=ahora;
       if(comentario){ const hist=(cur.historial||[]).slice(); hist.push({fecha:ahora, autor, texto:comentario}); row.historial=hist; }
       if(DEMO_MODE){ Object.assign(cur,row); }
-      else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); await reloadDB(); }
+      else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); await reloadDB(); }
     }
     closeModal(); toast('Solicitud guardada'); renderSolicitudesPago();
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); } }
@@ -3799,7 +3799,7 @@ async function cambiarEstadoSolicitud(id, nuevo){
   const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:'Cambió el estado a "'+nuevo+'"', estado_nuevo:nuevo});
   const patch={estado:nuevo, historial:hist, actualizado_en:ahora};
   if(DEMO_MODE){ Object.assign(s,patch); }
-  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
+  else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
   toast('Estado actualizado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
 }
 window.cambiarEstadoSolicitud=cambiarEstadoSolicitud;
@@ -3812,7 +3812,7 @@ async function agregarComentarioSolicitud(id){
   const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:txt.trim()});
   const patch={historial:hist, actualizado_en:ahora};
   if(DEMO_MODE){ Object.assign(s,patch); }
-  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
+  else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
   toast('Comentario agregado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
 }
 window.agregarComentarioSolicitud=agregarComentarioSolicitud;
@@ -3838,7 +3838,7 @@ window.askDelSolicitud=askDelSolicitud;
 async function confirmDelSolicitud(id){
   if(!ROLE.admin) return;
   if(DEMO_MODE){ mem.solicitudes_pago=(mem.solicitudes_pago||[]).filter(s=>String(s.id)!==String(id)); }
-  else{ await sbFetch('/solicitudes_pago?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
+  else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
   closeModal(); toast('Solicitud eliminada'); renderSolicitudesPago();
 }
 window.confirmDelSolicitud=confirmDelSolicitud;
@@ -4878,7 +4878,7 @@ async function savePago(ogId){
     if(DEMO_MODE){ pago.id=Math.max(0,...(mem.pagos||[]).map(p=>+p.id||0))+1; pago.op_numero=Math.max(0,...(mem.pagos||[]).map(p=>+p.op_numero||0))+1; mem.pagos=mem.pagos||[]; mem.pagos.push(pago); }
     else {
       pago.registrado_por=(AUTH_USER&&AUTH_USER.email)||'';
-      const rows = await sbFetch('/pagos',{method:'POST',body:JSON.stringify(pago)});
+      const rows = await sbFetch('/compras_pagos',{method:'POST',body:JSON.stringify(pago)});
       mem.pagos=mem.pagos||[];
       if(!mergeRowInto(mem.pagos, rows && rows[0])) await reloadDB();
     }
@@ -4898,7 +4898,7 @@ async function guardarAsientoOP(id, valor){
   if(p.asiento_num===valor) return;   // sin cambios
   try{
     if(DEMO_MODE){ p.asiento_num=valor; }
-    else { await sbFetch('/pagos?id=eq.'+id,{method:'PATCH',body:JSON.stringify({asiento_num:valor})}); p.asiento_num=valor; }
+    else { await sbFetch('/compras_pagos?id=eq.'+id,{method:'PATCH',body:JSON.stringify({asiento_num:valor})}); p.asiento_num=valor; }
     toast(valor?'N° de asiento guardado':'N° de asiento borrado'); renderTesoreria();
   }catch(e){ toast('No se pudo guardar: '+(e&&e.message?e.message:e)); }
 }
@@ -4911,7 +4911,7 @@ async function confirmDelPago(id){
   if(!canPago()){ toast('Solo el tesorero puede eliminar pagos.'); return; }
   if(DEMO_MODE){ mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id)); }
   else {
-    await sbFetch('/pagos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_pagos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
     mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id));
   }
   closeModal(); toast('Pago eliminado'); renderTesoreria();
@@ -4958,7 +4958,7 @@ function arqueoView(){
 }
 async function setSaldoIni(mon,val){
   mem.caja=mem.caja||{}; mem.caja[mon+'_ini']=+val||0;
-  if(!DEMO_MODE){ try{ await sbFetch('/caja?cod=eq.'+CAJAS[mon].cod,{method:'PATCH',body:JSON.stringify({saldo_inicial:+val||0})}); }catch(e){} }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_caja?cod=eq.'+CAJAS[mon].cod,{method:'PATCH',body:JSON.stringify({saldo_inicial:+val||0})}); }catch(e){} }
   renderTesoreria();
 }
 window.setSaldoIni=setSaldoIni;
@@ -4994,7 +4994,7 @@ async function guardarIngresoCaja(){
   const rec={fecha, moneda:mon, importe, origen_cod:CAJAS_CONF[mon].cod, destino_cod:CAJAS[mon].cod, observaciones:obs};
   try{
     if(DEMO_MODE){ rec.id=Math.max(0,...(mem.ingresos||[]).map(i=>+i.id||0))+1; mem.ingresos=mem.ingresos||[]; mem.ingresos.push(rec); }
-    else { rec.creado_por=(AUTH_USER&&AUTH_USER.email)||''; await sbFetch('/caja_ingresos',{method:'POST',body:JSON.stringify(rec)}); await reloadDB(); }
+    else { rec.creado_por=(AUTH_USER&&AUTH_USER.email)||''; await sbFetch('/compras_caja_ingresos',{method:'POST',body:JSON.stringify(rec)}); await reloadDB(); }
     closeModal(); toast('Ingreso registrado: '+(mon==='USD'?'US$ ':'$ ')+importe.toLocaleString('es-AR'));
     renderTesoreria();
   }catch(e){
@@ -5010,7 +5010,7 @@ window.askDelIngreso=askDelIngreso;
 async function confirmDelIngreso(id){
   try{
     if(DEMO_MODE){ mem.ingresos=(mem.ingresos||[]).filter(i=>String(i.id)!==String(id)); }
-    else { await sbFetch('/caja_ingresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
+    else { await sbFetch('/compras_caja_ingresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
     toast('Reposición eliminada'); renderTesoreria();
   }catch(e){ toast('Error al eliminar: '+(e.message||e)); }
 }
@@ -5104,7 +5104,7 @@ async function liberarCert(ogId, id){
   try{
     if(DEMO_MODE){ const r=mem.certificados.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,patch); }
     else {
-      const rows = await sbFetch('/og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)});
+      const rows = await sbFetch('/compras_og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)});
       if(!mergeRowInto(mem.certificados, rows && rows[0])) await reloadDB();
     }
   }catch(e){ toast('No se pudo liberar: '+(e&&e.message?e.message:e)); return; }
@@ -5547,8 +5547,8 @@ async function saveOG(id){
       else { const r=ogById(id); if(r) Object.assign(r,obj); }   // no cambia el N°
     } else {
       const rows = isNew
-        ? await sbFetch('/ogs',{method:'POST',body:JSON.stringify(obj)})   // Supabase asigna el N° (correlativo)
-        : await sbFetch('/ogs?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
+        ? await sbFetch('/compras_ogs',{method:'POST',body:JSON.stringify(obj)})   // Supabase asigna el N° (correlativo)
+        : await sbFetch('/compras_ogs?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
       if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
       mem.ogs.forEach(ogNormalizeCondicion);
     }
@@ -5574,7 +5574,7 @@ async function confirmAnularOG(id){
   const patch={ anulada:true, anulada_por:who, anulada_fecha:new Date().toISOString() };
   if(DEMO_MODE){ const o=ogById(id); if(o) Object.assign(o,patch); }
   else {
-    const rows = await sbFetch('/ogs?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)});
+    const rows = await sbFetch('/compras_ogs?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)});
     if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
   }
   closeModal(); toast('OG anulada'); renderCompras();
@@ -5594,8 +5594,8 @@ async function confirmDelOG(id){
   if(pagosOf(id).length>0){ toast('La OG tiene pagos; no se puede eliminar.'); return; }
   if(DEMO_MODE){ mem.ogs=mem.ogs.filter(o=>String(o.id)!==String(id)); mem.certificados=mem.certificados.filter(c=>String(c.og_id)!==String(id)); }
   else {
-    await sbFetch('/og_certificados?og_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
-    await sbFetch('/ogs?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_og_certificados?og_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_ogs?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
     mem.ogs=mem.ogs.filter(o=>String(o.id)!==String(id));
     mem.certificados=mem.certificados.filter(c=>String(c.og_id)!==String(id));
   }
@@ -5683,8 +5683,8 @@ async function saveCert(ogId, id){
   if(DEMO_MODE){ if(id==null||id==='null'){ obj.id=Math.max(0,...mem.certificados.map(r=>+r.id||0))+1; mem.certificados.push(obj); } else { const r=mem.certificados.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,obj); } }
   else {
     const rows = (id==null||id==='null')
-      ? await sbFetch('/og_certificados',{method:'POST',body:JSON.stringify(obj)})
-      : await sbFetch('/og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
+      ? await sbFetch('/compras_og_certificados',{method:'POST',body:JSON.stringify(obj)})
+      : await sbFetch('/compras_og_certificados?id=eq.'+id,{method:'PATCH',body:JSON.stringify(obj)});
     if(!mergeRowInto(mem.certificados, rows && rows[0])) await reloadDB();
   }
   OG_EXPANDED.add(ogId);
@@ -5729,7 +5729,7 @@ async function confirmDelCert(id, ogId){
   if(ogDelCertRiesgoso(o,id)){ toast('No se puede eliminar: es un certificado liberado y borrarlo dejaría pagable menos de lo que ya se pagó.'); return; }
   if(DEMO_MODE){ mem.certificados=mem.certificados.filter(c=>String(c.id)!==String(id)); }
   else {
-    await sbFetch('/og_certificados?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_og_certificados?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
     mem.certificados=mem.certificados.filter(c=>String(c.id)!==String(id));
   }
   OG_EXPANDED.add(ogId);
@@ -5810,13 +5810,13 @@ async function saveCierre(ogId, idx){
     if(it){
       const items=o.items.map((x,i)=> i===idx ? {...x, cierres:[...(x.cierres||[]), entry]} : x);
       if(DEMO_MODE){ o.items=items; } else {
-        const rows = await sbFetch('/ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({items})});
+        const rows = await sbFetch('/compras_ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({items})});
         if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
       }
     }else{
       const cierres=[...(o.cierres||[]), entry];
       if(DEMO_MODE){ o.cierres=cierres; } else {
-        const rows = await sbFetch('/ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({cierres})});
+        const rows = await sbFetch('/compras_ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({cierres})});
         if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
       }
     }
@@ -5833,13 +5833,13 @@ async function delCierre(ogId, idx, k){
     if(idx!=null){
       const items=o.items.map((x,i)=> i===idx ? {...x, cierres:(x.cierres||[]).filter((_,j)=>j!==k)} : x);
       if(DEMO_MODE){ o.items=items; } else {
-        const rows = await sbFetch('/ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({items})});
+        const rows = await sbFetch('/compras_ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({items})});
         if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
       }
     }else{
       const cierres=(o.cierres||[]).filter((_,j)=>j!==k);
       if(DEMO_MODE){ o.cierres=cierres; } else {
-        const rows = await sbFetch('/ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({cierres})});
+        const rows = await sbFetch('/compras_ogs?id=eq.'+ogId,{method:'PATCH',body:JSON.stringify({cierres})});
         if(!mergeRowInto(mem.ogs, rows && rows[0])) await reloadDB();
       }
     }
@@ -6004,7 +6004,7 @@ async function guardarNuevoProv(){
   if(DIC.proveedores.some(p=>p.codigo.toLowerCase()===cod.toLowerCase())){ toast('Ya existe un proveedor con ese código.'); return; }
   const obj={ codigo:cod, razon:razon, comercial:g('np_com')||razon, cuit:g('np_cuit'), tel:g('np_tel'), movil:'', email:g('np_email'), web:'', domicilio:g('np_dom'), cod_postal:g('np_cp'), tel2:g('np_tel2') };
   if(!DEMO_MODE){
-    try{ await sbFetch('/proveedores',{method:'POST',body:JSON.stringify(obj)}); }
+    try{ await sbFetch('/compras_proveedores',{method:'POST',body:JSON.stringify(obj)}); }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
   DIC.proveedores.push(obj);
@@ -6036,7 +6036,7 @@ async function guardarCostoArt(codigo){
     costo_fecha: document.getElementById('ca_fecha').value||null,
   };
   if(!DEMO_MODE){
-    try{ await sbFetch('/articulos?codigo=eq.'+encodeURIComponent(codigo),{method:'PATCH',body:JSON.stringify(obj),prefer:'return=minimal'}); }
+    try{ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(codigo),{method:'PATCH',body:JSON.stringify(obj),prefer:'return=minimal'}); }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
   Object.assign(a,obj);
@@ -6190,7 +6190,7 @@ async function syncAplicar(){
   try{
     if(nuevos.length){
       const payload=nuevos.map(t=>({codigo:t.codigo, descripcion:t.descripcion, desc_adicional:t.desc_adicional, sinonimo:t.sinonimo, cuenta_cod:t.cuenta_cod, cuenta:t.cuenta}));
-      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/articulos',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
+      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_articulos',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
       payload.forEach(p=>{ if(!DIC.articulos.some(a=>_syncNorm(a.codigo)===p.codigo)) DIC.articulos.push({codigo:p.codigo, descripcion:p.descripcion, desc_adicional:p.desc_adicional, sinonimo:p.sinonimo, cuenta_cod:p.cuenta_cod, cuenta:p.cuenta}); });
     }
     let okMod=0;
@@ -6198,7 +6198,7 @@ async function syncAplicar(){
       const t=m.t;
       const upd={descripcion:t.descripcion, desc_adicional:t.desc_adicional};
       if(t.cuenta_cod){ upd.cuenta_cod=t.cuenta_cod; upd.cuenta=t.cuenta; } // nunca borra una cuenta existente con un vacío
-      if(!DEMO_MODE){ await sbFetch('/articulos?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
+      if(!DEMO_MODE){ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
       const a=DIC.articulos.find(x=>_syncNorm(x.codigo)===t.codigo);
       if(a){ a.descripcion=t.descripcion; a.desc_adicional=t.desc_adicional; if(t.cuenta_cod){ a.cuenta_cod=t.cuenta_cod; a.cuenta=t.cuenta; } }
       okMod++;
@@ -6325,10 +6325,10 @@ async function syncProvAplicar(){
     if(nuevos.length){
       const payload=nuevos.map(t=>({codigo:t.codigo, razon:t.razon, comercial:t.comercial||t.razon, cuit:t.cuit, provincia_cod:t.provincia_cod, provincia:t.provincia, actividad:t.actividad, iva:t.iva, domicilio:t.domicilio, cod_postal:t.cod_postal, tel:t.tel, tel2:t.tel2, movil:t.movil, email:t.email, web:t.web}));
       if(!DEMO_MODE){
-        try{ for(let i=0;i<payload.length;i+=500){ await sbFetch('/proveedores',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
+        try{ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
         catch(colErr){ /* columnas nuevas (domicilio/cod_postal/tel2) aún no creadas en Supabase: reintento sin ellas */
           const payloadClasico=payload.map(({domicilio,cod_postal,tel2,...rest})=>rest);
-          for(let i=0;i<payloadClasico.length;i+=500){ await sbFetch('/proveedores',{method:'POST', body:JSON.stringify(payloadClasico.slice(i,i+500))}); }
+          for(let i=0;i<payloadClasico.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payloadClasico.slice(i,i+500))}); }
         }
       }
       payload.forEach(p=>{ if(!DIC.proveedores.some(x=>_syncNorm(x.codigo)===p.codigo)) DIC.proveedores.push({codigo:p.codigo, razon:p.razon, comercial:p.comercial||p.razon, cuit:p.cuit, tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod, provincia:p.provincia, actividad:p.actividad, iva:p.iva, domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}); });
@@ -6340,10 +6340,10 @@ async function syncProvAplicar(){
       CAMPOS.forEach(k=>{ if(t[k]) upd[k]=t[k]; });
       if(Object.keys(upd).length){
         if(!DEMO_MODE){
-          try{ await sbFetch('/proveedores?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
+          try{ await sbFetch('/compras_proveedores?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
           catch(colErr){ /* columnas nuevas aún no creadas: reintento sin domicilio/cod_postal/tel2 */
             const {domicilio,cod_postal,tel2,...updClasico}=upd;
-            if(Object.keys(updClasico).length) await sbFetch('/proveedores?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(updClasico)});
+            if(Object.keys(updClasico).length) await sbFetch('/compras_proveedores?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(updClasico)});
           }
         }
         const a=DIC.proveedores.find(x=>_syncNorm(x.codigo)===t.codigo);
@@ -6378,7 +6378,7 @@ async function guardarNuevoDeposito(){
   if(DIC.depositos.some(d=>d.codigo.toLowerCase()===cod.toLowerCase())){ toast('Ya existe un depósito con ese código.'); return; }
   const obj={ codigo:cod, descripcion:desc, direccion:g('nd_dir'), inhabilitado:'No', sucursal:g('nd_suc') };
   if(!DEMO_MODE){
-    try{ await sbFetch('/depositos',{method:'POST',body:JSON.stringify(obj)}); }
+    try{ await sbFetch('/compras_depositos',{method:'POST',body:JSON.stringify(obj)}); }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
   DIC.depositos.push(obj);
@@ -6402,7 +6402,7 @@ async function guardarNuevoMotivoCierre(){
   const obj={ descripcion:desc, activo:true };
   if(DEMO_MODE){ obj.id=Math.max(0,...DIC.motivos_cierre.map(m=>+m.id||0))+1; }
   else{
-    try{ const r=await sbFetch('/motivos_cierre',{method:'POST',body:JSON.stringify(obj),prefer:'return=representation'}); if(Array.isArray(r)&&r[0]) obj.id=r[0].id; }
+    try{ const r=await sbFetch('/compras_motivos_cierre',{method:'POST',body:JSON.stringify(obj),prefer:'return=representation'}); if(Array.isArray(r)&&r[0]) obj.id=r[0].id; }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
   DIC.motivos_cierre.push(obj);
@@ -6421,7 +6421,7 @@ async function guardarEditarMotivoCierre(id){
   const desc=(document.getElementById('mc_desc_edit').value||'').trim();
   if(!desc){ toast('La descripción es obligatoria.'); return; }
   if(!DEMO_MODE){
-    try{ await sbFetch('/motivos_cierre?id=eq.'+id,{method:'PATCH',body:JSON.stringify({descripcion:desc})}); }
+    try{ await sbFetch('/compras_motivos_cierre?id=eq.'+id,{method:'PATCH',body:JSON.stringify({descripcion:desc})}); }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
   m.descripcion=desc;
@@ -6432,7 +6432,7 @@ async function toggleMotivoCierreActivo(id){
   const m=(DIC.motivos_cierre||[]).find(x=>String(x.id)===String(id)); if(!m) return;
   const activo=!m.activo;
   if(!DEMO_MODE){
-    try{ await sbFetch('/motivos_cierre?id=eq.'+id,{method:'PATCH',body:JSON.stringify({activo})}); }
+    try{ await sbFetch('/compras_motivos_cierre?id=eq.'+id,{method:'PATCH',body:JSON.stringify({activo})}); }
     catch(e){ toast('No se pudo actualizar: '+(e.message||e)); return; }
   }
   m.activo=activo; renderDic();
@@ -6447,7 +6447,7 @@ function askEliminarMotivoCierre(id){
 window.askEliminarMotivoCierre=askEliminarMotivoCierre;
 async function confirmEliminarMotivoCierre(id){
   if(!DEMO_MODE){
-    try{ await sbFetch('/motivos_cierre?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
+    try{ await sbFetch('/compras_motivos_cierre?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
     catch(e){ toast('No se pudo eliminar: '+(e.message||e)); return; }
   }
   DIC.motivos_cierre=(DIC.motivos_cierre||[]).filter(x=>String(x.id)!==String(id));
@@ -6480,7 +6480,7 @@ async function guardarCotizacion(fechaOrig){
 window.guardarCotizacion=guardarCotizacion;
 async function eliminarCotizacion(fecha){
   if(!DEMO_MODE){
-    try{ await sbFetch('/usd_diario?fecha=eq.'+fecha,{method:'DELETE',prefer:'return=minimal'}); }
+    try{ await sbFetch('/compras_usd_diario?fecha=eq.'+fecha,{method:'DELETE',prefer:'return=minimal'}); }
     catch(e){ toast('No se pudo eliminar: '+(e.message||e)); return; }
   }
   DIC.usd_diario=(DIC.usd_diario||[]).filter(r=>r.fecha!==fecha);
@@ -6584,7 +6584,7 @@ async function syncDepositosAplicar(){
   try{
     if(nuevos.length){
       const payload=nuevos.map(t=>({codigo:t.codigo, descripcion:t.descripcion, direccion:t.direccion, inhabilitado:t.inhabilitado||'No', sucursal:t.sucursal}));
-      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/depositos',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
+      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_depositos',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
       payload.forEach(p=>{ if(!DIC.depositos.some(x=>_syncNorm(x.codigo)===p.codigo)) DIC.depositos.push({...p}); });
     }
     let okMod=0;
@@ -6593,7 +6593,7 @@ async function syncDepositosAplicar(){
       const upd={}; // solo campos con valor: un vacío de Tango nunca pisa lo existente
       CAMPOS.forEach(k=>{ if(t[k]) upd[k]=t[k]; });
       if(Object.keys(upd).length){
-        if(!DEMO_MODE){ await sbFetch('/depositos?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
+        if(!DEMO_MODE){ await sbFetch('/compras_depositos?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
         const a=DIC.depositos.find(x=>_syncNorm(x.codigo)===t.codigo);
         if(a){ CAMPOS.forEach(k=>{ if(t[k]) a[k]=t[k]; }); }
       }
@@ -6750,7 +6750,7 @@ async function syncCtaAplicar(){
   try{
     if(todosNuevos.length){
       const payload=todosNuevos.map(t=>({cod:t.cod, descripcion:t.desc, clase:t.clase, tipo:t.tipo, saldo:t.saldo, usa_aux:t.usa_aux, habil:t.habil}));
-      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/cuentas_contables',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
+      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_cuentas_contables',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
       payload.forEach(p=>{ if(!CONTA_DB.cuentas.some(x=>_syncNorm(x.cod)===p.cod)) CONTA_DB.cuentas.push({cod:p.cod, desc:p.descripcion, clase:p.clase, tipo:p.tipo, saldo:p.saldo, usa_aux:p.usa_aux, habil:p.habil, confidencial:false}); });
     }
     let okMod=0;
@@ -6759,7 +6759,7 @@ async function syncCtaAplicar(){
       const upd={}; // nunca toca 'confidencial': eso lo define Micaela a mano en la app
       _SYNC_CTA_CAMPOS.forEach(k=>{ if(t[k]) upd[_SYNC_CTA_COLS[k]]=t[k]; });
       if(Object.keys(upd).length){
-        if(!DEMO_MODE){ await sbFetch('/cuentas_contables?cod=eq.'+encodeURIComponent(t.cod),{method:'PATCH', body:JSON.stringify(upd)}); }
+        if(!DEMO_MODE){ await sbFetch('/compras_cuentas_contables?cod=eq.'+encodeURIComponent(t.cod),{method:'PATCH', body:JSON.stringify(upd)}); }
         const a=CONTA_DB.cuentas.find(x=>_syncNorm(x.cod)===t.cod);
         if(a){ _SYNC_CTA_CAMPOS.forEach(k=>{ if(t[k]) a[k]=t[k]; }); }
       }
@@ -6914,7 +6914,7 @@ async function syncAuxAplicar(){
   if(msg)msg.textContent='Guardando '+recs.length+' en Supabase…';
   try{
     for(let i=0;i<recs.length;i+=500){
-      await sbFetch('/aux_opciones?on_conflict=tipo_cod,cod',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(recs.slice(i,i+500))});
+      await sbFetch('/compras_aux_opciones?on_conflict=tipo_cod,cod',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(recs.slice(i,i+500))});
     }
     if(msg)msg.textContent='Listo: '+recs.length+' auxiliares actualizados.';
     await reloadDB(); closeModal(); toast('Auxiliares sincronizados'); paintDic();
@@ -7064,11 +7064,11 @@ async function syncClasifAplicar(){
     const payload=todos.map(t=>({cod:t.cod, descripcion:t.descripcion, habil_comp:t.habil_comp, habil_tes:t.habil_tes, habil_vta:t.habil_vta}));
     if(!DEMO_MODE){
       for(let i=0;i<payload.length;i+=500){
-        await sbFetch('/clasif_comprobantes',{method:'POST', prefer:'resolution=merge-duplicates,return=representation', body:JSON.stringify(payload.slice(i,i+500))});
+        await sbFetch('/compras_clasif_comprobantes',{method:'POST', prefer:'resolution=merge-duplicates,return=representation', body:JSON.stringify(payload.slice(i,i+500))});
       }
       const conCat=nuevos.filter(t=>catSel[t.cod]);
       if(conCat.length){
-        try{ for(const t of conCat){ await sbFetch('/clasif_comprobantes?cod=eq.'+encodeURIComponent(t.cod),{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({categoria:catSel[t.cod]})}); } }
+        try{ for(const t of conCat){ await sbFetch('/compras_clasif_comprobantes?cod=eq.'+encodeURIComponent(t.cod),{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({categoria:catSel[t.cod]})}); } }
         catch(e){ toast('Guardé los códigos, pero no las categorías nuevas (¿falta la columna categoria en Supabase?).'); }
       }
     }
@@ -7266,7 +7266,7 @@ async function syncSeriesAplicar(){
   try{
     if(!DEMO_MODE){
       for(let i=0;i<todos.length;i+=500){
-        await sbFetch('/series_activas',{method:'POST', prefer:'resolution=merge-duplicates,return=representation', body:JSON.stringify(todos.slice(i,i+500))});
+        await sbFetch('/compras_series_activas',{method:'POST', prefer:'resolution=merge-duplicates,return=representation', body:JSON.stringify(todos.slice(i,i+500))});
       }
     }
     const map={}; (SERIES_ACTIVAS||[]).forEach(r=>{ map[r.serie]=r; });
@@ -7611,7 +7611,7 @@ async function toggleHabilAuxOpt(tipoCod, cod){
   const o=list.find(x=>String(x.cod)===String(cod)); if(!o) return;
   const nv=(String(o.habil||'').toLowerCase()==='si')?'No':'Si';
   o.habil=nv;
-  if(!DEMO_MODE){ try{ await sbFetch('/aux_opciones?tipo_cod=eq.'+encodeURIComponent(tipoCod)+'&cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({habil:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); o.habil=(nv==='Si'?'No':'Si'); } }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_aux_opciones?tipo_cod=eq.'+encodeURIComponent(tipoCod)+'&cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({habil:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); o.habil=(nv==='Si'?'No':'Si'); } }
   paintDic();
 }
 window.toggleHabilAuxOpt=toggleHabilAuxOpt;
@@ -7619,7 +7619,7 @@ function canSeeConfid(){ return !!(typeof ROLE!=='undefined' && (ROLE.confidenci
 async function toggleConfidCuenta(cod){
   const r=(CONTA_DB.cuentas||[]).find(x=>String(x.cod)===String(cod)); if(!r) return;
   const nv=!r.confidencial; r.confidencial=nv;
-  if(!DEMO_MODE){ try{ await sbFetch('/cuentas_contables?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); } }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_cuentas_contables?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); } }
   paintDic();
 }
 window.toggleConfidCuenta=toggleConfidCuenta;
@@ -7628,8 +7628,8 @@ async function toggleConfidAux(cod){
   const nv=!t.confidencial; t.confidencial=nv;
   (CONTA_DB.auxopc[cod]||[]).forEach(o=>o.confidencial=nv);
   if(!DEMO_MODE){ try{
-    await sbFetch('/aux_tipos?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})});
-    await sbFetch('/aux_opciones?tipo_cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})});
+    await sbFetch('/compras_aux_tipos?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})});
+    await sbFetch('/compras_aux_opciones?tipo_cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({confidencial:nv})});
   }catch(e){ toast('No se pudo guardar: '+(e.message||e)); } }
   paintDic();
 }
@@ -7641,7 +7641,7 @@ async function toggleHabilClasif(cod){
   const r=CLASIF_ALL.find(x=>x.cod===cod); if(!r) return;
   const nv=(String(r.habil_comp||'').toLowerCase()==='si')?'No':'Si';
   r.habil_comp=nv;
-  if(!DEMO_MODE){ try{ await sbFetch('/clasif_comprobantes?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({habil_comp:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); r.habil_comp=(nv==='Si'?'No':'Si'); paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_clasif_comprobantes?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({habil_comp:nv})}); }catch(e){ toast('No se pudo guardar: '+(e.message||e)); r.habil_comp=(nv==='Si'?'No':'Si'); paintDic(); return; } }
   const habilitados=CLASIF_ALL.filter(x=>String(x.habil_comp||'').toLowerCase()==='si').map(x=>({codigo:x.cod, desc:x.desc}));
   CLASIF_RENGLON.length=0; habilitados.forEach(x=>CLASIF_RENGLON.push(x));
   paintDic();
@@ -7652,14 +7652,14 @@ async function setClasifCategoria(cod, val){
   const r=CLASIF_ALL.find(x=>x.cod===cod); if(!r) return;
   const prev=r.categoria||'';
   r.categoria=val||'';
-  if(!DEMO_MODE){ try{ await sbFetch('/clasif_comprobantes?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({categoria:r.categoria})}); }catch(e){ toast('No se pudo guardar la categoría: '+(e.message||e)); r.categoria=prev; paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await sbFetch('/compras_clasif_comprobantes?cod=eq.'+encodeURIComponent(cod),{method:'PATCH',body:JSON.stringify({categoria:r.categoria})}); }catch(e){ toast('No se pudo guardar la categoría: '+(e.message||e)); r.categoria=prev; paintDic(); return; } }
   paintDic();
 }
 window.setClasifCategoria=setClasifCategoria;
 async function _upsertClasifRule(K){
   const rl=CLASIF_RULES[K]||{};
   const body={codigo:K, eerr:rl.eerr||null, cuenta_cod:rl.cuenta||null, aux:rl.aux||'none', nqnable:!!rl.nqnable, migrado:!!rl.migrado};
-  await sbFetch('/clasif_renglon',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(body)});
+  await sbFetch('/compras_clasif_renglon',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(body)});
 }
 async function setClasifEERR(cod, val){
   if(!ROLE.admin){ toast('Solo un administrador puede cambiar el EERR.'); return; }
@@ -7781,13 +7781,13 @@ async function importClasifAplicar(){
     if(!DEMO_MODE){
       const payload=upserts.map(t=>({cod:t.cod, descripcion:t.descripcion||t.cod, habil_comp:t.habil_comp||'No', categoria:t.categoria||null}));
       for(let i=0;i<payload.length;i+=500){
-        await sbFetch('/clasif_comprobantes',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(payload.slice(i,i+500))});
+        await sbFetch('/compras_clasif_comprobantes',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(payload.slice(i,i+500))});
       }
       if(doDelete){
         const cods=S.sobrantes.map(t=>t.cod);
         for(let i=0;i<cods.length;i+=80){
           const chunk=cods.slice(i,i+80).map(c=>encodeURIComponent(c)).join(',');
-          await sbFetch('/clasif_comprobantes?cod=in.('+chunk+')',{method:'DELETE', prefer:'return=minimal'});
+          await sbFetch('/compras_clasif_comprobantes?cod=in.('+chunk+')',{method:'DELETE', prefer:'return=minimal'});
         }
       }
     }
@@ -7871,11 +7871,11 @@ async function reloadDB(){
   if(DEMO_MODE) return;
   try{
     const [ogs, certificados, pagos, ingresos, cajas] = await Promise.all([
-      sbFetch('/ogs?select=*&order=id.desc'),
-      sbFetch('/og_certificados?select=*&order=id.asc'),
-      sbFetch('/pagos?select=*&order=id.asc'),
-      sbFetch('/caja_ingresos?select=*&order=id.asc').catch(()=>[]),
-      sbFetch('/caja?select=*'),
+      sbFetch('/compras_ogs?select=*&order=id.desc'),
+      sbFetch('/compras_og_certificados?select=*&order=id.asc'),
+      sbFetch('/compras_pagos?select=*&order=id.asc'),
+      sbFetch('/compras_caja_ingresos?select=*&order=id.asc').catch(()=>[]),
+      sbFetch('/compras_caja?select=*'),
     ]);
     mem.ogs = ogs || [];
     mem.ogs.forEach(ogNormalizeCondicion);
@@ -7892,50 +7892,50 @@ async function reloadDB(){
       // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
       (async()=>{ try{
         let provs;
-        try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
-        catch(colErr){ try{ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva&order=codigo.asc'); }
-          catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
+        try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
+        catch(colErr){ try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva&order=codigo.asc'); }
+          catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
         if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}));
       }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ } })(),
       // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
       // reciente: si la columna todavía no existe en producción, cae al select clásico.
       (async()=>{ try{
         let arts;
-        try{ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
-        catch(colErr){ arts = await sbFetchAll('/articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
+        try{ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
+        catch(colErr){ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
         if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||'',
           costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||''}));
       }catch(e){ /* queda el ejemplo embebido */ } })(),
       // Depósitos: diccionario nuevo, sincronizado desde Tango
       (async()=>{ try{
-        const deps = await sbFetchAll('/depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
+        const deps = await sbFetchAll('/compras_depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
         if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Pañol: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
       (async()=>{ try{
-        const egs = await sbFetchAll('/panol_egresos?select=*&order=fecha.desc,id.desc');
+        const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
-        const sal = await sbFetchAll('/stock_saldos?select=*&order=cod_articulo.asc');
+        const sal = await sbFetchAll('/compras_stock_saldos?select=*&order=cod_articulo.asc');
         if(sal) DIC.stock_saldos = sal.map(r=>({...r, saldo:+r.saldo||0, cant_comprometida:+r.cant_comprometida||0, cant_a_recibir:+r.cant_a_recibir||0, punto_pedido:+r.punto_pedido||0}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Informe OC de Tango (Compras + Remitos + Facturas): foto de referencia para armar/matchear
       (async()=>{ try{
-        const oci = await sbFetchAll('/oc_informe?select=*&order=oc_numero.asc');
+        const oci = await sbFetchAll('/compras_oc_informe?select=*&order=oc_numero.asc');
         if(oci) DIC.oc_informe = oci;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
-      (async()=>{ try{ mem.solicitudes_pago = await sbFetchAll('/solicitudes_pago?select=*&order=id.desc'); }
+      (async()=>{ try{ mem.solicitudes_pago = await sbFetchAll('/compras_solicitudes_pago?select=*&order=id.desc'); }
       catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; } })(),
       // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
       (async()=>{ try{
-        const mot = await sbFetchAll('/motivos_cierre?select=id,descripcion,activo&order=id.asc');
+        const mot = await sbFetchAll('/compras_motivos_cierre?select=id,descripcion,activo&order=id.asc');
         if(mot) DIC.motivos_cierre = mot.map(m=>({id:m.id, descripcion:m.descripcion||'', activo:m.activo!==false}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Cotización USD día a día: registro propio de la app, no viene de Tango
       (async()=>{ try{
-        const ud = await sbFetchAll('/usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
+        const ud = await sbFetchAll('/compras_usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
         if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
@@ -7945,25 +7945,25 @@ async function reloadDB(){
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })()),
       // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
       (async()=>{ try{
-        const cu=await sbFetchAll('/cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
+        const cu=await sbFetchAll('/compras_cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
         if(cu&&cu.length) CONTA_DB.cuentas=cu.map(r=>({cod:r.cod,desc:r.descripcion||'',clase:r.clase||'',tipo:r.tipo||'',saldo:r.saldo||'',usa_aux:r.usa_aux||'',habil:r.habil||'',confidencial:!!r.confidencial}));
       }catch(e){} })(),
       (async()=>{ try{
-        const tp=await sbFetch('/aux_tipos?select=cod,descripcion,confidencial&order=cod.asc');
+        const tp=await sbFetch('/compras_aux_tipos?select=cod,descripcion,confidencial&order=cod.asc');
         if(tp&&tp.length) CONTA_DB.tipos=tp.map(t=>({cod:t.cod,desc:t.descripcion||'',confidencial:!!t.confidencial}));
-        const op=await sbFetchAll('/aux_opciones?select=tipo_cod,cod,descripcion,habil,confidencial&order=tipo_cod.asc');
+        const op=await sbFetchAll('/compras_aux_opciones?select=tipo_cod,cod,descripcion,habil,confidencial&order=tipo_cod.asc');
         if(op&&op.length){ const m={}; op.forEach(o=>{ (m[o.tipo_cod]=m[o.tipo_cod]||[]).push({cod:o.cod,desc:o.descripcion||'',habil:o.habil||'',confidencial:!!o.confidencial}); }); CONTA_DB.auxopc=m; }
       }catch(e){} })(),
       // Reglas del motor de asiento por clasificación (Supabase pisa la semilla embebida; un vacío no pisa)
       (async()=>{ try{
-        const cr=await sbFetch('/clasif_renglon?select=codigo,eerr,cuenta_cod,aux,nqnable,migrado');
+        const cr=await sbFetch('/compras_clasif_renglon?select=codigo,eerr,cuenta_cod,aux,nqnable,migrado');
         if(cr&&cr.length){ let n=0; cr.forEach(r=>{ const cod=String(r.codigo||'').toUpperCase().trim();
           if(cod && r.eerr){ CLASIF_RULES[cod]={eerr:r.eerr, cuenta:r.cuenta_cod||null, aux:r.aux||'none', nqnable:!!r.nqnable, migrado:!!r.migrado}; n++; } });
           window.__clasifRulesN=n; }
       }catch(e){ /* si la tabla no tiene las columnas del motor, queda la semilla embebida */ } })(),
       // Combo de clasificación de renglón (lista seleccionable con "habilitado para compras") — Supabase pisa la semilla embebida
       (async()=>{ try{
-        const cc=await sbFetchAll('/clasif_comprobantes?select=cod,descripcion,habil_comp,categoria&order=cod.asc');
+        const cc=await sbFetchAll('/compras_clasif_comprobantes?select=cod,descripcion,habil_comp,categoria&order=cod.asc');
         if(cc&&cc.length){
           CLASIF_ALL.length=0;
           cc.forEach(r=>CLASIF_ALL.push({cod:r.cod, desc:r.descripcion||r.cod, habil_comp:r.habil_comp||'No', categoria:(r.categoria||'').trim()||_catDe(r.cod)}));
@@ -7974,12 +7974,12 @@ async function reloadDB(){
       }catch(e){ /* si la tabla no existe todavía, queda la semilla embebida */ } })(),
       // Series activas (individualización de módulos/herramientas/rodados/muebles con su depósito actual)
       (async()=>{ try{
-        const sa=await sbFetchAll('/series_activas?select=serie,familia,cod_deposito,desc_deposito,cod_articulo,descripcion,comentario,adicional_1,adicional_2,codigo_barras,partida,numero_despacho&order=serie.asc');
+        const sa=await sbFetchAll('/compras_series_activas?select=serie,familia,cod_deposito,desc_deposito,cod_articulo,descripcion,comentario,adicional_1,adicional_2,codigo_barras,partida,numero_despacho&order=serie.asc');
         if(sa&&sa.length){ SERIES_ACTIVAS.length=0; sa.forEach(r=>SERIES_ACTIVAS.push({...r})); SERIES_FROM_SUPABASE=true; }
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Usuarios (para desplegables Comprador / Certifica la OG) — desde la vista pública (solo nombre + flags)
       (async()=>{ try{
-        const us=await sbFetch('/usuarios_publicos?select=nombre,es_comprador,es_certificador&order=nombre.asc');
+        const us=await sbFetch('/compras_usuarios_publicos?select=nombre,es_comprador,es_certificador&order=nombre.asc');
         if(us) USUARIOS=us;
       }catch(e){ /* si la vista no existe o no se puede leer, queda vacío */ } })(),
     ]);
@@ -8003,6 +8003,21 @@ function mergeRowInto(arr, row){
   try{ fetchUSDOficial(); }catch(e){}
   const ok = await initAuth();
   if(!ok) return; // pantalla de login ya mostrada
+
+  // Compuerta de sector (portal): si el usuario no tiene el sector "compras",
+  // el RLS no le deja ni leer su propia fila de compras_usuarios_autorizados.
+  if(!DEMO_MODE){
+    let autorizado=false;
+    try{
+      const email=(AUTH_USER&&AUTH_USER.email)||'';
+      const rows=await sbFetch('/compras_usuarios_autorizados?select=email&email=eq.'+encodeURIComponent(email));
+      autorizado=!!(rows&&rows[0]);
+    }catch(e){}
+    if(!autorizado){
+      authScreen('Tu usuario no tiene acceso al módulo de Compras.<br><span style="font-size:12px;color:#94917f">Pedile a dirección que te habilite el sector «compras» en el portal.</span>');
+      return;
+    }
+  }
 
   if(DEMO_MODE){
     USUARIOS=USUARIOS_DEMO.map(u=>({...u}));
