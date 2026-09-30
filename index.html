@@ -99,7 +99,7 @@ table.grid.solp-mx td{text-align:right;font-variant-numeric:tabular-nums;}
 .solp-tabs button{border:1px solid var(--line-strong);background:#fff;border-radius:9px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
 .solp-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 table.grid.solp-full td,table.grid.solp-full th{font-size:11px;padding:4px 8px;white-space:nowrap;}
-table.grid.solp-full td.trunc,table.grid.solp-full th.trunc{max-width:130px;overflow:hidden;text-overflow:ellipsis;}
+table.grid.solp-full td.trunc,table.grid.solp-det td.trunc{max-width:130px;overflow:hidden;text-overflow:ellipsis;}
 table.grid.solp-full tbody tr:hover{background:#f4f1ea;}
 @media (max-width:1100px){ .kpi-grid.solp-kpis{grid-template-columns:repeat(3,1fr);} .solp-grid{grid-template-columns:1fr;} }
 @media (max-width:700px){ .kpi-grid.solp-kpis{grid-template-columns:repeat(2,1fr);} .solp-ms{min-width:0;flex:1 1 45%;} .solp-seg{margin-left:0;} }
@@ -8428,10 +8428,11 @@ async function renderSolp(){
   const abiertas=sols.filter(s=>s.open).sort((a,b)=>(a.fn||'9999').localeCompare(b.fn||'9999'));
   const LIM=150;
   const puedeEditar=canEditOG();
+  const tdT=(v)=>'<td class="trunc" title="'+esc(v)+'">'+esc(v)+'</td>';
   const tablaAb = abiertas.length ? '<div class="dic-scroll"><table class="grid solp-det"><thead><tr><th>Obra</th><th>SOLP</th><th>Comprador</th><th>Estado</th><th>Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Ítems</th><th></th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
     + abiertas.slice(0,LIM).map(s=>{ const it=s.items.filter(x=>!x.closed);
       const accion=puedeEditar? '<td><div class="row-actions">'+it.map(x=>'<button class="iconbtn" title="Editar ítem" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button>').join('')+'</div></td>' : '';
-      return '<tr><td>'+esc(solpLbl('o',s.obra))+'</td><td style="text-align:right"><strong>'+s.solp+'</strong></td><td>'+esc([...s.gs].map(g=>solpLbl('g',g)).join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.estado||'—'))].join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.rubro||'—'))].join(', '))+'</td><td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+it.length+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('')
+      return '<tr><td>'+esc(solpLbl('o',s.obra))+'</td><td style="text-align:right"><strong>'+s.solp+'</strong></td>'+tdT([...s.gs].map(g=>solpLbl('g',g)).join(', '))+tdT([...new Set(it.map(x=>x.estado||'—'))].join(', '))+tdT([...new Set(it.map(x=>x.rubro||'—'))].join(', '))+'<td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+it.length+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('')
     + '</tbody></table></div>'+(abiertas.length>LIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+LIM+' de '+abiertas.length+'. Filtrá para ver el resto.</div>':'')
     : '<div class="empty">No hay SOLP abiertas con estos filtros.</div>';
 
