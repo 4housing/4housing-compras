@@ -8047,6 +8047,81 @@ function solpTh(label, col){
     +'<span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openSolpColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
 }
 
+/* ---- Mismo filtro/orden tipo Excel, para la tabla "SOLP abiertas" del Resumen (agrupada por SOLP,
+   no por ítem — namespace propio para no pisar el de Detalle) ---- */
+let SOLP_AB_COL_FILTRO={};
+let SOLP_AB_SORT=null;
+function solpAbColUnique(col){
+  const s=new Set(); let hasEmpty=false;
+  (SOLP._abBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
+}
+function solpAbColFilterActive(col){ return !!(SOLP_AB_COL_FILTRO[col] && SOLP_AB_COL_FILTRO[col].length); }
+function solpAbRowPass(r){
+  return Object.keys(SOLP_AB_COL_FILTRO).every(col=>{ const allow=SOLP_AB_COL_FILTRO[col]; if(!allow||!allow.length) return true; return allow.includes(String(r[col]==null?'':r[col])); });
+}
+function solpAbApplySort(rowsIn){
+  if(!SOLP_AB_SORT) return rowsIn;
+  const {col,dir}=SOLP_AB_SORT;
+  return rowsIn.slice().sort((a,b)=>{
+    if(col==='solp'||col==='items') return ((a[col]||0)-(b[col]||0))*dir;
+    return String(a[col]==null?'':a[col]).localeCompare(String(b[col]==null?'':b[col]),'es',{numeric:true})*dir;
+  });
+}
+function solpAbSortToggle(col){
+  const cur=SOLP_AB_SORT;
+  if(!cur || cur.col!==col) SOLP_AB_SORT={col, dir:1};
+  else if(cur.dir===1) SOLP_AB_SORT={col, dir:-1};
+  else SOLP_AB_SORT=null;
+  renderSolp();
+}
+window.solpAbSortToggle=solpAbSortToggle;
+function closeSolpAbColFilter(){ const p=document.getElementById('dicFilterPop'); if(p) p.remove(); document.removeEventListener('mousedown', solpAbColFilterOutside, true); }
+function solpAbColFilterOutside(e){ const p=document.getElementById('dicFilterPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.dicfbtn'))) closeSolpAbColFilter(); }
+function openSolpAbColFilter(col, ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; closeSolpAbColFilter();
+  const vals=solpAbColUnique(col);
+  const sel = SOLP_AB_COL_FILTRO[col] ? new Set(SOLP_AB_COL_FILTRO[col]) : new Set(vals);
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
+  const pop=document.createElement('div'); pop.id='dicFilterPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="solpAbColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="solpAbColFilterToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="dicfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="solpAbColFilterApply(\''+col+'\')">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="solpAbColFilterClear(\''+col+'\')">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', solpAbColFilterOutside, true),0);
+}
+window.openSolpAbColFilter=openSolpAbColFilter;
+function solpAbColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
+window.solpAbColFilterSearch=solpAbColFilterSearch;
+function solpAbColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
+window.solpAbColFilterToggleAll=solpAbColFilterToggleAll;
+function solpAbColFilterApply(col){
+  const all=[...document.querySelectorAll('#dicfList .dicfchk')];
+  const visible=all.filter(c=>{ const it=c.closest('.dicfitem'); return it && it.style.display!=='none'; });
+  const chk=visible.filter(c=>c.checked).map(c=>c.value);
+  if(visible.length===all.length && chk.length===all.length){ delete SOLP_AB_COL_FILTRO[col]; }
+  else { SOLP_AB_COL_FILTRO[col]=chk; }
+  closeSolpAbColFilter(); renderSolp();
+}
+window.solpAbColFilterApply=solpAbColFilterApply;
+function solpAbColFilterClear(col){ delete SOLP_AB_COL_FILTRO[col]; closeSolpAbColFilter(); renderSolp(); }
+window.solpAbColFilterClear=solpAbColFilterClear;
+function solpAbColFilterClearAll(){ SOLP_AB_COL_FILTRO={}; renderSolp(); }
+window.solpAbColFilterClearAll=solpAbColFilterClearAll;
+function solpAbTh(label, col){
+  const active=solpAbColFilterActive(col);
+  const s=SOLP_AB_SORT, sorting=s && s.col===col;
+  const arrow=sorting?(s.dir===1?' ▲':' ▼'):'';
+  return '<th style="white-space:nowrap">'
+    +'<span style="cursor:pointer;user-select:none" onclick="solpAbSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+arrow+'</span></span> '
+    +'<span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openSolpAbColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
+}
+
 function solpGroup(rows){
   const hoy=solpHoy(), m=new Map();
   for(const x of rows){
@@ -8424,15 +8499,20 @@ async function renderSolp(){
     + '<tr class="solp-mx-tot"><td class="solp-mx-o">Total</td>'+gs.map(g=>'<td>'+sols.filter(s=>s.gs.has(g)).length+'</td>').join('')+'<td>'+sols.length+'</td></tr></tbody></table></div>'
     : '<div class="empty">No hay SOLP con estos filtros.</div>';
 
-  // Abiertas
-  const abiertas=sols.filter(s=>s.open).sort((a,b)=>(a.fn||'9999').localeCompare(b.fn||'9999'));
+  // Abiertas — filas planas (para poder filtrar/ordenar por columna), con la fila SOLP original en
+  // _s para los botones de editar cada ítem.
   const LIM=150;
   const puedeEditar=canEditOG();
   const tdT=(v)=>'<td class="trunc" title="'+esc(v)+'">'+esc(v)+'</td>';
-  const tablaAb = abiertas.length ? '<div class="dic-scroll"><table class="grid solp-det"><thead><tr><th>Obra</th><th>SOLP</th><th>Comprador</th><th>Estado</th><th>Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Ítems</th><th></th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
-    + abiertas.slice(0,LIM).map(s=>{ const it=s.items.filter(x=>!x.closed);
+  const abBaseRows=sols.filter(s=>s.open).map(s=>{ const it=s.items.filter(x=>!x.closed);
+    return { obra:solpLbl('o',s.obra), solp:s.solp, comprador:[...s.gs].map(g=>solpLbl('g',g)).join(', '), estado:[...new Set(it.map(x=>x.estado||'—'))].join(', '), rubro:[...new Set(it.map(x=>x.rubro||'—'))].join(', '), ingreso:s.fi||'', necesidad:s.fn||'', items:it.length, vencida:s.late?'Vencida':'Abierta', _s:s, _it:it }; });
+  SOLP._abBase=abBaseRows;
+  const abiertas=solpAbApplySort(abBaseRows.filter(solpAbRowPass).sort((a,b)=>(a.necesidad||'9999').localeCompare(b.necesidad||'9999')));
+  const tablaAb = abBaseRows.length ? '<div class="dic-scroll"><table class="grid solp-det"><thead><tr>'
+      + solpAbTh('Obra','obra')+solpAbTh('SOLP','solp')+solpAbTh('Comprador','comprador')+solpAbTh('Estado','estado')+solpAbTh('Rubro','rubro')+solpAbTh('Ingreso','ingreso')+solpAbTh('Necesidad','necesidad')+solpAbTh('Ítems','items')+solpAbTh('Estado gral.','vencida')+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
+    + (abiertas.length? abiertas.slice(0,LIM).map(r=>{ const s=r._s, it=r._it;
       const accion=puedeEditar? '<td><div class="row-actions">'+it.map(x=>'<button class="iconbtn" title="Editar ítem" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button>').join('')+'</div></td>' : '';
-      return '<tr><td>'+esc(solpLbl('o',s.obra))+'</td><td style="text-align:right"><strong>'+s.solp+'</strong></td>'+tdT([...s.gs].map(g=>solpLbl('g',g)).join(', '))+tdT([...new Set(it.map(x=>x.estado||'—'))].join(', '))+tdT([...new Set(it.map(x=>x.rubro||'—'))].join(', '))+'<td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+it.length+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('')
+      return '<tr><td>'+esc(r.obra)+'</td><td style="text-align:right"><strong>'+r.solp+'</strong></td>'+tdT(r.comprador)+tdT(r.estado)+tdT(r.rubro)+'<td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+r.items+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('') : '<tr><td colspan="'+(9+(puedeEditar?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(abiertas.length>LIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+LIM+' de '+abiertas.length+'. Filtrá para ver el resto.</div>':'')
     : '<div class="empty">No hay SOLP abiertas con estos filtros.</div>';
 
@@ -8481,7 +8561,7 @@ async function renderSolp(){
       + '<div class="card"><div class="card-h"><h3>Por comprador</h3><span class="meta">Tocá una barra para filtrar</span></div><div class="solp-cb" style="height:'+Math.max(200,byG.length*34+40)+'px"><canvas id="solpCG"></canvas></div></div>'
     + '</div>'
     + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Obra × comprador</h3><span class="meta">Cantidad de SOLP · tocá una celda para filtrar</span></div>'+matriz+'</div>'
-    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>SOLP abiertas</h3><span class="meta">Ordenadas por fecha de necesidad</span></div>'+tablaAb+'</div>'
+    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>SOLP abiertas</h3><span class="meta">'+nf(abiertas.length)+' de '+nf(abBaseRows.length)+'</span>'+(Object.keys(SOLP_AB_COL_FILTRO).length?'<button class="btn ghost sm" onclick="solpAbColFilterClearAll()">Limpiar filtros de columna</button>':'')+'</div>'+tablaAb+'</div>'
     + '<div class="solp-foot">Una SOLP es obra + número (el mismo número en dos obras son SOLP distintas). SOLP 0 = sin SOLP asignada: cuenta como ítem, no como SOLP. '
       + 'Cada SOLP toma un estado para las barras: abierta si tiene algún ítem sin cerrar (cerrado = CUMPLIDA, ANULADA o RECHAZADA); si no, cumplida o anulada. '
       + 'Si una SOLP tiene ítems de más de un comprador, cuenta para cada uno. Vencida = abierta con algún ítem cuya F. Necesidad S/Solp ya pasó.</div>';
