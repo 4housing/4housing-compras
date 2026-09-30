@@ -8703,8 +8703,20 @@ const EVALPROV_PREGUNTAS={
 };
 const EVALPROV_TODAS=[...EVALPROV_PREGUNTAS.compras, ...EVALPROV_PREGUNTAS.proyectos];
 
+const EVALPROV_CATS=['Atención Personalizada','Costos y Precios','Planificación','Técnico','Calidad','Seguridad'];
+const EVALPROV_CAT_COL=['#4f8a53','#c9962a','#5f7a4e','#94917f','#b0584f','#2b6ca3'];
+// Escala 1-5: no encontramos una leyenda definida en RC-03.03 — se usa esta por default de este
+// tipo de encuesta de desempeño (1 = Muy malo … 5 = Excelente). Avisar si el procedimiento escrito
+// define otra.
+const EVALPROV_ESCALA=['1 · Muy malo','2 · Malo','3 · Regular','4 · Bueno','5 · Excelente'];
+
 function evalProvPct(row){
   const resp=EVALPROV_TODAS.filter(p=>row[p.key]!=null);
+  if(!resp.length) return null;
+  return resp.reduce((a,p)=>a+row[p.key],0)/(resp.length*5);
+}
+function evalProvCatPctRow(row, cat){
+  const resp=EVALPROV_TODAS.filter(p=>p.cat===cat && row[p.key]!=null);
   if(!resp.length) return null;
   return resp.reduce((a,p)=>a+row[p.key],0)/(resp.length*5);
 }
@@ -8712,7 +8724,42 @@ function evalProvClasif(pct){ return pct==null?'—':pct<EVALPROV_LIMITE?'No apt
 function evalProvClasifCol(c){ return c==='No apto'?SOLP_COL.late:c==='Apto con observaciones'?SOLP_COL.open:c==='Apto'?SOLP_COL.ok:SOLP_COL.muted; }
 function evalProvPct1(p){ return p==null?'—':Math.round(p*100)+'%'; }
 
-const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones' };
+const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones', selProv:null, selRubro:null, charts:{} };
+function evalProvSelProv(v){ EVALPROV.selProv=v||null; renderEvalProv(); }
+window.evalProvSelProv=evalProvSelProv;
+function evalProvSelRubro(v){ EVALPROV.selRubro=v||null; renderEvalProv(); }
+window.evalProvSelRubro=evalProvSelRubro;
+function evalProvChart(id, cfg){
+  const el=document.getElementById(id); if(!el||!window.Chart) return;
+  if(EVALPROV.charts[id]) EVALPROV.charts[id].destroy();
+  EVALPROV.charts[id]=new Chart(el, cfg);
+}
+function evalProvPromedio(rs){ const v=rs.filter(r=>r.pct!=null); return v.length?v.reduce((a,r)=>a+r.pct,0)/v.length:null; }
+function evalProvGraficoAnual(rows){
+  const years=[...new Set(rows.filter(r=>r.pct!=null).map(r=>r.fecha.slice(0,4)))].sort();
+  const data=years.map(y=>{ const p=evalProvPromedio(rows.filter(r=>r.fecha.slice(0,4)===y)); return p==null?null:Math.round(p*100); });
+  evalProvChart('epChartAnual', {type:'bar', data:{labels:years, datasets:[{label:'Promedio %', data, backgroundColor:SOLP_COL.olive, borderRadius:4, barThickness:28}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
+}
+function evalProvGraficoAnualDetalle(rows){
+  const years=[...new Set(rows.filter(r=>r.pct!=null).map(r=>r.fecha.slice(0,4)))].sort();
+  const datasets=EVALPROV_CATS.map((cat,i)=>({ label:cat, backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
+    data:years.map(y=>{ const rs=rows.filter(r=>r.fecha.slice(0,4)===y); const vals=rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null); return vals.length?Math.round(100*vals.reduce((a,v)=>a+v,0)/vals.length):null; }) }));
+  evalProvChart('epChartAnualDet', {type:'bar', data:{labels:years, datasets},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10.5}}}},
+      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
+}
+function evalProvGraficoEntidad(id, rows, filtroFn){
+  const rs=rows.filter(filtroFn);
+  const data=EVALPROV_CATS.map(cat=>{ const vals=rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null); return vals.length?Math.round(100*vals.reduce((a,v)=>a+v,0)/vals.length):null; });
+  evalProvChart(id, {type:'bar', data:{labels:EVALPROV_CATS, datasets:[{data, backgroundColor:EVALPROV_CAT_COL, borderRadius:4, barThickness:16}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
+}
 
 async function evalProvLoad(){
   const [evs, crit, rubros] = await Promise.all([
@@ -8745,6 +8792,12 @@ async function renderEvalProv(){
   if(current!=='evalprov') return;
   const tabs='<div class="solp-tabs"><button class="'+(EVALPROV.tab==='evaluaciones'?'on':'')+'" onclick="evalProvTab(\'evaluaciones\')">Evaluaciones</button><button class="'+(EVALPROV.tab==='criticos'?'on':'')+'" onclick="evalProvTab(\'criticos\')">Proveedores críticos</button></div>';
   C().innerHTML = tabs + (EVALPROV.tab==='criticos' ? evalProvCriticosHtml() : evalProvEvalsHtml());
+  if(EVALPROV.tab==='evaluaciones' && window.Chart){
+    evalProvGraficoAnual(EVALPROV.rows);
+    evalProvGraficoAnualDetalle(EVALPROV.rows);
+    evalProvGraficoEntidad('epChartProv', EVALPROV.rows, r=>!EVALPROV.selProv||r.proveedor_cod===EVALPROV.selProv);
+    evalProvGraficoEntidad('epChartRubro', EVALPROV.rows, r=>!EVALPROV.selRubro||r.rubro===EVALPROV.selRubro);
+  }
 }
 window.renderEvalProv=renderEvalProv;
 
@@ -8778,6 +8831,14 @@ function evalProvEvalsHtml(){
       + kpi('Proveedores evaluados', nf(provs.length), 'Distintos')
       + kpi('Promedio general', evalProvPct1(prom), 'Objetivo: '+Math.round(EVALPROV_OBJETIVO*100)+'%')
       + kpi('Por debajo del límite', nf(noApto), 'Límite de aceptación: '+Math.round(EVALPROV_LIMITE*100)+'%', noApto?SOLP_COL.late:null)
+    + '</div>'
+    + '<div class="solp-grid">'
+      + '<div class="card"><div class="card-h"><h3>Evolución anual</h3><span class="meta">Promedio general por año</span></div><div class="solp-cb" style="height:220px"><canvas id="epChartAnual"></canvas></div></div>'
+      + '<div class="card"><div class="card-h"><h3>Evolución anual — detalle</h3><span class="meta">Por categoría</span></div><div class="solp-cb" style="height:220px"><canvas id="epChartAnualDet"></canvas></div></div>'
+    + '</div>'
+    + '<div class="solp-grid" style="margin-top:16px">'
+      + '<div class="card"><div class="card-h"><h3>Por proveedor</h3><select onchange="evalProvSelProv(this.value)" style="font-size:12.5px;border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px"><option value="">Todos los proveedores</option>'+provs.map(cod=>'<option value="'+esc(cod)+'"'+(EVALPROV.selProv===cod?' selected':'')+'>'+esc(solpProvNom(cod))+'</option>').join('')+'</select></div><div class="solp-cb" style="height:220px"><canvas id="epChartProv"></canvas></div></div>'
+      + '<div class="card"><div class="card-h"><h3>Por rubro</h3><select onchange="evalProvSelRubro(this.value)" style="font-size:12.5px;border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px"><option value="">Todos los rubros</option>'+[...new Set(rows.map(r=>r.rubro).filter(Boolean))].sort().map(r=>'<option'+(EVALPROV.selRubro===r?' selected':'')+'>'+esc(r)+'</option>').join('')+'</select></div><div class="solp-cb" style="height:220px"><canvas id="epChartRubro"></canvas></div></div>'
     + '</div>'
     + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Por proveedor</h3><span class="meta">Peor promedio primero</span></div>'+tablaProv+'</div>'
     + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Detalle de evaluaciones</h3><span class="meta">'+nf(det.length)+'</span></div>'+tablaDet+'</div>';
@@ -8836,6 +8897,7 @@ function openEvalProvForm(id){
     +'<div class="field"><label>Proveedor</label><input id="ep_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"></div>'
     +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><select id="ep_obra"><option value="">— sin obra —</option>'+obraOpts+'</select></div>'
     +'<div class="field"><label>Rubro</label><select id="ep_rubro"><option value="">— sin rubro —</option>'+(EVALPROV.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('')+'</select></div></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin:10px 0 2px">Escala: '+EVALPROV_ESCALA.join(' · ')+'</div>'
     +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
     +'<div class="field"><label>Comentarios</label><textarea id="ep_coment" rows="2">'+esc(cur.comentarios||'')+'</textarea></div>'
     +'<div id="epMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
