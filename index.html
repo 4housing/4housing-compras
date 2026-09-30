@@ -8157,6 +8157,15 @@ function solpSerieT(k){ SOLP.F.s.has(k)?SOLP.F.s.delete(k):SOLP.F.s.add(k); rend
 function solpDate(k,v){ SOLP.F[k]=v; renderSolp(); }
 function solpClear(){ ['o','g','e','r','s'].forEach(k=>SOLP.F[k].clear()); SOLP.F.d1=SOLP.F.d2=''; SOLP.open=null; renderSolp(); }
 function solpMetric(m){ SOLP.metric=m; renderSolp(); }
+// "Pendiente" = todo lo que no esté Cumplida ni Anulada (así lo definió Micaela; Rechazada queda
+// afuera de este atajo — si también hay que excluirla, se ajusta acá).
+function solpPendientesActivo(){ const p=SOLP_ESTADOS.filter(e=>e!=='CUMPLIDA'&&e!=='ANULADA'); return SOLP.F.e.size===p.length && p.every(e=>SOLP.F.e.has(e)); }
+function solpSoloPendientes(){
+  const p=SOLP_ESTADOS.filter(e=>e!=='CUMPLIDA'&&e!=='ANULADA');
+  SOLP.F.e = solpPendientesActivo() ? new Set() : new Set(p);
+  renderSolp();
+}
+window.solpSoloPendientes=solpSoloPendientes;
 function solpTab(t){ SOLP.tab=t; renderSolp(); }
 window.solpTab=solpTab;
 function solpCell(o,g){ const F=SOLP.F; if(F.o.size===1&&F.o.has(o)&&F.g.size===1&&F.g.has(g)){F.o.clear();F.g.clear();} else {F.o.clear();F.o.add(o);F.g.clear();F.g.add(g);} renderSolp(); }
@@ -8572,7 +8581,8 @@ async function renderSolp(){
     + '<div class="card solp-filters"><div class="solp-frow">'
       + solpMS('o','obra','Obra') + solpMS('g','gestiona','Comprador') + solpMS('e','estado','Estado') + solpMS('r','rubro','Rubro')
       + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
-    + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')+'</div>'
+    + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')
+      +'<button class="solp-chip'+(solpPendientesActivo()?' on':'')+'" onclick="solpSoloPendientes()" style="margin-left:auto">Solo pendientes</button></div>'
     + '<div class="solp-tags">'+tagHtml()+'</div></div>'
     + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(detOrd.length)+' de '+nf(rows.length)+'</span>'
         + (Object.keys(SOLP_COL_FILTRO).length?'<button class="btn ghost sm" onclick="solpColFilterClearAll()">Limpiar filtros de columna</button>':'')
@@ -8618,6 +8628,23 @@ function solpExportDetalleExcel(){
 window.solpExportDetalleExcel=solpExportDetalleExcel;
 
 document.addEventListener('click',e=>{ if(current!=='solp') return; if(!e.target.closest('.solp-ms')){ document.querySelectorAll('.solp-ms[open]').forEach(d=>d.open=false); SOLP.open=null; } });
+
+// Click en una celda truncada ("…") para leer el texto completo sin agrandar la fila — el tooltip
+// nativo (title) obliga a mantener el mouse quieto; esto queda abierto hasta clickear afuera.
+function _truncPopupOutside(e){ const p=document.getElementById('truncPop'); if(p && !p.contains(e.target)){ p.remove(); document.removeEventListener('mousedown', _truncPopupOutside, true); } }
+document.addEventListener('click', e=>{
+  const td=e.target.closest && e.target.closest('td.trunc'); if(!td) return;
+  const txt=td.getAttribute('title'); if(!txt) return;
+  const old=document.getElementById('truncPop'); if(old) old.remove();
+  const pop=document.createElement('div'); pop.id='truncPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px 12px;max-width:420px;font-size:12.5px;line-height:1.5;white-space:normal;';
+  pop.textContent=txt;
+  document.body.appendChild(pop);
+  const r=td.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px';
+  pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-430)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', _truncPopupOutside, true),0);
+});
 
 
 
