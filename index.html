@@ -316,7 +316,7 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
   <aside class="side">
     <div class="brand">4housing</div>
     <div class="brand-sub">Compras &amp; Operaciones</div>
-    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 30-09-2026 · sección SOLP</div>
+    <div class="brand-sub" style="font-size:10px;opacity:.55;margin-top:2px">build 30-09-2026 · SOLP: alta/edición + importar histórico</div>
     <nav id="nav"></nav>
     <div class="sp"></div>
     <div class="data-actions">
@@ -985,7 +985,7 @@ function setHeader(view){
   }else if(view==='seguimiento'){
     document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportSeguimientoExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'');
   }else if(view==='solp'){
-    document.getElementById('topActions').innerHTML='<button class="btn ghost" id="solpBtn" onclick="solpSync()">Actualizar</button>';
+    document.getElementById('topActions').innerHTML=(canEditOG()?'<button class="btn" onclick="openSolpForm()">'+ICO.plus+'Nueva SOLP</button>':'');
   }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'){
     document.getElementById('topActions').innerHTML='';
   }else{
@@ -7874,60 +7874,55 @@ function card(title, meta, tag, inner){
 }
 
 /* ================================================================
-   SOLP — Tablero de solicitudes de pedido (lista SharePoint
-   "Seguimiento Compras 2026", copiada a Supabase por la función sync-solp)
-   Una SOLP = obra + número. El número 0 = sin SOLP asignada.
+   SOLP — Solicitudes de pedido por obra (reemplaza la Microsoft List
+   "Seguimiento Compras 2026" — de acá en más se carga y edita en la app).
+   Una SOLP = obra + número. El número 0 = sin SOLP asignada (cuenta como
+   ítem, no como SOLP). Series de numeración, DENTRO de cada obra:
+     1–999 Materiales · 1000–1999 Cálculo estructural · 2000–2999 Servicios · 3000+ Otros
    ================================================================ */
 const SOLP_CLOSED = new Set(['CUMPLIDA','ANULADA','RECHAZADA']);
-const SOLP_AUTO_MIN = 60; // al abrir, si la última actualización tiene más de 60 min, se actualiza sola
+const SOLP_ESTADOS = ['SIN ACCION','EN REVISION DE STOCK','STOCK DISPONIBLE','COTIZACION EN CURSO','GESTION DE COMPRAS EN CURSO','COMPARATIVA','EMITIDA','CUMPLIDA PARCIALMENTE','CUMPLIDA','ANULADA','RECHAZADA','PENDIENTE CERTIFICADO','PENDIENTE PROY Y DISEÑO','PENDIENTE DE PAGO','PENDIENTE FACTURA ML','PENDIENTE GERENCIA'];
 const SOLP_SERIES = [['mat','Materiales (1–999)'],['calc','Cálculo estructural (1000–1999)'],['serv','Servicios (2000–2999)'],['otros','Otros (3000+)'],['sin','Sin SOLP (0)']];
+const SOLP_RANGOS = {mat:[1,999], calc:[1000,1999], serv:[2000,2999], otros:[3000,999999], sin:[0,0]};
 const SOLP_COL = { ok:'#4f8a53', open:'#c9962a', void:'#b3b0a3', late:'#b0584f', ink:'#2b2b26', muted:'#94917f', line:'#e2dfd4', olive:'#5f7a4e' };
-const SOLP = { rows:null, last:null, syncing:false, autoTried:false, metric:'solp', charts:{},
+const SOLP = { rows:null, rubros:null, loading:false, metric:'solp', charts:{},
   F:{ o:new Set(), g:new Set(), e:new Set(), r:new Set(), s:new Set(), d1:'', d2:'' } };
 
 const solpSerie = s => (s===0||s==null) ? 'sin' : s<1000 ? 'mat' : s<2000 ? 'calc' : s<3000 ? 'serv' : 'otros';
 const solpDMY = d => d ? d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4) : '';
 const solpHoy = () => { const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10); };
 const solpLbl = (k,v) => v ? v : (k==='o'?'(sin obra)':k==='g'?'(sin asignar)':k==='r'?'(sin rubro)':'(vacío)');
+function solpObraNom(cod){ const p=(DIC.proyectos||[]).find(x=>x.codigo===cod); return p?p.nombre:(cod||''); }
+// Anticipación (días) = F. Necesidad − Fecha ingreso. "¿Pedido a tiempo?": SÍ si la anticipación
+// alcanza los Días Compras del rubro; NO si no alcanza; SIN FECHA / SIN DÍAS si falta el dato — se
+// calcula al vuelo (no se guarda), igual que el resto de los valores derivados de esta app.
+function solpAntic(x){
+  if(!x.f_necesidad || !x.fecha_ingreso) return {dias:null, aTiempo:'SIN FECHA'};
+  const dias=Math.round((new Date(x.f_necesidad+'T00:00:00')-new Date(x.fecha_ingreso+'T00:00:00'))/86400000);
+  if(x.dias_compras==null || x.dias_compras===0) return {dias, aTiempo:'SIN DIAS'};
+  return {dias, aTiempo: dias>=(+x.dias_compras) ? 'SI' : 'NO'};
+}
 
 async function solpLoad(){
-  const all=[];
-  for(let from=0;;from+=1000){
-    const chunk = await sbFetch('/solp_items?select=id,obra,solp,gestiona,estado,rubro,fecha_ingreso,f_necesidad,fecha_entrega,pedido_a_tiempo,proveedor&order=id&limit=1000&offset='+from, {method:'GET', prefer:''});
-    all.push(...chunk);
-    if(chunk.length<1000) break;
-  }
-  const last = await sbFetch('/solp_sync?select=terminado_at,usuario,filas,ok,detalle&ok=eq.true&order=terminado_at.desc&limit=1', {method:'GET', prefer:''});
-  SOLP.last = last[0] || null;
-  SOLP.rows = all.map(r=>({ ...r, serie:solpSerie(r.solp), closed:SOLP_CLOSED.has(r.estado||'') }));
-}
-
-async function solpSync(){
-  if(SOLP.syncing) return;
-  SOLP.syncing=true; solpPaintStatus();
+  SOLP.loading=true;
   try{
-    const { data, error } = await sbClient.functions.invoke('sync-solp', { body:{} });
-    if(error) throw error;
-    if(!data || !data.ok) throw new Error((data&&data.error)||'Error desconocido');
-    if(data.avisos && data.avisos.length) toast('Actualizado con avisos: '+data.avisos.join(' · '));
-    else toast('SOLP actualizadas: '+data.filas+' ítems.');
-    await solpLoad();
-  }catch(e){
-    toast('No se pudo actualizar desde SharePoint: '+(e.message||e));
-  }finally{
-    SOLP.syncing=false;
-    if(current==='solp') renderSolp();
-  }
+    const [items, rubros] = await Promise.all([
+      sbFetchAll('/compras_solp_items?select=*&order=id.asc'),
+      sbFetchAll('/compras_solp_rubros?select=*&order=nombre.asc'),
+    ]);
+    SOLP.rubros = rubros||[];
+    SOLP.rows = (items||[]).map(r=>{
+      const a=solpAntic(r);
+      return { ...r, obra:solpObraNom(r.obra_cod), serie:solpSerie(r.solp), closed:SOLP_CLOSED.has(r.estado||''), anticipacion:a.dias, pedido_a_tiempo:a.aTiempo };
+    });
+  } finally { SOLP.loading=false; }
 }
-window.solpSync=solpSync;
-
-function solpPaintStatus(){
-  const el=document.getElementById('solpStatus'); if(!el) return;
-  if(SOLP.syncing){ el.innerHTML='Actualizando desde SharePoint…'; return; }
-  if(!SOLP.last){ el.innerHTML='Todavía no se actualizó nunca. Tocá <strong>Actualizar</strong>.'; return; }
-  const t=new Date(SOLP.last.terminado_at);
-  el.innerHTML='Última actualización: <strong>'+t.toLocaleDateString('es-AR')+' '+t.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})+'</strong> por '+esc(SOLP.last.usuario||'—')+' · '+(SOLP.last.filas||0)+' ítems';
-  const b=document.getElementById('solpBtn'); if(b) b.disabled=SOLP.syncing;
+function solpRubroDias(nombre){ const r=(SOLP.rubros||[]).find(x=>x.nombre===nombre); return r?r.dias_compra:null; }
+function solpNextNumero(obraCod, serieKey){
+  const [lo,hi]=SOLP_RANGOS[serieKey]||[0,0];
+  if(serieKey==='sin') return 0;
+  const nums=(SOLP.rows||[]).filter(r=>r.obra_cod===obraCod && r.solp>=lo && r.solp<=hi).map(r=>r.solp);
+  return nums.length ? Math.max(...nums)+1 : lo;
 }
 
 function solpPass(x, skip){
@@ -7993,17 +7988,234 @@ function solpBar(id, labels, data, keys, onPick){
       onHover:(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; }}});
 }
 
+/* ---- Alta / edición de una SOLP ---- */
+function openSolpForm(id){
+  if(!canEditOG()){ toast('No tenés permiso para cargar SOLP.'); return; }
+  const cur = id!=null ? (SOLP.rows||[]).find(x=>String(x.id)===String(id)) : {};
+  const serieVal = id!=null ? solpSerie(cur.solp) : 'mat';
+  const obraOpts = (DIC.proyectos||[]).slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')).map(p=>'<option value="'+esc(p.codigo)+'"'+(p.codigo===cur.obra_cod?' selected':'')+'>'+esc(p.nombre)+'</option>').join('');
+  const gestOpts = nombresComp().map(n=>'<option'+(n===cur.gestiona?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const estOpts = SOLP_ESTADOS.map(e=>'<option'+(e===(cur.estado||'SIN ACCION')?' selected':'')+'>'+esc(e)+'</option>').join('');
+  const rubOpts = (SOLP.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('');
+  const hoy=solpHoy();
+  const body='<div class="frow c2"><div class="field"><label>Obra</label><select id="sp_obra" onchange="solpFormRenumerar()"><option value="">— elegí —</option>'+obraOpts+'</select></div>'
+    +'<div class="field"><label>Estado</label><select id="sp_estado"><option value="">— elegí —</option>'+estOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Serie de SOLP</label><select id="sp_serie" onchange="solpFormRenumerar()"'+(id!=null?' disabled':'')+'>'+SOLP_SERIES.map(([k,l])=>'<option value="'+k+'"'+(k===serieVal?' selected':'')+'>'+l+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>N° SOLP</label><input id="sp_num" type="number" min="0" value="'+(id!=null?cur.solp:'')+'"></div></div>'
+    +'<div class="field"><label>Comprador (Gestiona)</label><select id="sp_gestiona"><option value="">— elegí —</option>'+gestOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Rubro</label><select id="sp_rubro" onchange="solpFormRubroChanged()"><option value="">— sin rubro —</option>'+rubOpts+'</select></div>'
+    +'<div class="field"><label>Días Compras</label><input id="sp_dias" type="number" min="0" value="'+(cur.dias_compras!=null?cur.dias_compras:'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Fecha ingreso SOLP</label><input id="sp_fingreso" type="date" value="'+esc(cur.fecha_ingreso||hoy)+'"></div>'
+    +'<div class="field"><label>F. Necesidad en obra S/Solp *</label><input id="sp_fnec" type="date" value="'+esc(cur.f_necesidad||'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>F. Necesidad S/Plani</label><input id="sp_fplani" type="date" value="'+esc(cur.f_necesidad_plani||'')+'"></div>'
+    +'<div class="field"><label>Fecha Entrega</label><input id="sp_fentrega" type="date" value="'+esc(cur.fecha_entrega||'')+'"></div></div>'
+    +'<div class="field"><label>Proveedor</label><input id="sp_prov" type="text" value="'+esc(cur.proveedor||'')+'"></div>'
+    +'<div class="frow c2"><div class="field"><label>N° OC</label><input id="sp_oc" type="text" value="'+esc(cur.num_oc||'')+'"></div>'
+    +'<div class="field"><label>N° OG</label><input id="sp_og" type="text" value="'+esc(cur.num_og||'')+'"></div></div>'
+    +'<div id="spMsg2" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarSolp('+(id!=null?id:'null')+')">Guardar</button>';
+  openModal(id!=null?'Editar SOLP '+esc(cur.obra_cod||'')+' · '+cur.solp:'Nueva SOLP', body, foot, 'wide');
+  if(id==null) solpFormRenumerar();
+}
+window.openSolpForm=openSolpForm;
+function solpFormRenumerar(){
+  const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
+  if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
+  if(!obraEl.value){ numEl.value=''; return; }
+  numEl.value = solpNextNumero(obraEl.value, serieEl.value);
+}
+window.solpFormRenumerar=solpFormRenumerar;
+function solpFormRubroChanged(){
+  const rEl=document.getElementById('sp_rubro'), dEl=document.getElementById('sp_dias'); if(!rEl||!dEl) return;
+  const d=solpRubroDias(rEl.value); if(d!=null) dEl.value=d;
+}
+window.solpFormRubroChanged=solpFormRubroChanged;
+(function(){ document.addEventListener('input', e=>{ if(e.target && e.target.id==='sp_num') e.target.dataset.touched='1'; }); })();
+
+async function guardarSolp(id){
+  const obra_cod=document.getElementById('sp_obra').value;
+  const estado=document.getElementById('sp_estado').value;
+  const solp=+document.getElementById('sp_num').value||0;
+  const gestiona=document.getElementById('sp_gestiona').value;
+  const rubro=document.getElementById('sp_rubro').value;
+  const dias_compras=document.getElementById('sp_dias').value===''?null:+document.getElementById('sp_dias').value;
+  const fecha_ingreso=document.getElementById('sp_fingreso').value;
+  const f_necesidad=document.getElementById('sp_fnec').value;
+  const f_necesidad_plani=document.getElementById('sp_fplani').value||null;
+  const fecha_entrega=document.getElementById('sp_fentrega').value||null;
+  const proveedor=document.getElementById('sp_prov').value.trim()||null;
+  const num_oc=document.getElementById('sp_oc').value.trim()||null;
+  const num_og=document.getElementById('sp_og').value.trim()||null;
+  const msg=document.getElementById('spMsg2');
+  if(!obra_cod){ toast('Elegí la obra.'); return; }
+  if(!estado){ toast('Elegí el estado.'); return; }
+  if(!fecha_ingreso){ toast('Ingresá la fecha de ingreso.'); return; }
+  if(!f_necesidad){ toast('La fecha de necesidad es obligatoria.'); return; }
+  const ahora=new Date().toISOString(), autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  const row={ obra_cod, solp, estado, gestiona:gestiona||null, rubro:rubro||null, dias_compras, fecha_ingreso, f_necesidad, f_necesidad_plani, fecha_entrega, proveedor, num_oc, num_og };
+  try{
+    if(id==null){ row.creado_por=autor; row.creado_en=ahora; await sbFetch('/compras_solp_items',{method:'POST',body:JSON.stringify(row)}); }
+    else{ row.actualizado_por=autor; row.actualizado_en=ahora; await sbFetch('/compras_solp_items?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); }
+    closeModal(); toast('SOLP guardada'); await solpLoad(); renderSolp();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
+}
+window.guardarSolp=guardarSolp;
+
+function askDelSolp(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar una SOLP.'); return; }
+  const s=(SOLP.rows||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  openModal('Eliminar SOLP', '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">Se borra el ítem '+esc(s.obra_cod)+' · SOLP '+s.solp+' — no se puede deshacer. ¿Confirmás?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelSolp('+id+')">Eliminar</button>');
+}
+window.askDelSolp=askDelSolp;
+async function confirmDelSolp(id){
+  if(!ROLE.admin) return;
+  await sbFetch('/compras_solp_items?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+  closeModal(); toast('SOLP eliminada'); await solpLoad(); renderSolp();
+}
+window.confirmDelSolp=confirmDelSolp;
+
+/* ---- Importar desde Excel (migración desde la Lista de SharePoint) ---- */
+function openSolpImportRubros(){
+  if(!ROLE.admin){ toast('Solo un administrador puede importar.'); return; }
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export a Excel de la lista "Rubros Base" de SharePoint (columnas Title y Dias). Reemplaza el catálogo de rubros por completo.</div>'
+    +'<div class="field"><label>Rubros Base (.xlsx) *</label><input id="spr_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="sprMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="solpImportRubros()">Importar</button>';
+  openModal('Importar Rubros Base', body, foot);
+}
+window.openSolpImportRubros=openSolpImportRubros;
+async function solpImportRubros(){
+  const f=(document.getElementById('spr_file').files||[])[0];
+  const msg=document.getElementById('sprMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'Title')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columna "Title".');
+    const H=rows[0]; const iT=_syncIdx(H,'Title'), iD=_syncIdx(H,'Dias','Días');
+    const out=[]; const vistos=new Set();
+    for(let r=1;r<rows.length;r++){
+      const nombre=_syncNorm(rows[r][iT]); if(!nombre || vistos.has(nombre.toUpperCase())) continue;
+      vistos.add(nombre.toUpperCase());
+      out.push({ nombre, dias_compra: iD>=0 ? (_syncNum(rows[r][iD])||null) : null });
+    }
+    if(!out.length) throw new Error('No encontré filas de datos.');
+    await sbFetch('/compras_solp_rubros?nombre=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+    for(let i=0;i<out.length;i+=500){ await sbFetch('/compras_solp_rubros',{method:'POST', body:JSON.stringify(out.slice(i,i+500))}); }
+    closeModal(); toast('Rubros importados: '+out.length); await solpLoad(); renderSolp();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.solpImportRubros=solpImportRubros;
+
+// Migración única del histórico: matchea Obra contra DIC.proyectos y Gestiona contra los compradores
+// (nombresComp()) por coincidencia de texto; lo que no matchea queda listado para revisar antes de
+// aplicar — no se adivina en silencio.
+let SOLP_IMPORT=null;
+function openSolpImportHistorico(){
+  if(!ROLE.admin){ toast('Solo un administrador puede importar el histórico.'); return; }
+  SOLP_IMPORT=null;
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export a Excel de la lista "Seguimiento Compras 2026" (Exportar a Excel desde SharePoint). Es una migración única: agrega estas filas a las que ya haya en <code>compras_solp_items</code>, no reemplaza nada. Revisá los "sin matchear" antes de aplicar.</div>'
+    +'<div class="field"><label>Seguimiento Compras 2026 (.xlsx) *</label><input id="sph_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="sphMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
+    +'<div id="sphReport" style="margin-top:12px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" id="sphBtn" onclick="solpImportHistoricoAnalizar()">Analizar</button>';
+  openModal('Importar histórico SOLP (una sola vez)', body, foot, 'xwide');
+}
+window.openSolpImportHistorico=openSolpImportHistorico;
+function _solpMatchObra(txt){
+  const t=_syncNorm(txt).toUpperCase(); if(!t) return null;
+  const list=DIC.proyectos||[];
+  return list.find(p=>p.codigo.toUpperCase()===t) || list.find(p=>t.includes(p.codigo.toUpperCase())) || list.find(p=>p.nombre.toUpperCase()===t) || null;
+}
+function _solpMatchGestiona(txt){
+  const t=_syncNorm(txt).toUpperCase(); if(!t) return null;
+  return nombresComp().find(n=>n.toUpperCase()===t) || nombresComp().find(n=>t.includes(n.toUpperCase())||n.toUpperCase().includes(t)) || null;
+}
+async function solpImportHistoricoAnalizar(){
+  const f=(document.getElementById('sph_file').files||[])[0];
+  const msg=document.getElementById('sphMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'SOLP')>=0 && _syncIdx(h,'Obra')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "SOLP" y "Obra".');
+    const H=rows[0];
+    const idx={
+      solp:_syncIdx(H,'SOLP'), obra:_syncIdx(H,'Obra'), estado:_syncIdx(H,'Estado'), gestiona:_syncIdx(H,'Gestiona'),
+      rubro:_syncIdx(H,'Rubro L','RubroL','Rubro'), dias:_syncIdx(H,'Días Compras','Dias Compras','Verificacion'),
+      fingreso:_syncIdx(H,'Fecha ingreso SOLP','FECHADEINGRESOSOLP'), fnec:_syncIdx(H,'F. Necesidad S/Solp','F. Necesidad en Obra S/Solp'),
+      fplani:_syncIdx(H,'F. Necesidad S/Plani'), fentrega:_syncIdx(H,'Fecha Entrega'),
+      prov:_syncIdx(H,'Proveedor'), oc:_syncIdx(H,'NumOC','N° OC'), og:_syncIdx(H,'NumOG','N° OG'),
+    };
+    const listos=[], sinObra=[], sinGestiona=[];
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]; const obraTxt=_syncNorm(row[idx.obra]); if(!obraTxt && idx.solp>=0 && row[idx.solp]==null) continue;
+      const obraM=_solpMatchObra(obraTxt);
+      const gestTxt=idx.gestiona>=0?_syncNorm(row[idx.gestiona]):'';
+      const gestM=gestTxt?_solpMatchGestiona(gestTxt):null;
+      const item={
+        obra_cod: obraM?obraM.codigo:null, obra_txt:obraTxt,
+        solp: idx.solp>=0?(_syncNum(row[idx.solp])||0):0,
+        estado: idx.estado>=0?_syncNorm(row[idx.estado]):'',
+        gestiona: gestM, gestiona_txt:gestTxt,
+        rubro: idx.rubro>=0?_syncNorm(row[idx.rubro]):'',
+        dias_compras: idx.dias>=0?(_syncNum(row[idx.dias])||null):null,
+        fecha_ingreso: idx.fingreso>=0?(_syncFechaISO(row[idx.fingreso])||null):null,
+        f_necesidad: idx.fnec>=0?(_syncFechaISO(row[idx.fnec])||null):null,
+        f_necesidad_plani: idx.fplani>=0?(_syncFechaISO(row[idx.fplani])||null):null,
+        fecha_entrega: idx.fentrega>=0?(_syncFechaISO(row[idx.fentrega])||null):null,
+        proveedor: idx.prov>=0?(_syncNorm(row[idx.prov])||null):null,
+        num_oc: idx.oc>=0?(_syncNorm(row[idx.oc])||null):null,
+        num_og: idx.og>=0?(_syncNorm(row[idx.og])||null):null,
+      };
+      if(!obraM) sinObra.push(item);
+      else if(gestTxt && !gestM) sinGestiona.push(item);
+      else listos.push(item);
+    }
+    if(!listos.length && !sinObra.length && !sinGestiona.length) throw new Error('No encontré filas de datos.');
+    SOLP_IMPORT={listos, sinObra, sinGestiona};
+    renderSolpImportReport();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error al leer: '+(e.message||e); }
+}
+window.solpImportHistoricoAnalizar=solpImportHistoricoAnalizar;
+function renderSolpImportReport(){
+  const box=document.getElementById('sphReport'), msg=document.getElementById('sphMsg'); if(!box) return;
+  const s=SOLP_IMPORT; if(!s){ box.innerHTML=''; return; }
+  if(msg) msg.textContent='Leído.';
+  const tabla=(arr,cols)=>'<div class="dic-scroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+arr.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<span class="badge b-verde">Listos para importar: '+s.listos.length+'</span>'
+    +'<span class="badge b-rojo">Sin matchear obra: '+s.sinObra.length+'</span>'
+    +'<span class="badge b-ambar">Sin matchear comprador: '+s.sinGestiona.length+'</span></div>';
+  if(s.sinObra.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#c62828">Sin matchear obra — no se importan (revisá el texto contra el catálogo de Proyectos)</div>'+tabla(s.sinObra,[['Obra (texto original)',r=>r.obra_txt],['SOLP',r=>r.solp],['Estado',r=>r.estado]]);
+  if(s.sinGestiona.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Sin matchear comprador — se importan igual, sin "Gestiona"</div>'+tabla(s.sinGestiona,[['Obra',r=>r.obra_txt],['SOLP',r=>r.solp],['Gestiona (texto original)',r=>r.gestiona_txt]]);
+  h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Listos para importar</div>'+tabla(s.listos,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Estado',r=>r.estado],['Comprador',r=>r.gestiona||'—']]);
+  box.innerHTML=h;
+  const btn=document.getElementById('sphBtn');
+  if(btn){ const n=s.listos.length+s.sinGestiona.length; btn.textContent=n?('Importar ('+n+')'):'Nada para importar'; btn.setAttribute('onclick', n?'solpImportHistoricoAplicar()':''); }
+}
+window.renderSolpImportReport=renderSolpImportReport;
+async function solpImportHistoricoAplicar(){
+  const s=SOLP_IMPORT; if(!s) return;
+  const msg=document.getElementById('sphMsg');
+  const filas=[...s.listos, ...s.sinGestiona].map(r=>({obra_cod:r.obra_cod, solp:r.solp, estado:r.estado||'SIN ACCION', gestiona:r.gestiona, rubro:r.rubro||null, dias_compras:r.dias_compras, fecha_ingreso:r.fecha_ingreso, f_necesidad:r.f_necesidad, f_necesidad_plani:r.f_necesidad_plani, fecha_entrega:r.fecha_entrega, proveedor:r.proveedor, num_oc:r.num_oc, num_og:r.num_og}));
+  if(!filas.length){ if(msg)msg.textContent='Nada para importar.'; return; }
+  if(msg)msg.textContent='Importando '+filas.length+'…';
+  try{
+    for(let i=0;i<filas.length;i+=500){ await sbFetch('/compras_solp_items',{method:'POST', body:JSON.stringify(filas.slice(i,i+500))}); }
+    closeModal(); toast('Histórico importado: '+filas.length+' ítems'); await solpLoad(); renderSolp();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
+}
+window.solpImportHistoricoAplicar=solpImportHistoricoAplicar;
+
 async function renderSolp(){
   if(DEMO_MODE){ C().innerHTML='<div class="empty">La sección SOLP necesita conexión a la nube (no funciona en modo demo).</div>'; return; }
   if(!SOLP.rows){
     C().innerHTML='<div class="empty">Cargando SOLP…</div>';
     try{ await solpLoad(); }catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
-  }
-  // Actualización automática al abrir, una vez por sesión, si los datos tienen más de SOLP_AUTO_MIN minutos
-  if(!SOLP.autoTried){
-    SOLP.autoTried=true;
-    const edad = SOLP.last ? (Date.now()-new Date(SOLP.last.terminado_at).getTime())/60000 : Infinity;
-    if(edad>SOLP_AUTO_MIN){ solpSync(); }
   }
   if(current!=='solp') return;
 
@@ -8011,7 +8223,7 @@ async function renderSolp(){
   const rows=SOLP.rows.filter(x=>solpPass(x));
   const sols=solpGroup(rows);
   const nf=n=>n.toLocaleString('es-AR');
-  const si=rows.filter(x=>x.pedido_a_tiempo==='SÍ').length, no=rows.filter(x=>x.pedido_a_tiempo==='NO').length;
+  const si=rows.filter(x=>x.pedido_a_tiempo==='SI').length, no=rows.filter(x=>x.pedido_a_tiempo==='NO').length;
 
   // Agregaciones
   const agg=(keysOf)=>{ const m=new Map();
@@ -8035,9 +8247,11 @@ async function renderSolp(){
   // Abiertas
   const abiertas=sols.filter(s=>s.open).sort((a,b)=>(a.fn||'9999').localeCompare(b.fn||'9999'));
   const LIM=150;
-  const tablaAb = abiertas.length ? '<div class="dic-scroll"><table class="grid solp-det"><thead><tr><th>Obra</th><th>SOLP</th><th>Comprador</th><th>Estado</th><th>Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Ítems</th><th></th></tr></thead><tbody>'
+  const puedeEditar=canEditOG();
+  const tablaAb = abiertas.length ? '<div class="dic-scroll"><table class="grid solp-det"><thead><tr><th>Obra</th><th>SOLP</th><th>Comprador</th><th>Estado</th><th>Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Ítems</th><th></th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
     + abiertas.slice(0,LIM).map(s=>{ const it=s.items.filter(x=>!x.closed);
-      return '<tr><td>'+esc(solpLbl('o',s.obra))+'</td><td style="text-align:right"><strong>'+s.solp+'</strong></td><td>'+esc([...s.gs].map(g=>solpLbl('g',g)).join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.estado||'—'))].join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.rubro||'—'))].join(', '))+'</td><td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+it.length+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td></tr>'; }).join('')
+      const accion=puedeEditar? '<td><div class="row-actions">'+it.map(x=>'<button class="iconbtn" title="Editar ítem" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button>').join('')+'</div></td>' : '';
+      return '<tr><td>'+esc(solpLbl('o',s.obra))+'</td><td style="text-align:right"><strong>'+s.solp+'</strong></td><td>'+esc([...s.gs].map(g=>solpLbl('g',g)).join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.estado||'—'))].join(', '))+'</td><td>'+esc([...new Set(it.map(x=>x.rubro||'—'))].join(', '))+'</td><td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+it.length+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('')
     + '</tbody></table></div>'+(abiertas.length>LIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+LIM+' de '+abiertas.length+'. Filtrá para ver el resto.</div>':'')
     : '<div class="empty">No hay SOLP abiertas con estos filtros.</div>';
 
@@ -8052,8 +8266,10 @@ async function renderSolp(){
 
   const kpi=(l,v,sub,col)=>'<div class="kpi"><div class="kpi-label">'+l+'</div><div class="kpi-value"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="kpi-sub">'+sub+'</div></div>';
 
+  const adminBtns = ROLE.admin ? '<button class="btn ghost sm" onclick="openSolpImportRubros()">Importar Rubros</button><button class="btn ghost sm" style="margin-left:6px" onclick="openSolpImportHistorico()">Importar histórico</button>' : '';
+
   C().innerHTML =
-    '<div class="solp-status"><span id="solpStatus"></span></div>'
+    '<div class="solp-status"><span id="solpStatus">'+nf(SOLP.rows.length)+' ítems cargados'+(SOLP.rubros?' · '+SOLP.rubros.length+' rubros':'')+'</span> <button class="btn ghost sm" onclick="solpRefrescar()">Recargar</button> '+adminBtns+'</div>'
     + '<div class="card solp-filters"><div class="solp-frow">'
       + solpMS('o','obra','Obra') + solpMS('g','gestiona','Comprador') + solpMS('e','estado','Estado') + solpMS('r','rubro','Rubro')
       + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
@@ -8078,15 +8294,17 @@ async function renderSolp(){
       + 'Cada SOLP toma un estado para las barras: abierta si tiene algún ítem sin cerrar (cerrado = CUMPLIDA, ANULADA o RECHAZADA); si no, cumplida o anulada. '
       + 'Si una SOLP tiene ítems de más de un comprador, cuenta para cada uno. Vencida = abierta con algún ítem cuya F. Necesidad S/Solp ya pasó.</div>';
 
-  solpPaintStatus();
   if(!window.Chart){ toast('No se pudo cargar la librería de gráficos. Revisá la conexión.'); return; }
   solpBar('solpCO', byO.map(d=>solpLbl('o',d.k)), byO, byO.map(d=>d.k), v=>solpOnly('o',v));
   solpBar('solpCG', byG.map(d=>solpLbl('g',d.k)), byG, byG.map(d=>d.k), v=>solpOnly('g',v));
   document.querySelectorAll('.solp-ms').forEach(d=>d.addEventListener('toggle',()=>{ if(d.open){ SOLP.open=d.dataset.k; document.querySelectorAll('.solp-ms').forEach(o=>{ if(o!==d) o.open=false; }); } else if(SOLP.open===d.dataset.k) SOLP.open=null; }));
 }
 window.renderSolp=renderSolp;
+async function solpRefrescar(){ await solpLoad(); renderSolp(); toast('SOLP recargadas'); }
+window.solpRefrescar=solpRefrescar;
 
 document.addEventListener('click',e=>{ if(current!=='solp') return; if(!e.target.closest('.solp-ms')){ document.querySelectorAll('.solp-ms[open]').forEach(d=>d.open=false); SOLP.open=null; } });
+
 
 
 function authScreen(msg, btn){
