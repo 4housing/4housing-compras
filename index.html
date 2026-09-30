@@ -3775,7 +3775,7 @@ function openSolicitudPagoForm(id){
   const s=id!=null?(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)):null;
   const cur=s||{};
   const provVal = cur.proveedor_cod ? (cur.proveedor_cod+' — '+(cur.proveedor||'')) : '';
-  const compOpts = nombresComp().map(n=>'<option'+(n===cur.comprador?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const compOpts = nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===cur.comprador?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('');
   const proyOpts = auxOpts('3').map(o=>'<option value="'+esc(o.cod)+'"'+(cur.proyecto_cod===o.cod?' selected':'')+'>'+esc(o.cod)+' · '+esc(o.desc)+'</option>').join('');
   const monOpts = ['ARS','USD'].map(m=>'<option value="'+m+'"'+((cur.moneda||'ARS')===m?' selected':'')+'>'+(m==='USD'?'Dólares':'Pesos')+'</option>').join('');
   const body='<div class="field"><label>Proveedor</label><input id="sp_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProvSol()" oninput="comboProvSol()" onblur="comboHideDelayed()"></div>'
@@ -5133,7 +5133,7 @@ function openCertPanel(){
   let campoCert;
   if(ROLE.admin){
     const cur=OG_FILTRO.certificador||'';
-    const opts='<option value="">— elegí un nombre —</option>'+nombresCert().map(n=>'<option'+(n===cur?' selected':'')+'>'+esc(n)+'</option>').join('');
+    const opts='<option value="">— elegí un nombre —</option>'+nombresCert().map(n=>'<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('');
     campoCert='<div class="field"><label>Certificador</label><select id="cp_cert" onchange="renderCertPanel()">'+opts+'</select></div>'
       +'<div style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">Como admin podés ver las OG de cualquier certificador. Elegí un nombre para ver sus pendientes.</div>';
   }else{
@@ -5222,13 +5222,16 @@ function openOG(id){
   OG_ITEMS = (cur.items||[]).map((it,idx)=>({...it, _locked: o ? (itemAcumPct(o, idx)>0 || itemCerradoPct(it)>0) : false}));
   const nextNum = String(Math.max(1999,...(mem.ogs||[]).map(x=>+x.numero||0))+1);
   const optSel=(arr,val)=>'<option value="">— elegí —</option>'+arr.map(x=>'<option'+(x===val?' selected':'')+'>'+esc(x)+'</option>').join('');
+  // Igual que optSel, pero para listas de nombres "Apellido, Nombre": muestra "Apellido, N" (más
+  // corto y legible en el desplegable) sin perder el valor real que se guarda (el nombre completo).
+  const optSelNombre=(arr,val)=>'<option value="">— elegí —</option>'+arr.map(x=>'<option value="'+esc(x)+'"'+(x===val?' selected':'')+'>'+esc(ogxName(x))+'</option>').join('');
   // Igual que optSel pero con "No Aplica" como primera opción y valor por defecto (para OG nueva)
   const optSelNA=(arr,val)=>{ const v=val||'No Aplica'; return '<option'+(v==='No Aplica'?' selected':'')+'>No Aplica</option>'+arr.map(x=>'<option'+(x===v?' selected':'')+'>'+esc(x)+'</option>').join(''); };
   const provDL=(typeof DIC!=='undefined'?DIC.proveedores:[]).map(v=>'<option value="'+esc(v.codigo+' — '+(v.razon||v.comercial))+'"></option>').join('');
   const provVal = cur.proveedor_cod ? (cur.proveedor_cod+' — '+(cur.proveedor||'')) : '';
-  const certOpts=optSel(nombresCert(),cur.certificador);
+  const certOpts=optSelNombre(nombresCert(),cur.certificador);
   // Comprador: cada usuario no-admin solo puede figurar como sí mismo (tanto al crear como al editar lo suyo).
-  const compOpts = ROLE.admin ? optSel(nombresComp(),cur.comprador) : '<option selected>'+esc(MI_NOMBRE||cur.comprador||'(sin nombre asociado)')+'</option>';
+  const compOpts = ROLE.admin ? optSelNombre(nombresComp(),cur.comprador) : '<option selected>'+esc(MI_NOMBRE||cur.comprador||'(sin nombre asociado)')+'</option>';
   const condOpts=optSel(CONDICION_OPC,cur.condicion);
   const monOpts=optSel(MONEDA_OPC,cur.moneda);
   const lugarOpts=optSel(LUGAR_PAGO_OPC,cur.lugar_pago||'La Huella');
@@ -8212,7 +8215,7 @@ function openSolpForm(id){
   const cur = id!=null ? (SOLP.rows||[]).find(x=>String(x.id)===String(id)) : {};
   const serieVal = id!=null ? solpSerie(cur.solp) : 'mat';
   const obraOpts = solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es')).map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===cur.obra_cod?' selected':'')+'>'+esc(p.desc)+'</option>').join('');
-  const gestOpts = nombresComp().map(n=>'<option'+(n===cur.gestiona?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const gestOpts = nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===cur.gestiona?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('');
   const estOpts = SOLP_ESTADOS.map(e=>'<option'+(e===(cur.estado||'SIN ACCION')?' selected':'')+'>'+esc(e)+'</option>').join('');
   const rubOpts = (SOLP.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('');
   const hoy=solpHoy();
