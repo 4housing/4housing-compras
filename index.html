@@ -7891,6 +7891,14 @@ const SOLP_ESTADOS = ['SIN ACCION','EN REVISION DE STOCK','STOCK DISPONIBLE','CO
 const SOLP_SERIES = [['mat','Materiales (1–999)'],['calc','Cálculo estructural (1000–1999)'],['serv','Servicios (2000–2999)'],['otros','Otros (3000+)'],['sin','Sin SOLP (0)']];
 const SOLP_RANGOS = {mat:[1,999], calc:[1000,1999], serv:[2000,2999], otros:[3000,999999], sin:[0,0]};
 const SOLP_COL = { ok:'#4f8a53', open:'#c9962a', void:'#b3b0a3', late:'#b0584f', ink:'#2b2b26', muted:'#94917f', line:'#e2dfd4', olive:'#5f7a4e' };
+// Orden fijo de compradores para la matriz Obra × comprador (pedido de Micaela, no alfabético ni por
+// volumen). Los que no estén en esta lista quedan al final, alfabético.
+const SOLP_COMPRADOR_ORDEN=['Forastieri Palacios, Gonzalo','Di Meo, Camila Belen','Liendro, Andrea Belen','Seoane, Micaela','Spinetto, Pablo','Carranza, Alexis Damian'];
+function solpOrdenComprador(a,b){
+  const ia=SOLP_COMPRADOR_ORDEN.indexOf(a), ib=SOLP_COMPRADOR_ORDEN.indexOf(b);
+  if(ia>=0||ib>=0) return (ia<0?999:ia)-(ib<0?999:ib);
+  return a.localeCompare(b,'es');
+}
 const SOLP = { rows:null, rubros:null, loading:false, metric:'solp', tab:'resumen', charts:{},
   F:{ o:new Set(), g:new Set(), e:new Set(), r:new Set(), s:new Set(), d1:'', d2:'' } };
 
@@ -8406,7 +8414,7 @@ async function renderSolp(){
   const byG = agg(metric==='solp'? s=>[...s.gs] : x=>[x.gestiona||'']);
 
   // Matriz obra × comprador
-  const gs=[...new Set(sols.flatMap(s=>[...s.gs]))].sort((a,b)=>a.localeCompare(b));
+  const gs=[...new Set(sols.flatMap(s=>[...s.gs]))].sort(solpOrdenComprador);
   const cell=new Map(); for(const s of sols) for(const g of s.gs){ const k=s.obra+'|'+g; cell.set(k,(cell.get(k)||0)+1); }
   const max=Math.max(1,...cell.values());
   const shade=n=>{ if(!n) return ''; const a=0.12+0.7*n/max; return 'background:rgba(95,122,78,'+a.toFixed(2)+');'+(a>.5?'color:#fff;':''); };
