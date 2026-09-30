@@ -33,6 +33,11 @@ pañol, herramientas, mantenimiento, stock). Parte del portal unificado 4housing
 
 ## Reglas de trabajo — NO NEGOCIABLES
 
+> **Criterio, no candado.** Estas reglas son el default. Se pueden saltar si el dueño
+> de la decisión (Pablo) lo resuelve explícitamente — pero Claude debe **advertir ANTES**,
+> con claridad, que la acción incumple tal regla y qué riesgo tiene, y esperar el OK.
+> Claude nunca rompe una regla por su cuenta ni en silencio.
+
 1. **No romper lo que ya funciona.** Preferí agregar antes que modificar. Si tocás
    código compartido, `grep` de todos los usos primero. Probá lo que tocaste, no solo
    lo que agregaste.
