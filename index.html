@@ -8334,10 +8334,13 @@ async function renderSolp(){
   const detOrd=rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||''));
   const atiempoBadge=v=>v==='SI'?'<span class="badge b-verde">Sí</span>':v==='NO'?'<span class="badge b-rojo">No</span>':'<span class="badge b-gris">'+(v==='SIN DIAS'?'Sin días':'Sin fecha')+'</span>';
   const td=(v,cls)=>'<td'+(cls?' class="'+cls+'"':'')+(cls==='trunc'?' title="'+esc(v||'')+'"':'')+'>'+esc(v==null?'':v)+'</td>';
+  const DET_COLS=['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Ingreso','Necesidad','Necesidad S/Plani','Entrega','Proveedor','N°OC','N°OG','A tiempo','Cotización solicitada','Condición Pago','Observaciones'];
+  const detRow=x=>[solpLbl('o',x.obra),x.solp,x.estado,solpLbl('g',x.gestiona),x.rubro,x.dias_compras,solpDMY(x.fecha_ingreso),solpDMY(x.f_necesidad),solpDMY(x.f_necesidad_plani),solpDMY(x.fecha_entrega),x.proveedor,x.num_oc,x.num_og,x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'),x.cotizacion_solicitada,x.condicion_pago,x.observaciones];
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
-      + '<th class="trunc">Obra</th><th>SOLP</th><th>Estado</th><th>Comprador</th><th class="trunc">Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Entrega</th><th class="trunc">Proveedor</th><th>N°OC</th><th>N°OG</th><th>A tiempo</th>'+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
-    + detOrd.slice(0,DLIM).map(x=>'<tr>'+td(solpLbl('o',x.obra),'trunc')+td(x.solp)+td(x.estado)+td(solpLbl('g',x.gestiona))+td(x.rubro,'trunc')+td(solpDMY(x.fecha_ingreso))+td(solpDMY(x.f_necesidad))+td(solpDMY(x.fecha_entrega))+td(x.proveedor,'trunc')+td(x.num_oc)+td(x.num_og)+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
-    + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto.</div>':'');
+      + DET_COLS.map(c=>'<th>'+c+'</th>').join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
+    + detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
+        return '<tr>'+td(r[0],'trunc')+td(r[1])+td(r[2])+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9])+td(r[10],'trunc')+td(r[11])+td(r[12])+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('')
+    + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
       + kpi('SOLP',nf(sols.length),'Obra + número, sin duplicar')
@@ -8366,7 +8369,9 @@ async function renderSolp(){
       + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
     + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')+'</div>'
     + '<div class="solp-tags">'+tagHtml()+'</div></div>'
-    + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(rows.length)+' con estos filtros</span></div>'+detalleHtml+'</div>' : resumenHtml);
+    + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(rows.length)+' con estos filtros</span>'
+        + '<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'.solp-full\')">Auto-ajustar columnas</button>'
+        + '<button class="btn ghost sm" style="margin-left:8px" onclick="solpExportDetalleExcel()">Exportar a Excel</button></div>'+detalleHtml+'</div>' : resumenHtml);
 
   if(SOLP.tab!=='resumen') return;
   if(!window.Chart){ toast('No se pudo cargar la librería de gráficos. Revisá la conexión.'); return; }
@@ -8377,6 +8382,34 @@ async function renderSolp(){
 window.renderSolp=renderSolp;
 async function solpRefrescar(){ await solpLoad(); renderSolp(); toast('SOLP recargadas'); }
 window.solpRefrescar=solpRefrescar;
+
+// Vuelve la tabla a su ancho natural (borra el ancho guardado por el usuario para esta tabla, en
+// localStorage y en compras_ui_prefs) — "Auto-ajustar columnas".
+function tblAutofit(sel){
+  const table=document.querySelector(sel); if(!table) return;
+  const sig=colResizeSig(table);
+  try{ localStorage.removeItem(sig); }catch(e){}
+  if(UI_PREFS_COLW) delete UI_PREFS_COLW[sig];
+  if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
+    sbFetch('/compras_ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW||{}}),prefer:'resolution=merge-duplicates,return=minimal'}).catch(()=>{});
+  }
+  table.style.tableLayout=''; table.classList.remove('grid-fixed');
+  table.querySelectorAll('thead th').forEach(th=>{ th.style.width=''; });
+}
+window.tblAutofit=tblAutofit;
+
+function solpExportDetalleExcel(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  const rows=(SOLP.rows||[]).filter(x=>solpPass(x));
+  if(!rows.length){ toast('No hay filas para exportar.'); return; }
+  const ord=rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||''));
+  const aoa=[['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Fecha ingreso SOLP','F. Necesidad S/Solp','F. Necesidad S/Plani','Fecha Entrega','Proveedor','N°OC','N°OG','¿Pedido a tiempo?','Cotización solicitada','Condición Pago','Observaciones']];
+  ord.forEach(x=>{ aoa.push([solpLbl('o',x.obra), x.solp, x.estado||'', x.gestiona||'', x.rubro||'', x.dias_compras!=null?x.dias_compras:'', x.fecha_ingreso?solpDMY(x.fecha_ingreso):'', x.f_necesidad?solpDMY(x.f_necesidad):'', x.f_necesidad_plani?solpDMY(x.f_necesidad_plani):'', x.fecha_entrega?solpDMY(x.fecha_entrega):'', x.proveedor||'', x.num_oc||'', x.num_og||'', x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'), x.cotizacion_solicitada||'', x.condicion_pago||'', x.observaciones||'']); });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'SOLP');
+  XLSX.writeFile(wb, 'SOLP_detalle_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+window.solpExportDetalleExcel=solpExportDetalleExcel;
 
 document.addEventListener('click',e=>{ if(current!=='solp') return; if(!e.target.closest('.solp-ms')){ document.querySelectorAll('.solp-ms[open]').forEach(d=>d.open=false); SOLP.open=null; } });
 
