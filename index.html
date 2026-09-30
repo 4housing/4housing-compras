@@ -8872,7 +8872,9 @@ function evalProvCriticosHtml(){
 const _EVALPROV_SUFIJOS=/\b(s\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?h\.?|sociedad de hecho|sociedad anonima)\b/g;
 function _evalProvNormNombre(s){
   let t=_syncFold(s);
-  t=t.replace(/[.,\-]/g,' ').replace(_EVALPROV_SUFIJOS,' ').replace(/\s+/g,' ').trim();
+  // Saca la razón social ANTES de convertir los puntos en espacios: "s.a." tiene que
+  // seguir siendo "s.a." (contiguo) cuando el regex de sufijos la busca, si no nunca matchea.
+  t=t.replace(_EVALPROV_SUFIJOS,' ').replace(/[.,\-]/g,' ').replace(/\s+/g,' ').trim();
   return t;
 }
 function _evalProvMatchProveedor(texto){
