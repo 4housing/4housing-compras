@@ -7906,6 +7906,23 @@ const solpLbl = (k,v) => !v ? (k==='o'?'(sin obra)':k==='g'?'(sin asignar)':k===
 // ese catálogo aparte quedó chico y nunca se sincroniza; Clasificación sí, con "Sincronizar con Tango".
 function solpObrasDic(){ return (CLASIF_ALL||[]).filter(r=>(r.categoria==='PROYECTO'||r.categoria==='EERR') && String(r.habil_comp||'').toLowerCase()==='si'); }
 function solpObraNom(cod){ const p=solpObrasDic().find(x=>x.cod===cod); return p?p.desc:(cod||''); }
+// Proveedor(es): se guarda como código, o varios separados por ";" (compras_proveedores, mismo
+// diccionario que usa la OG). El nombre se resuelve al vuelo, no se guarda.
+// "Especiales": para pedidos sin proveedor real de Tango (retiro de stock interno, pañol, o casos
+// mixtos) — el proveedor real, si lo hay, va en Observaciones. "4H" del List viejo se unifica en STOCK.
+const SOLP_PROV_ESPECIALES=['STOCK','PAÑOL','VARIOS'];
+function solpProvNom(codStr){
+  if(!codStr) return '';
+  return String(codStr).split(';').map(c=>c.trim()).filter(Boolean).map(c=>{ const p=(DIC.proveedores||[]).find(x=>x.codigo===c); return p?(p.razon||p.comercial||c):c; }).join('; ');
+}
+function _solpProvValidos(raw){
+  if(!raw) return [];
+  const cat=new Set((DIC.proveedores||[]).map(p=>p.codigo.toUpperCase()));
+  const especiales=new Set(SOLP_PROV_ESPECIALES.map(c=>c.toUpperCase()));
+  return String(raw).split(/[;,]/).map(c=>c.trim()).filter(Boolean)
+    .map(c=>c.toUpperCase()==='4H'?'STOCK':(especiales.has(c.toUpperCase())?c.toUpperCase():c))
+    .filter(c=>{ const cu=c.toUpperCase(); return cat.has(cu)||especiales.has(cu); });
+}
 // Anticipación (días) = F. Necesidad − Fecha ingreso. "¿Pedido a tiempo?": SÍ si la anticipación
 // alcanza los Días Compras del rubro; NO si no alcanza; SIN FECHA / SIN DÍAS si falta el dato — se
 // calcula al vuelo (no se guarda), igual que el resto de los valores derivados de esta app.
@@ -7926,7 +7943,7 @@ async function solpLoad(){
     SOLP.rubros = rubros||[];
     SOLP.rows = (items||[]).map(r=>{
       const a=solpAntic(r);
-      return { ...r, obra:solpObraNom(r.obra_cod), serie:solpSerie(r.solp), closed:SOLP_CLOSED.has(r.estado||''), anticipacion:a.dias, pedido_a_tiempo:a.aTiempo };
+      return { ...r, obra:solpObraNom(r.obra_cod), proveedor:solpProvNom(r.proveedor_cod), serie:solpSerie(r.solp), closed:SOLP_CLOSED.has(r.estado||''), anticipacion:a.dias, pedido_a_tiempo:a.aTiempo };
     });
   } finally { SOLP.loading=false; }
 }
@@ -7949,6 +7966,77 @@ function solpPass(x, skip){
   if(F.d1 && m<F.d1) return false;
   if(F.d2 && m>F.d2) return false;
   return true;
+}
+
+/* ---- Filtro y orden tipo Excel por columna, en la solapa Detalle (mismo patrón que Diccionarios) ---- */
+let SOLP_COL_FILTRO={};
+let SOLP_SORT=null;
+function solpColUnique(col){
+  const s=new Set(); let hasEmpty=false;
+  (SOLP._detBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
+}
+function solpColFilterActive(col){ return !!(SOLP_COL_FILTRO[col] && SOLP_COL_FILTRO[col].length); }
+function solpDetRowPass(row){
+  return Object.keys(SOLP_COL_FILTRO).every(col=>{ const allow=SOLP_COL_FILTRO[col]; if(!allow||!allow.length) return true; return allow.includes(String(row[col]==null?'':row[col])); });
+}
+function solpApplySort(rowsIn){
+  if(!SOLP_SORT) return rowsIn;
+  const {col,dir}=SOLP_SORT;
+  return rowsIn.slice().sort((a,b)=>String(a[col]==null?'':a[col]).localeCompare(String(b[col]==null?'':b[col]),'es',{numeric:true})*dir);
+}
+function solpSortToggle(col){
+  const cur=SOLP_SORT;
+  if(!cur || cur.col!==col) SOLP_SORT={col, dir:1};
+  else if(cur.dir===1) SOLP_SORT={col, dir:-1};
+  else SOLP_SORT=null;
+  renderSolp();
+}
+window.solpSortToggle=solpSortToggle;
+function closeSolpColFilter(){ const p=document.getElementById('dicFilterPop'); if(p) p.remove(); document.removeEventListener('mousedown', solpColFilterOutside, true); }
+function solpColFilterOutside(e){ const p=document.getElementById('dicFilterPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.dicfbtn'))) closeSolpColFilter(); }
+function openSolpColFilter(col, ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; closeSolpColFilter();
+  const vals=solpColUnique(col);
+  const sel = SOLP_COL_FILTRO[col] ? new Set(SOLP_COL_FILTRO[col]) : new Set(vals);
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
+  const pop=document.createElement('div'); pop.id='dicFilterPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="solpColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="solpColFilterToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="dicfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="solpColFilterApply(\''+col+'\')">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="solpColFilterClear(\''+col+'\')">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', solpColFilterOutside, true),0);
+}
+window.openSolpColFilter=openSolpColFilter;
+function solpColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
+window.solpColFilterSearch=solpColFilterSearch;
+function solpColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
+window.solpColFilterToggleAll=solpColFilterToggleAll;
+function solpColFilterApply(col){
+  const all=[...document.querySelectorAll('#dicfList .dicfchk')];
+  const visible=all.filter(c=>{ const it=c.closest('.dicfitem'); return it && it.style.display!=='none'; });
+  const chk=visible.filter(c=>c.checked).map(c=>c.value);
+  if(visible.length===all.length && chk.length===all.length){ delete SOLP_COL_FILTRO[col]; }
+  else { SOLP_COL_FILTRO[col]=chk; }
+  closeSolpColFilter(); renderSolp();
+}
+window.solpColFilterApply=solpColFilterApply;
+function solpColFilterClear(col){ delete SOLP_COL_FILTRO[col]; closeSolpColFilter(); renderSolp(); }
+window.solpColFilterClear=solpColFilterClear;
+function solpColFilterClearAll(){ SOLP_COL_FILTRO={}; renderSolp(); }
+window.solpColFilterClearAll=solpColFilterClearAll;
+function solpTh(label, col){
+  const active=solpColFilterActive(col);
+  const s=SOLP_SORT, sorting=s && s.col===col;
+  const sortArrow=sorting?(s.dir===1?' ▲':' ▼'):'';
+  return '<th style="white-space:nowrap">'
+    +'<span style="cursor:pointer;user-select:none" onclick="solpSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+sortArrow+'</span></span> '
+    +'<span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openSolpColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
 }
 
 function solpGroup(rows){
@@ -8024,7 +8112,7 @@ function openSolpForm(id){
     +'<div class="field"><label>F. Necesidad en obra S/Solp *</label><input id="sp_fnec" type="date" value="'+esc(cur.f_necesidad||'')+'"></div></div>'
     +'<div class="frow c2"><div class="field"><label>F. Necesidad S/Plani</label><input id="sp_fplani" type="date" value="'+esc(cur.f_necesidad_plani||'')+'"></div>'
     +'<div class="field"><label>Fecha Entrega</label><input id="sp_fentrega" type="date" value="'+esc(cur.fecha_entrega||'')+'"></div></div>'
-    +'<div class="field"><label>Proveedor</label><input id="sp_prov" type="text" value="'+esc(cur.proveedor||'')+'"></div>'
+    +'<div class="field"><label>Proveedor(es)</label><div id="sp_provChips" class="solp-tags" style="margin-bottom:6px"></div><input id="sp_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboSolpProv()" onblur="comboHideDelayed()"></div>'
     +'<div class="frow c2"><div class="field"><label>N° OC</label><input id="sp_oc" type="text" value="'+esc(cur.num_oc||'')+'"></div>'
     +'<div class="field"><label>N° OG</label><input id="sp_og" type="text" value="'+esc(cur.num_og||'')+'"></div></div>'
     +'<div class="field"><label>Observaciones</label><textarea id="sp_obs" rows="2">'+esc(cur.observaciones||'')+'</textarea></div>'
@@ -8033,9 +8121,30 @@ function openSolpForm(id){
     +'<div id="spMsg2" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarSolp('+(id!=null?id:'null')+')">Guardar</button>';
   openModal(id!=null?'Editar SOLP '+esc(cur.obra_cod||'')+' · '+cur.solp:'Nueva SOLP', body, foot, 'wide');
+  SOLP_FORM_PROVS=String(cur.proveedor_cod||'').split(';').map(c=>c.trim()).filter(Boolean).map(c=>{ const p=(DIC.proveedores||[]).find(x=>x.codigo===c); return {code:c, name:p?(p.razon||p.comercial||''):''}; });
+  const chipsEl=document.getElementById('sp_provChips'); if(chipsEl) chipsEl.innerHTML=solpProvChips();
   if(id==null) solpFormRenumerar();
 }
 window.openSolpForm=openSolpForm;
+let SOLP_FORM_PROVS=[];
+function solpProvChips(){
+  return SOLP_FORM_PROVS.map((p,i)=>'<span class="solp-tag">'+esc(p.code)+(p.name?' — '+esc(p.name):'')+'<button onclick="solpProvQuitar('+i+')" aria-label="Quitar">×</button></span>').join('') || '<span style="font-size:12px;color:var(--muted)">Sin proveedor</span>';
+}
+function solpProvQuitar(i){ SOLP_FORM_PROVS.splice(i,1); const el=document.getElementById('sp_provChips'); if(el) el.innerHTML=solpProvChips(); }
+window.solpProvQuitar=solpProvQuitar;
+function comboSolpProv(){
+  const inp=document.getElementById('sp_prov'); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  if(!q){ comboHide(); return; }
+  const src=(DIC.proveedores||[]);
+  const especiales=SOLP_PROV_ESPECIALES.filter(c=>c.toLowerCase().includes(q)).map(c=>({code:c,name:'(interno, sin proveedor de Tango)'}));
+  const items=especiales.concat(src.filter(p=>((p.codigo||'')+' '+(p.razon||'')+' '+(p.comercial||'')).toLowerCase().includes(q)).slice(0,80).map(p=>({code:p.codigo,name:p.razon||p.comercial||''})));
+  comboShow(inp, items, it=>{
+    if(!SOLP_FORM_PROVS.some(p=>p.code===it.code)) SOLP_FORM_PROVS.push(it);
+    inp.value=''; const el=document.getElementById('sp_provChips'); if(el) el.innerHTML=solpProvChips();
+  });
+}
+window.comboSolpProv=comboSolpProv;
 function solpFormRenumerar(){
   const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
   if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
@@ -8061,7 +8170,7 @@ async function guardarSolp(id){
   const f_necesidad=document.getElementById('sp_fnec').value;
   const f_necesidad_plani=document.getElementById('sp_fplani').value||null;
   const fecha_entrega=document.getElementById('sp_fentrega').value||null;
-  const proveedor=document.getElementById('sp_prov').value.trim()||null;
+  const proveedor_cod=SOLP_FORM_PROVS.map(p=>p.code).join(';')||null;
   const num_oc=document.getElementById('sp_oc').value.trim()||null;
   const num_og=document.getElementById('sp_og').value.trim()||null;
   const observaciones=document.getElementById('sp_obs').value.trim()||null;
@@ -8073,7 +8182,7 @@ async function guardarSolp(id){
   if(!fecha_ingreso){ toast('Ingresá la fecha de ingreso.'); return; }
   if(!f_necesidad){ toast('La fecha de necesidad es obligatoria.'); return; }
   const ahora=new Date().toISOString(), autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
-  const row={ obra_cod, solp, estado, gestiona:gestiona||null, rubro:rubro||null, dias_compras, fecha_ingreso, f_necesidad, f_necesidad_plani, fecha_entrega, proveedor, num_oc, num_og, observaciones, cotizacion_solicitada, condicion_pago };
+  const row={ obra_cod, solp, estado, gestiona:gestiona||null, rubro:rubro||null, dias_compras, fecha_ingreso, f_necesidad, f_necesidad_plani, fecha_entrega, proveedor_cod, num_oc, num_og, observaciones, cotizacion_solicitada, condicion_pago };
   try{
     if(id==null){ row.creado_por=autor; row.creado_en=ahora; await sbFetch('/compras_solp_items',{method:'POST',body:JSON.stringify(row)}); }
     else{ row.actualizado_por=autor; row.actualizado_en=ahora; await sbFetch('/compras_solp_items?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); }
@@ -8184,7 +8293,7 @@ function _solpMatchGestiona(txt){
 }
 // Huella para detectar ítems que ya están cargados (evita duplicar si se analiza/importa el mismo
 // archivo dos veces — no hay clave natural, así que se arma con los campos que identifican la fila).
-function _solpFingerprint(r){ return [r.obra_cod,r.solp,r.estado,r.gestiona,r.rubro,r.fecha_ingreso,r.f_necesidad,r.proveedor,r.num_oc,r.num_og].map(x=>x==null?'':String(x)).join('|'); }
+function _solpFingerprint(r){ return [r.obra_cod,r.solp,r.estado,r.gestiona,r.rubro,r.fecha_ingreso,r.f_necesidad,r.proveedor_cod,r.num_oc,r.num_og].map(x=>x==null?'':String(x)).join('|'); }
 async function solpImportHistoricoAnalizar(){
   const f=(document.getElementById('sph_file').files||[])[0];
   const msg=document.getElementById('sphMsg');
@@ -8200,7 +8309,8 @@ async function solpImportHistoricoAnalizar(){
       rubro:_syncIdx(H,'Rubro L','RubroL','Rubro'), dias:_syncIdx(H,'Días Compras','Dias Compras','Verificacion'),
       fingreso:_syncIdx(H,'Fecha ingreso SOLP','FECHADEINGRESOSOLP'), fnec:_syncIdx(H,'F. Necesidad S/Solp','F. Necesidad en Obra S/Solp'),
       fplani:_syncIdx(H,'F. Necesidad S/Plani'), fentrega:_syncIdx(H,'Fecha Entrega'),
-      prov:_syncIdx(H,'Proveedor'), oc:_syncIdx(H,'NumOC','N° OC','Num OC'), og:_syncIdx(H,'NumOG','N° OG','Num OG'),
+      prov:_syncIdx(H,'Cod Proveedor','COD PROVEEDOR','Proveedor'), provTxt:_syncIdx(H,'Datos Anteriores Proveedor','Datos Anteriores  Proveedor'),
+      oc:_syncIdx(H,'NumOC','N° OC','Num OC'), og:_syncIdx(H,'NumOG','N° OG','Num OG'),
       obs:_syncIdx(H,'Observaciones'), cotiz:_syncIdx(H,'Cotización solicitada','Cotizacion solicitada'), condpago:_syncIdx(H,'Condicion Pago','Condición Pago','Condición de Pago'),
     };
     const existentes=new Set((SOLP.rows||[]).map(_solpFingerprint));
@@ -8221,7 +8331,8 @@ async function solpImportHistoricoAnalizar(){
         f_necesidad: idx.fnec>=0?(_syncFechaISO(row[idx.fnec])||null):null,
         f_necesidad_plani: idx.fplani>=0?(_syncFechaISO(row[idx.fplani])||null):null,
         fecha_entrega: idx.fentrega>=0?(_syncFechaISO(row[idx.fentrega])||null):null,
-        proveedor: idx.prov>=0?(_syncNorm(row[idx.prov])||null):null,
+        proveedor_cod: idx.prov>=0?(_solpProvValidos(row[idx.prov]).join(';')||null):null,
+        proveedor_texto: idx.provTxt>=0?(_syncNorm(row[idx.provTxt])||null):(idx.prov>=0?(_syncNorm(row[idx.prov])||null):null),
         num_oc: idx.oc>=0?(_syncNorm(row[idx.oc])||null):null,
         num_og: idx.og>=0?(_syncNorm(row[idx.og])||null):null,
         observaciones: idx.obs>=0?(_syncNorm(row[idx.obs])||null):null,
@@ -8244,14 +8355,16 @@ function renderSolpImportReport(){
   const s=SOLP_IMPORT; if(!s){ box.innerHTML=''; return; }
   if(msg) msg.textContent='Leído.';
   const tabla=(arr,cols)=>'<div class="dic-scroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+arr.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  const sinProv=[...s.listos,...s.sinGestiona].filter(r=>r.proveedor_texto && !r.proveedor_cod).length;
   let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     +'<span class="badge b-verde">Listos para importar: '+s.listos.length+'</span>'
     +'<span class="badge b-ambar">Sin matchear comprador: '+s.sinGestiona.length+'</span>'
     +'<span class="badge b-rojo">Sin matchear obra: '+s.sinObra.length+'</span>'
+    +'<span class="badge b-ambar">Sin código de proveedor: '+sinProv+'</span>'
     +'<span class="badge b-gris">Ya estaban cargados: '+(s.yaExisten?s.yaExisten.length:0)+'</span></div>';
   if(s.sinObra.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#c62828">Sin matchear obra — no se importan (revisá el texto contra el catálogo de Proyectos)</div>'+tabla(s.sinObra,[['Obra (texto original)',r=>r.obra_txt],['SOLP',r=>r.solp],['Estado',r=>r.estado]]);
   if(s.sinGestiona.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Sin matchear comprador — se importan igual, sin "Gestiona"</div>'+tabla(s.sinGestiona,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Gestiona (texto original)',r=>r.gestiona_txt]]);
-  h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Listos para importar</div>'+tabla(s.listos,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Estado',r=>r.estado],['Comprador',r=>r.gestiona||'—']]);
+  h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Listos para importar</div>'+tabla(s.listos,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Estado',r=>r.estado],['Comprador',r=>r.gestiona||'—'],['Proveedor',r=>solpProvNom(r.proveedor_cod)||'(sin código)']]);
   box.innerHTML=h;
   const btn=document.getElementById('sphBtn');
   if(btn){ const n=s.listos.length+s.sinGestiona.length; btn.textContent=n?('Importar ('+n+')'):'Nada para importar'; btn.setAttribute('onclick', n?'solpImportHistoricoAplicar()':''); }
@@ -8260,7 +8373,7 @@ window.renderSolpImportReport=renderSolpImportReport;
 async function solpImportHistoricoAplicar(){
   const s=SOLP_IMPORT; if(!s) return;
   const msg=document.getElementById('sphMsg');
-  const filas=[...s.listos, ...s.sinGestiona].map(r=>({obra_cod:r.obra_cod, solp:r.solp, estado:r.estado||'SIN ACCION', gestiona:r.gestiona, rubro:r.rubro||null, dias_compras:r.dias_compras, fecha_ingreso:r.fecha_ingreso, f_necesidad:r.f_necesidad, f_necesidad_plani:r.f_necesidad_plani, fecha_entrega:r.fecha_entrega, proveedor:r.proveedor, num_oc:r.num_oc, num_og:r.num_og, observaciones:r.observaciones, cotizacion_solicitada:r.cotizacion_solicitada, condicion_pago:r.condicion_pago}));
+  const filas=[...s.listos, ...s.sinGestiona].map(r=>({obra_cod:r.obra_cod, solp:r.solp, estado:r.estado||'SIN ACCION', gestiona:r.gestiona, rubro:r.rubro||null, dias_compras:r.dias_compras, fecha_ingreso:r.fecha_ingreso, f_necesidad:r.f_necesidad, f_necesidad_plani:r.f_necesidad_plani, fecha_entrega:r.fecha_entrega, proveedor_cod:r.proveedor_cod, proveedor_texto:r.proveedor_texto, num_oc:r.num_oc, num_og:r.num_og, observaciones:r.observaciones, cotizacion_solicitada:r.cotizacion_solicitada, condicion_pago:r.condicion_pago}));
   if(!filas.length){ if(msg)msg.textContent='Nada para importar.'; return; }
   if(msg)msg.textContent='Importando '+filas.length+'…';
   try{
@@ -8328,18 +8441,21 @@ async function renderSolp(){
   const adminBtns = ROLE.admin ? '<button class="btn ghost sm" onclick="openSolpImportRubros()">Importar Rubros</button><button class="btn ghost sm" style="margin-left:6px" onclick="openSolpImportHistorico()">Importar histórico</button>' : '';
   const tabs='<div class="solp-tabs"><button class="'+(SOLP.tab==='resumen'?'on':'')+'" onclick="solpTab(\'resumen\')">Resumen</button><button class="'+(SOLP.tab==='detalle'?'on':'')+'" onclick="solpTab(\'detalle\')">Detalle</button></div>';
 
-  // Detalle: listado plano de TODOS los ítems (abiertos y cerrados) con columnas angostas, para
-  // revisar/exportar caso por caso — el Resumen (tablero) solo mostraba las SOLP abiertas.
+  // Detalle: listado plano de TODOS los ítems (abiertos y cerrados) con columnas angostas y filtro
+  // tipo Excel por columna (mismo patrón que Diccionarios) — el Resumen (tablero) solo mostraba las
+  // SOLP abiertas.
   const DLIM=500;
-  const detOrd=rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||''));
+  SOLP._detBase=rows;
+  const detFiltrado=rows.filter(solpDetRowPass);
+  const detOrd=solpApplySort(detFiltrado.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||'')));
   const atiempoBadge=v=>v==='SI'?'<span class="badge b-verde">Sí</span>':v==='NO'?'<span class="badge b-rojo">No</span>':'<span class="badge b-gris">'+(v==='SIN DIAS'?'Sin días':'Sin fecha')+'</span>';
   const td=(v,cls)=>'<td'+(cls?' class="'+cls+'"':'')+(cls==='trunc'?' title="'+esc(v||'')+'"':'')+'>'+esc(v==null?'':v)+'</td>';
-  const DET_COLS=['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Ingreso','Necesidad','Necesidad S/Plani','Entrega','Proveedor','N°OC','N°OG','A tiempo','Cotización solicitada','Condición Pago','Observaciones'];
-  const detRow=x=>[solpLbl('o',x.obra),x.solp,x.estado,solpLbl('g',x.gestiona),x.rubro,x.dias_compras,solpDMY(x.fecha_ingreso),solpDMY(x.f_necesidad),solpDMY(x.f_necesidad_plani),solpDMY(x.fecha_entrega),x.proveedor,x.num_oc,x.num_og,x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'),x.cotizacion_solicitada,x.condicion_pago,x.observaciones];
+  const DET_COLS=[['Obra','obra'],['SOLP','solp'],['Estado','estado'],['Comprador','gestiona'],['Rubro','rubro'],['Días Compras','dias_compras'],['Ingreso','fecha_ingreso'],['Necesidad','f_necesidad'],['Necesidad S/Plani','f_necesidad_plani'],['Entrega','fecha_entrega'],['Proveedor','proveedor'],['N°OC','num_oc'],['N°OG','num_og'],['A tiempo','pedido_a_tiempo'],['Cotización solicitada','cotizacion_solicitada'],['Condición Pago','condicion_pago'],['Observaciones','observaciones'],['Proveedor (dato anterior, de consulta)','proveedor_texto']];
+  const detRow=x=>[solpLbl('o',x.obra),x.solp,x.estado,solpLbl('g',x.gestiona),x.rubro,x.dias_compras,solpDMY(x.fecha_ingreso),solpDMY(x.f_necesidad),solpDMY(x.f_necesidad_plani),solpDMY(x.fecha_entrega),x.proveedor,x.num_oc,x.num_og,x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'),x.cotizacion_solicitada,x.condicion_pago,x.observaciones,x.proveedor_texto];
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
-      + DET_COLS.map(c=>'<th>'+c+'</th>').join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
-    + detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
-        return '<tr>'+td(r[0],'trunc')+td(r[1])+td(r[2])+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9])+td(r[10],'trunc')+td(r[11])+td(r[12])+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('')
+      + DET_COLS.map(c=>solpTh(c[0],c[1])).join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
+    + (detOrd.length? detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
+        return '<tr>'+td(r[0],'trunc')+td(r[1])+td(r[2])+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9])+td(r[10],'trunc')+td(r[11],'trunc')+td(r[12],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+td(r[17],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
@@ -8369,7 +8485,8 @@ async function renderSolp(){
       + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
     + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')+'</div>'
     + '<div class="solp-tags">'+tagHtml()+'</div></div>'
-    + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(rows.length)+' con estos filtros</span>'
+    + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(detOrd.length)+' de '+nf(rows.length)+'</span>'
+        + (Object.keys(SOLP_COL_FILTRO).length?'<button class="btn ghost sm" onclick="solpColFilterClearAll()">Limpiar filtros de columna</button>':'')
         + '<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'.solp-full\')">Auto-ajustar columnas</button>'
         + '<button class="btn ghost sm" style="margin-left:8px" onclick="solpExportDetalleExcel()">Exportar a Excel</button></div>'+detalleHtml+'</div>' : resumenHtml);
 
@@ -8400,11 +8517,11 @@ window.tblAutofit=tblAutofit;
 
 function solpExportDetalleExcel(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const rows=(SOLP.rows||[]).filter(x=>solpPass(x));
+  const rows=(SOLP.rows||[]).filter(x=>solpPass(x)).filter(solpDetRowPass);
   if(!rows.length){ toast('No hay filas para exportar.'); return; }
-  const ord=rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||''));
-  const aoa=[['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Fecha ingreso SOLP','F. Necesidad S/Solp','F. Necesidad S/Plani','Fecha Entrega','Proveedor','N°OC','N°OG','¿Pedido a tiempo?','Cotización solicitada','Condición Pago','Observaciones']];
-  ord.forEach(x=>{ aoa.push([solpLbl('o',x.obra), x.solp, x.estado||'', x.gestiona||'', x.rubro||'', x.dias_compras!=null?x.dias_compras:'', x.fecha_ingreso?solpDMY(x.fecha_ingreso):'', x.f_necesidad?solpDMY(x.f_necesidad):'', x.f_necesidad_plani?solpDMY(x.f_necesidad_plani):'', x.fecha_entrega?solpDMY(x.fecha_entrega):'', x.proveedor||'', x.num_oc||'', x.num_og||'', x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'), x.cotizacion_solicitada||'', x.condicion_pago||'', x.observaciones||'']); });
+  const ord=solpApplySort(rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||'')));
+  const aoa=[['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Fecha ingreso SOLP','F. Necesidad S/Solp','F. Necesidad S/Plani','Fecha Entrega','Proveedor','N°OC','N°OG','¿Pedido a tiempo?','Cotización solicitada','Condición Pago','Observaciones','Proveedor (dato anterior, de consulta)']];
+  ord.forEach(x=>{ aoa.push([solpLbl('o',x.obra), x.solp, x.estado||'', x.gestiona||'', x.rubro||'', x.dias_compras!=null?x.dias_compras:'', x.fecha_ingreso?solpDMY(x.fecha_ingreso):'', x.f_necesidad?solpDMY(x.f_necesidad):'', x.f_necesidad_plani?solpDMY(x.f_necesidad_plani):'', x.fecha_entrega?solpDMY(x.fecha_entrega):'', x.proveedor||'', x.num_oc||'', x.num_og||'', x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'), x.cotizacion_solicitada||'', x.condicion_pago||'', x.observaciones||'', x.proveedor_texto||'']); });
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'SOLP');
   XLSX.writeFile(wb, 'SOLP_detalle_'+new Date().toISOString().slice(0,10)+'.xlsx');
