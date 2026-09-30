@@ -8715,10 +8715,12 @@ function evalProvPct1(p){ return p==null?'—':Math.round(p*100)+'%'; }
 const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones' };
 
 async function evalProvLoad(){
-  const [evs, crit] = await Promise.all([
+  const [evs, crit, rubros] = await Promise.all([
     sbFetchAll('/compras_prov_evaluaciones?select=*&order=fecha.desc'),
     sbFetchAll('/compras_prov_criticos?select=*&order=proveedor_cod.asc'),
+    sbFetchAll('/compras_solp_rubros?select=*&order=nombre.asc'), // mismas opciones de Rubro que SOLP
   ]);
+  EVALPROV.rubros=rubros||[];
   EVALPROV.rows=(evs||[]).map(r=>({...r, pct:evalProvPct(r), obra:r.obra_cod?solpObraNom(r.obra_cod):'', provNom:solpProvNom(r.proveedor_cod)}));
   const hoy=solpHoy();
   EVALPROV.criticos=(crit||[]).map(c=>{
@@ -8833,7 +8835,7 @@ function openEvalProvForm(id){
     +'<div class="field"><label>Fecha</label><input id="ep_fecha" type="date" value="'+esc(cur.fecha||solpHoy())+'"></div></div>'
     +'<div class="field"><label>Proveedor</label><input id="ep_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"></div>'
     +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><select id="ep_obra"><option value="">— sin obra —</option>'+obraOpts+'</select></div>'
-    +'<div class="field"><label>Rubro</label><input id="ep_rubro" type="text" value="'+esc(cur.rubro||'')+'"></div></div>'
+    +'<div class="field"><label>Rubro</label><select id="ep_rubro"><option value="">— sin rubro —</option>'+(EVALPROV.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('')+'</select></div></div>'
     +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
     +'<div class="field"><label>Comentarios</label><textarea id="ep_coment" rows="2">'+esc(cur.comentarios||'')+'</textarea></div>'
     +'<div id="epMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
