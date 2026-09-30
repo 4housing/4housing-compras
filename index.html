@@ -8800,8 +8800,8 @@ async function renderEvalProv(){
     try{ await evalProvLoad(); }catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
   }
   if(current!=='evalprov') return;
-  const tabs='<div class="solp-tabs"><button class="'+(EVALPROV.tab==='evaluaciones'?'on':'')+'" onclick="evalProvTab(\'evaluaciones\')">Evaluaciones</button><button class="'+(EVALPROV.tab==='criticos'?'on':'')+'" onclick="evalProvTab(\'criticos\')">Proveedores críticos</button></div>';
-  C().innerHTML = tabs + (EVALPROV.tab==='criticos' ? evalProvCriticosHtml() : evalProvEvalsHtml());
+  const tabs='<div class="solp-tabs"><button class="'+(EVALPROV.tab==='evaluaciones'?'on':'')+'" onclick="evalProvTab(\'evaluaciones\')">Evaluaciones</button><button class="'+(EVALPROV.tab==='detalle'?'on':'')+'" onclick="evalProvTab(\'detalle\')">Detalle completo</button><button class="'+(EVALPROV.tab==='criticos'?'on':'')+'" onclick="evalProvTab(\'criticos\')">Proveedores críticos</button></div>';
+  C().innerHTML = tabs + (EVALPROV.tab==='criticos' ? evalProvCriticosHtml() : EVALPROV.tab==='detalle' ? evalProvDetalleCrudoHtml() : evalProvEvalsHtml());
   if(EVALPROV.tab==='evaluaciones' && window.Chart){
     evalProvGraficoAnual(EVALPROV.rows);
     evalProvGraficoAnualDetalle(EVALPROV.rows);
@@ -8810,6 +8810,23 @@ async function renderEvalProv(){
   }
 }
 window.renderEvalProv=renderEvalProv;
+
+// Vista "cruda": una fila por evaluación, con las 26 preguntas como columnas separadas —
+// igual a como está la hoja BD del Excel RC-03.03, en vez del puntaje ya resumido.
+function evalProvDetalleCrudoHtml(){
+  const rows=EVALPROV.rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  if(!rows.length) return '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
+  const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
+  const qHead=EVALPROV_TODAS.map(q=>'<th title="'+esc(q.cat+': '+q.texto)+'" style="background:'+EVALPROV_CAT_COL[EVALPROV_CATS.indexOf(q.cat)]+'22;font-size:10.5px;white-space:nowrap">'+esc(q.key.toUpperCase())+'</th>').join('');
+  const qCells=r=>EVALPROV_TODAS.map(q=>'<td style="text-align:center">'+(r[q.key]!=null?r[q.key]:'')+'</td>').join('');
+  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">'+rows.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.</div>'
+    +'<div class="dic-scroll"><table class="grid solp-full" style="font-size:11.5px"><thead><tr>'
+    +'<th>Fecha</th><th>Evaluador</th><th>Área</th><th>Obra</th><th>Proveedor</th><th>Rubro</th>'
+    +qHead
+    +'<th>Comentarios</th></tr></thead><tbody>'
+    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td>'+tdT(r.evaluador)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.provNom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+'</tr>').join('')
+    +'</tbody></table></div>';
+}
 
 function evalProvEvalsHtml(){
   const rows=EVALPROV.rows, nf=n=>n.toLocaleString('es-AR');
@@ -8954,10 +8971,12 @@ async function evalProvImportHistoricoAnalizar(){
       const provM=codEquiv ? {codigo:codEquiv} : _evalProvMatchProveedor(provTxt);
       const rubroTxt=_syncNorm(row[8]);
       const rubroM=rubroTxt?(EVALPROV.rubros||[]).find(x=>x.nombre.toUpperCase()===rubroTxt.toUpperCase()):null;
+      const obraTxt=row[6]!=null?String(row[6]).trim():'';
+      const obraM=obraTxt?_solpMatchObra(obraTxt):null;
       const item={
         proveedor_cod: provM?provM.codigo:null, proveedor_texto: provTxt||null,
         rubro: rubroM?rubroM.nombre:null, rubro_texto: rubroTxt||null,
-        obra_cod: null, obra_texto: row[6]!=null?String(row[6]).trim()||null:null,
+        obra_cod: obraM?obraM.cod:null, obra_texto: obraTxt||null,
         fecha, evaluador: _syncNorm(row[3])||_syncNorm(row[4])||'—',
         comentarios: _syncNorm(row[35])||null,
       };
