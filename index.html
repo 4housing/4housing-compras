@@ -8826,7 +8826,9 @@ function evalProvEvalsHtml(){
     + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td>'+tdT(r.provNom)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td>'+tdT(r.evaluador)+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
-  return '<div class="kpi-grid solp-kpis">'
+  const adminBtns = ROLE.admin ? '<div style="margin-bottom:12px"><button class="btn ghost sm" onclick="openEvalProvImportHistorico()">Importar histórico</button></div>' : '';
+  return adminBtns
+    + '<div class="kpi-grid solp-kpis">'
       + kpi('Evaluaciones', nf(rows.length), 'Cargadas en total')
       + kpi('Proveedores evaluados', nf(provs.length), 'Distintos')
       + kpi('Promedio general', evalProvPct1(prom), 'Objetivo: '+Math.round(EVALPROV_OBJETIVO*100)+'%')
@@ -8860,6 +8862,107 @@ function evalProvCriticosHtml(){
     + '</tbody></table></div>' : '<div class="empty">Todavía no marcaste proveedores críticos.</div>';
   return '<div class="card"><div class="card-h"><h3>Proveedores críticos</h3><span class="meta">Punto de auditoría — mayor control y reevaluación más frecuente</span>'+btnNuevo+'</div>'+tabla+'</div>';
 }
+
+/* ---- Importar histórico de RC-03.03 (una sola vez) ----
+   Match de Proveedor: solo exacto (código/razón/comercial) — no se adivina por texto parecido,
+   para no atribuir mal una evaluación de auditoría a un proveedor equivocado. El resto se importa
+   igual, sin código, con el texto original de consulta (mismo criterio que eligió Micaela en SOLP). */
+function _evalProvMatchProveedor(texto){
+  const t=_syncNorm(texto).toUpperCase(); if(!t) return null;
+  const list=(DIC.proveedores||[]);
+  return list.find(p=>(p.codigo||'').toUpperCase()===t)
+      || list.find(p=>(p.razon||'').toUpperCase()===t)
+      || list.find(p=>(p.comercial||'').toUpperCase()===t)
+      || null;
+}
+function _evalProvFingerprint(r){ return [r.proveedor_cod,r.proveedor_texto,r.fecha,r.area,r.evaluador,...EVALPROV_TODAS.map(q=>r[q.key])].map(x=>x==null?'':String(x)).join('|'); }
+let EVALPROV_IMPORT=null;
+function openEvalProvImportHistorico(){
+  if(!ROLE.admin){ toast('Solo un administrador puede importar el histórico.'); return; }
+  EVALPROV_IMPORT=null;
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de RC-03.03 (hoja "BD"). Es una migración única: agrega estas evaluaciones a las que ya haya, no reemplaza nada. El proveedor que no matchee por nombre exacto contra el diccionario queda sin código — se guarda el texto original de consulta y se puede completar después a mano.</div>'
+    +'<div class="field"><label>RC-03.03 Evaluación de proveedores (.xlsx) *</label><input id="epih_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="epihMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
+    +'<div id="epihReport" style="margin-top:12px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" id="epihBtn" onclick="evalProvImportHistoricoAnalizar()">Analizar</button>';
+  openModal('Importar histórico de evaluaciones', body, foot, 'xwide');
+}
+window.openEvalProvImportHistorico=openEvalProvImportHistorico;
+async function evalProvImportHistoricoAnalizar(){
+  const f=(document.getElementById('epih_file').files||[])[0];
+  const msg=document.getElementById('epihMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const sheetName=wb.SheetNames.find(n=>n.trim().toUpperCase()==='BD');
+    if(!sheetName) throw new Error('No encontré la hoja "BD" en el archivo.');
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,raw:false,defval:''});
+    let hdrIdx=-1;
+    for(let i=0;i<Math.min(rows.length,12);i++){ if(_syncNorm(rows[i][0])==='Año'){ hdrIdx=i; break; } }
+    if(hdrIdx<0) throw new Error('No encontré la fila de encabezados (buscaba "Año" en la columna A).');
+    const existentes=new Set((EVALPROV.rows||[]).map(_evalProvFingerprint));
+    const listos=[], sinProv=[], yaExisten=[];
+    for(let r=hdrIdx+1; r<rows.length; r++){
+      const row=rows[r];
+      const provTxt=_syncNorm(row[7]);
+      if(!provTxt && !row[5]) continue;
+      const fecha=_syncFechaISO(row[5])||_syncFechaISO(row[2]);
+      if(!fecha) continue;
+      const provM=_evalProvMatchProveedor(provTxt);
+      const rubroTxt=_syncNorm(row[8]);
+      const rubroM=rubroTxt?(EVALPROV.rubros||[]).find(x=>x.nombre.toUpperCase()===rubroTxt.toUpperCase()):null;
+      const item={
+        proveedor_cod: provM?provM.codigo:null, proveedor_texto: provTxt||null,
+        rubro: rubroM?rubroM.nombre:null, rubro_texto: rubroTxt||null,
+        obra_cod: null, obra_texto: row[6]!=null?String(row[6]).trim()||null:null,
+        fecha, evaluador: _syncNorm(row[3])||_syncNorm(row[4])||'—',
+        comentarios: _syncNorm(row[35])||null,
+      };
+      EVALPROV_TODAS.forEach((q,i)=>{ item[q.key]=_syncNum(row[9+i]); });
+      const nCompras=EVALPROV_PREGUNTAS.compras.filter(q=>item[q.key]!=null).length;
+      const nProyectos=EVALPROV_PREGUNTAS.proyectos.filter(q=>item[q.key]!=null).length;
+      if(!nCompras && !nProyectos) continue;
+      item.area = nProyectos>nCompras ? 'proyectos' : 'compras';
+      if(existentes.has(_evalProvFingerprint(item))) yaExisten.push(item);
+      else if(!provM) sinProv.push(item);
+      else listos.push(item);
+    }
+    if(!listos.length && !sinProv.length && !yaExisten.length) throw new Error('No encontré filas de datos.');
+    EVALPROV_IMPORT={listos, sinProv, yaExisten};
+    renderEvalProvImportReport();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error al leer: '+(e.message||e); }
+}
+window.evalProvImportHistoricoAnalizar=evalProvImportHistoricoAnalizar;
+function renderEvalProvImportReport(){
+  const box=document.getElementById('epihReport'), msg=document.getElementById('epihMsg'); if(!box) return;
+  const s=EVALPROV_IMPORT; if(!s){ box.innerHTML=''; return; }
+  if(msg) msg.textContent='Leído.';
+  const tabla=(arr,cols)=>'<div class="dic-scroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+arr.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<span class="badge b-verde">Con proveedor: '+s.listos.length+'</span>'
+    +'<span class="badge b-ambar">Sin matchear proveedor (se importan igual): '+s.sinProv.length+'</span>'
+    +'<span class="badge b-gris">Ya estaban cargadas: '+s.yaExisten.length+'</span></div>';
+  if(s.sinProv.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Sin matchear proveedor</div>'+tabla(s.sinProv,[['Proveedor (texto original)',r=>r.proveedor_texto],['Fecha',r=>solpDMY(r.fecha)],['Área',r=>r.area]]);
+  h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Con proveedor matcheado</div>'+tabla(s.listos,[['Proveedor',r=>solpProvNom(r.proveedor_cod)],['Fecha',r=>solpDMY(r.fecha)],['Área',r=>r.area]]);
+  box.innerHTML=h;
+  const btn=document.getElementById('epihBtn');
+  const n=s.listos.length+s.sinProv.length;
+  if(btn){ btn.textContent=n?('Importar ('+n+')'):'Nada para importar'; btn.setAttribute('onclick', n?'evalProvImportHistoricoAplicar()':''); }
+}
+window.renderEvalProvImportReport=renderEvalProvImportReport;
+async function evalProvImportHistoricoAplicar(){
+  const s=EVALPROV_IMPORT; if(!s) return;
+  const msg=document.getElementById('epihMsg');
+  const filas=[...s.listos, ...s.sinProv];
+  if(!filas.length){ if(msg)msg.textContent='Nada para importar.'; return; }
+  if(msg)msg.textContent='Importando '+filas.length+'…';
+  try{
+    for(let i=0;i<filas.length;i+=500){ await sbFetch('/compras_prov_evaluaciones',{method:'POST', body:JSON.stringify(filas.slice(i,i+500))}); }
+    closeModal(); toast('Histórico importado: '+filas.length+' evaluaciones'); await evalProvLoad(); renderEvalProv();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
+}
+window.evalProvImportHistoricoAplicar=evalProvImportHistoricoAplicar;
 
 /* ---- Alta / edición de una evaluación ---- */
 function evalProvPreguntasHtml(area, cur){
