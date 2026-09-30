@@ -8814,20 +8814,144 @@ async function renderEvalProv(){
 }
 window.renderEvalProv=renderEvalProv;
 
+// Nombre corto del evaluador para las tablas (Apellido, N.) — las cargas nuevas ya vienen en
+// "Apellido, Nombre" (mismo criterio que ogxName, MI_NOMBRE del usuario logueado), pero el
+// histórico importado del Excel viene en "Nombre Apellido" con orden inconsistente entre
+// personas, así que no se puede abreviar por posición sin arriesgarse a inventar mal el
+// apellido. Para esos casos se arma a mano la lista de personas conocidas del histórico.
+// Lo que no está en ningún lado de los dos casos (p.ej. una fila que menciona a más de una
+// persona) se muestra completo, sin adivinar.
+const EVALPROV_EVALUADOR_CORTO={
+  'Alejo Zucchelli':'Zucchelli, A.', 'Almendra Hermida':'Hermida, A.', 'Hermida, Almendra':'Hermida, A.',
+  'Ana Bustillo':'Bustillo, A.', 'Ana Suarez':'Suarez, A.', 'Andrea Liendro':'Liendro, A.',
+  'Antonella Chiariello':'Chiariello, A.', 'Ayelen':'Bustamante, A.', 'Ayelen Bustamante':'Bustamante, A.',
+  'Bruno Imperiali':'Imperiali, B.', 'Bruzzoni Marcos':'Bruzzoni, M.', 'Bustillo Ana Julia':'Bustillo, A.',
+  'Callero Ileana':'Callero, I.', 'Camila Di Meo':'Di Meo, C.', 'Camila Toffoli':'Toffoli, C.', 'Toffoli Camila':'Toffoli, C.',
+  'Croce Mariano':'Croce, M.', 'Elais':'Blanco, E.', 'Elais Blanco':'Blanco, E.',
+  'Emiliana Alvarez Rossi':'Alvarez Rossi, E.', 'Ezequiel Bosco':'Bosco, E.', 'Facundo Burgos':'Burgos, F.',
+  'Fariñas, Paula':'Fariñas, P.', 'Paula Fariñas':'Fariñas, P.', 'Fucci Antonella':'Fucci, A.',
+  'Giantomasi Anabella':'Giantomasi, A.', 'Giantomasi, Anabella':'Giantomasi, A.',
+  'Gonzalez Belen':'González, B.', 'González María Belén':'González, B.', 'González, Belén':'González, B.',
+  'Gustavo Pedretti':'Pedretti, G.', 'Hector Bermudez':'Bermudez, H.',
+  'Jazmin':'Vorrasi, J.', 'Jazmin Vorrasi':'Vorrasi, J.', 'Maria Jazmin Vorrasi':'Vorrasi, J.',
+  'Julian Alegre':'Alegre, J.', 'Leska Micaela':'Leska, M.', 'Leska Micaela Ailén':'Leska, M.',
+  'Mendoza Nicolas':'Mendoza, N.', 'Micaela Gregori':'Gregori, M.', 'Palacios Gonzalo':'Palacios, G.',
+  'Rodrigo Perez':'Perez, R.', 'Rubio, Fabiana':'Rubio, F.', 'Sabrina Machado':'Machado, S.',
+  'Sebastian Kruk':'Kruk, S.', 'Tavella, María Eliana':'Tavella, M.', 'Vacaflor, Evelyn':'Vacaflor, E.',
+};
+function evalProvEvaluadorCorto(n){
+  if(!n) return '';
+  if(EVALPROV_EVALUADOR_CORTO[n]) return EVALPROV_EVALUADOR_CORTO[n];
+  if(n.includes(',')) return ogxName(n);
+  return n;
+}
+// Mezcla un color con blanco (fondo opaco de header sticky — con transparencia se ve la fila
+// que queda debajo al scrollear, por eso "los títulos no se veían bien").
+function _mixWhite(hex, amt){
+  hex=hex.replace('#','');
+  const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  const mix=c=>Math.round(c+(255-c)*amt);
+  return '#'+[mix(r),mix(g),mix(b)].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
+/* ---- Filtro/orden tipo Excel para "Detalle completo" (namespace propio, mismo patrón que SOLP) ---- */
+let EPDET_COL_FILTRO={};
+let EPDET_SORT=null;
+function epDetColUnique(col){
+  const s=new Set(); let hasEmpty=false;
+  (EVALPROV._detBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
+}
+function epDetColFilterActive(col){ return !!(EPDET_COL_FILTRO[col] && EPDET_COL_FILTRO[col].length); }
+function epDetRowPass(row){
+  return Object.keys(EPDET_COL_FILTRO).every(col=>{ const allow=EPDET_COL_FILTRO[col]; if(!allow||!allow.length) return true; return allow.includes(String(row[col]==null?'':row[col])); });
+}
+function epDetApplySort(rowsIn){
+  if(!EPDET_SORT) return rowsIn;
+  const {col,dir}=EPDET_SORT;
+  return rowsIn.slice().sort((a,b)=>{
+    const av=a[col], bv=b[col];
+    if(typeof av==='number' || typeof bv==='number') return ((av||0)-(bv||0))*dir;
+    return String(av==null?'':av).localeCompare(String(bv==null?'':bv),'es',{numeric:true})*dir;
+  });
+}
+function epDetSortToggle(col){
+  const cur=EPDET_SORT;
+  if(!cur || cur.col!==col) EPDET_SORT={col, dir:1};
+  else if(cur.dir===1) EPDET_SORT={col, dir:-1};
+  else EPDET_SORT=null;
+  renderEvalProv();
+}
+window.epDetSortToggle=epDetSortToggle;
+function closeEpDetColFilter(){ const p=document.getElementById('dicFilterPop'); if(p) p.remove(); document.removeEventListener('mousedown', epDetColFilterOutside, true); }
+function epDetColFilterOutside(e){ const p=document.getElementById('dicFilterPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.dicfbtn'))) closeEpDetColFilter(); }
+function openEpDetColFilter(col, ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; closeEpDetColFilter();
+  const vals=epDetColUnique(col);
+  const sel = EPDET_COL_FILTRO[col] ? new Set(EPDET_COL_FILTRO[col]) : new Set(vals);
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
+  const pop=document.createElement('div'); pop.id='dicFilterPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="epDetColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="epDetColFilterToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="dicfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="epDetColFilterApply(\''+col+'\')">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="epDetColFilterClear(\''+col+'\')">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', epDetColFilterOutside, true),0);
+}
+window.openEpDetColFilter=openEpDetColFilter;
+function epDetColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
+window.epDetColFilterSearch=epDetColFilterSearch;
+function epDetColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
+window.epDetColFilterToggleAll=epDetColFilterToggleAll;
+function epDetColFilterApply(col){
+  const all=[...document.querySelectorAll('#dicfList .dicfchk')];
+  const visible=all.filter(c=>{ const it=c.closest('.dicfitem'); return it && it.style.display!=='none'; });
+  const chk=visible.filter(c=>c.checked).map(c=>c.value);
+  if(visible.length===all.length && chk.length===all.length){ delete EPDET_COL_FILTRO[col]; }
+  else { EPDET_COL_FILTRO[col]=chk; }
+  closeEpDetColFilter(); renderEvalProv();
+}
+window.epDetColFilterApply=epDetColFilterApply;
+function epDetColFilterClear(col){ delete EPDET_COL_FILTRO[col]; closeEpDetColFilter(); renderEvalProv(); }
+window.epDetColFilterClear=epDetColFilterClear;
+function epDetColFilterClearAll(){ EPDET_COL_FILTRO={}; renderEvalProv(); }
+window.epDetColFilterClearAll=epDetColFilterClearAll;
+function epDetTh(label, col, opts){
+  opts=opts||{};
+  const sorting=EPDET_SORT && EPDET_SORT.col===col;
+  const sortArrow=sorting?(EPDET_SORT.dir===1?' ▲':' ▼'):'';
+  const sortSpan='<span style="cursor:pointer;user-select:none" onclick="epDetSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+sortArrow+'</span></span>';
+  if(opts.nofilter) return '<th'+(opts.style?(' style="'+opts.style+'"'):' style="white-space:nowrap"')+'>'+sortSpan+'</th>';
+  const active=epDetColFilterActive(col);
+  return '<th style="white-space:nowrap">'+sortSpan+' <span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openEpDetColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
+}
+
 // Vista "cruda": una fila por evaluación, con las 26 preguntas como columnas separadas —
 // igual a como está la hoja BD del Excel RC-03.03, en vez del puntaje ya resumido.
 function evalProvDetalleCrudoHtml(){
-  const rows=EVALPROV.rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  if(!rows.length) return '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
+  const base=EVALPROV.rows.map(r=>({...r,
+    evaluador_corto: evalProvEvaluadorCorto(r.evaluador),
+    area_lbl: r.area==='compras'?'Compras':'Técnico',
+    prov_nom: r.provNom||r.proveedor_texto||'',
+  }));
+  EVALPROV._detBase=base;
+  if(!base.length) return '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
+  const rows=epDetApplySort(base.filter(epDetRowPass).sort((a,b)=>b.fecha.localeCompare(a.fecha)));
   const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
-  const qHead=EVALPROV_TODAS.map(q=>'<th title="'+esc(q.cat+': '+q.texto)+'" style="background:'+EVALPROV_CAT_COL[EVALPROV_CATS.indexOf(q.cat)]+'22;font-size:10.5px;white-space:nowrap">'+esc(q.key.toUpperCase())+'</th>').join('');
+  const qHead=EVALPROV_TODAS.map(q=>'<th title="'+esc(q.cat+': '+q.texto)+'" style="background:'+_mixWhite(EVALPROV_CAT_COL[EVALPROV_CATS.indexOf(q.cat)],0.82)+';font-size:10.5px;white-space:nowrap">'+esc(q.key.toUpperCase())+'</th>').join('');
   const qCells=r=>EVALPROV_TODAS.map(q=>'<td style="text-align:center">'+(r[q.key]!=null?r[q.key]:'')+'</td>').join('');
-  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">'+rows.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.</div>'
+  const limpiar=Object.keys(EPDET_COL_FILTRO).length?'<button class="btn ghost sm" onclick="epDetColFilterClearAll()">Limpiar filtros</button>':'';
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:11.5px;color:var(--muted)">'+rows.length+' de '+base.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.'+limpiar+'</div>'
     +'<div class="dic-scroll"><table class="grid solp-full" style="font-size:11.5px"><thead><tr>'
-    +'<th>Fecha</th><th>Evaluador</th><th>Área</th><th>Obra</th><th>Proveedor</th><th>Rubro</th>'
+    +epDetTh('Fecha','fecha')+epDetTh('Evaluador','evaluador')+epDetTh('Área','area_lbl')+epDetTh('Obra','obra')+epDetTh('Cód.','proveedor_cod')+epDetTh('Proveedor','prov_nom')+epDetTh('Rubro','rubro')
     +qHead
-    +'<th>Comentarios</th></tr></thead><tbody>'
-    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td>'+tdT(r.evaluador)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.provNom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+'</tr>').join('')
+    +epDetTh('Comentarios','comentarios',{nofilter:true})
+    +'</tr></thead><tbody>'
+    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(r.evaluador_corto)+'</td><td>'+esc(r.area_lbl)+'</td>'+tdT(r.obra)+'<td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.prov_nom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+'</tr>').join('')
     +'</tbody></table></div>';
 }
 
@@ -8852,8 +8976,8 @@ function evalProvEvalsHtml(){
   const det=rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
   const puedeEditar=canEvalProv();
-  const tablaDet = det.length ? '<div class="dic-scroll"><table class="grid solp-full"><thead><tr><th>Fecha</th><th>Proveedor</th><th>Área</th><th>Obra</th><th>Rubro</th><th>Puntaje</th><th>Clasificación</th><th>Evaluador</th><th>Comentarios</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
-    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td>'+tdT(r.provNom)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td>'+tdT(r.evaluador)+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
+  const tablaDet = det.length ? '<div class="dic-scroll"><table class="grid solp-full"><thead><tr><th>Fecha</th><th>Cód.</th><th>Proveedor</th><th>Área</th><th>Obra</th><th>Rubro</th><th>Puntaje</th><th>Clasificación</th><th>Evaluador</th><th>Comentarios</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
+    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.provNom||r.proveedor_texto)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(evalProvEvaluadorCorto(r.evaluador))+'</td>'+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
   const adminBtns = ROLE.admin ? '<div style="margin-bottom:12px"><button class="btn ghost sm" onclick="openEvalProvImportHistorico()">Importar histórico</button></div>' : '';
