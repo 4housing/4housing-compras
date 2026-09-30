@@ -7940,6 +7940,20 @@ const solpLbl = (k,v) => !v ? (k==='o'?'(sin obra)':k==='g'?'(sin asignar)':k===
 // ese catálogo aparte quedó chico y nunca se sincroniza; Clasificación sí, con "Sincronizar con Tango".
 function solpObrasDic(){ return (CLASIF_ALL||[]).filter(r=>(r.categoria==='PROYECTO'||r.categoria==='EERR') && String(r.habil_comp||'').toLowerCase()==='si'); }
 function solpObraNom(cod){ const p=solpObrasDic().find(x=>x.cod===cod); return p?p.desc:(cod||''); }
+// Igual que solpObrasDic(), pero sin filtrar por habilitado: para el histórico de Evaluación de
+// Proveedores (2018-2026) hace falta poder matchear proyectos ya cerrados/inhabilitados — al
+// pedir una SOLP nueva sí tiene sentido limitar a los activos, pero acá estamos registrando algo
+// que ya pasó, no dando de alta un pedido.
+function evalProvObrasDicTodos(){ return (CLASIF_ALL||[]).filter(r=>r.categoria==='PROYECTO'||r.categoria==='EERR'); }
+function evalProvObraNom(cod){ const p=evalProvObrasDicTodos().find(x=>x.cod===cod); return p?p.desc:(cod||''); }
+function _evalProvMatchObra(txt){
+  const t=_syncNorm(txt).toUpperCase(); if(!t) return null;
+  const list=evalProvObrasDicTodos();
+  const directo=list.find(p=>p.cod.toUpperCase()===t) || list.find(p=>t.includes(p.cod.toUpperCase())) || list.find(p=>p.desc.toUpperCase()===t);
+  if(directo) return directo;
+  const aliasCod=SOLP_OBRA_ALIAS[_syncNorm(txt)];
+  return aliasCod ? (list.find(p=>p.cod===aliasCod)||null) : null;
+}
 // Proveedor(es): se guarda como código, o varios separados por ";" (compras_proveedores, mismo
 // diccionario que usa la OG). El nombre se resuelve al vuelo, no se guarda.
 // "Especiales": para pedidos sin proveedor real de Tango (retiro de stock interno, pañol, o casos
@@ -8781,7 +8795,7 @@ async function evalProvLoad(){
     sbFetchAll('/compras_solp_rubros?select=*&order=nombre.asc'), // mismas opciones de Rubro que SOLP
   ]);
   EVALPROV.rubros=rubros||[];
-  EVALPROV.rows=(evs||[]).map(r=>({...r, pct:evalProvPct(r), obra:r.obra_cod?solpObraNom(r.obra_cod):'', provNom:solpProvNom(r.proveedor_cod)}));
+  EVALPROV.rows=(evs||[]).map(r=>({...r, pct:evalProvPct(r), obra:r.obra_cod?evalProvObraNom(r.obra_cod):'', provNom:solpProvNom(r.proveedor_cod)}));
   const hoy=solpHoy();
   EVALPROV.criticos=(crit||[]).map(c=>{
     const evC=EVALPROV.rows.filter(r=>r.proveedor_cod===c.proveedor_cod).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -8839,9 +8853,15 @@ const EVALPROV_EVALUADOR_CORTO={
   'Rodrigo Perez':'Perez, R.', 'Rubio, Fabiana':'Rubio, F.', 'Sabrina Machado':'Machado, S.',
   'Sebastian Kruk':'Kruk, S.', 'Tavella, María Eliana':'Tavella, M.', 'Vacaflor, Evelyn':'Vacaflor, E.',
 };
+// Búsqueda tolerante a mayúsculas/acentos: el histórico tiene el mismo nombre en varias
+// mayúsculas/minúsculas distintas ("Croce Mariano" / "CROCE MARIANO") y una comparación
+// exacta se comía la mitad de los casos.
+const _EVALPROV_EVALUADOR_CORTO_FOLD={};
+Object.keys(EVALPROV_EVALUADOR_CORTO).forEach(k=>{ _EVALPROV_EVALUADOR_CORTO_FOLD[_syncFold(k)]=EVALPROV_EVALUADOR_CORTO[k]; });
 function evalProvEvaluadorCorto(n){
   if(!n) return '';
-  if(EVALPROV_EVALUADOR_CORTO[n]) return EVALPROV_EVALUADOR_CORTO[n];
+  const hit=_EVALPROV_EVALUADOR_CORTO_FOLD[_syncFold(n)];
+  if(hit) return hit;
   if(n.includes(',')) return ogxName(n);
   return n;
 }
@@ -9039,7 +9059,10 @@ function _evalProvMatchProveedor(texto){
       || list.find(p=>_evalProvNormNombre(p.comercial)===t)
       || null;
 }
-function _evalProvFingerprint(r){ return [r.proveedor_cod,r.proveedor_texto,r.fecha,r.area,r.evaluador,...EVALPROV_TODAS.map(q=>r[q.key])].map(x=>x==null?'':String(x)).join('|'); }
+// El evaluador NO va en la huella: es texto libre que venimos estandarizando (mismo criterio,
+// formato distinto entre tandas de importación) y si lo incluimos, cada mejora en el nombre hace
+// que la fila se vea "nueva" y se duplique en vez de reconocerse como la misma evaluación.
+function _evalProvFingerprint(r){ return [r.proveedor_cod,r.proveedor_texto,r.fecha,r.area,...EVALPROV_TODAS.map(q=>r[q.key])].map(x=>x==null?'':String(x)).join('|'); }
 let EVALPROV_IMPORT=null;
 function openEvalProvImportHistorico(){
   if(!ROLE.admin){ toast('Solo un administrador puede importar el histórico.'); return; }
@@ -9099,7 +9122,7 @@ async function evalProvImportHistoricoAnalizar(){
       const rubroTxt=_syncNorm(row[8]);
       const rubroM=rubroTxt?(EVALPROV.rubros||[]).find(x=>x.nombre.toUpperCase()===rubroTxt.toUpperCase()):null;
       const obraTxt=row[6]!=null?String(row[6]).trim():'';
-      const obraM=obraTxt?_solpMatchObra(obraTxt):null;
+      const obraM=obraTxt?_evalProvMatchObra(obraTxt):null;
       const item={
         proveedor_cod: provM?provM.codigo:null, proveedor_texto: provTxt||null,
         rubro: rubroM?rubroM.nombre:null, rubro_texto: rubroTxt||null,
@@ -9117,7 +9140,7 @@ async function evalProvImportHistoricoAnalizar(){
         // La huella (proveedor/fecha/área/evaluador/respuestas) no incluye la Obra, así que una
         // fila ya importada que se re-analiza con la Obra resuelta (o corregida en el Excel) no
         // se detecta como distinta — sin este chequeo aparte, la corrección se perdía en silencio.
-        if(!yaRow.obra_cod && obraM) obraParaCompletar.push({id:yaRow.id, obra_cod:obraM.cod, obra_texto:obraTxt||yaRow.obra_texto||null, _obraNom:solpObraNom(obraM.cod)});
+        if(!yaRow.obra_cod && obraM) obraParaCompletar.push({id:yaRow.id, obra_cod:obraM.cod, obra_texto:obraTxt||yaRow.obra_texto||null, _obraNom:evalProvObraNom(obraM.cod)});
         yaExisten.push(item);
       }
       else if(!provM) sinProv.push(item);
