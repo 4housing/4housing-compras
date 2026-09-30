@@ -96,6 +96,10 @@ table.grid.solp-mx td{text-align:right;font-variant-numeric:tabular-nums;}
 .solp-mx-tot td{font-weight:700;border-top:2px solid var(--ink);}
 .solp-foot{font-size:11.5px;color:var(--muted);margin:16px 2px 30px;line-height:1.5;max-width:110ch;}
 .solp-tabs{display:flex;gap:6px;margin:0 0 14px;}
+.evalprov-qs{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
+.evalprov-q{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#faf9f4;}
+.evalprov-q span{font-size:12.5px;flex:1;}
+.evalprov-q select{width:60px;flex:0 0 auto;}
 .solp-tabs button{border:1px solid var(--line-strong);background:#fff;border-radius:9px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
 .solp-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 table.grid.solp-full td,table.grid.solp-full th{font-size:11px;padding:4px 8px;white-space:nowrap;}
@@ -810,6 +814,10 @@ const SCHEMAS = {
       {id:3, unidad:'Trailer T-03', tipo:'Desmontaje', origen:'Plaza Huincul', destino:'Base Neuquén', estado:'Completado'},
     ],
   },
+  evalprov: {
+    title:'Evaluación de Proveedores', sub:'SIG / ISO 9001 §8.4 — evaluación de desempeño y proveedores críticos', table:'-', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  },
   diccionarios: {
     title:'Diccionarios', sub:'Datos maestros de referencia — a disposición de todas las áreas', table:'-', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 0 2 2h13"/><path d="M9 7h6M9 11h6"/></svg>',
@@ -823,7 +831,9 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
   },
 };
-const ORDER=['compras','seguimiento','solp','tesoreria','solicitudes','deposito','panol','mantenimiento','logistica','diccionarios','indices','precios'];
+const ORDER=['compras','seguimiento','solp','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
+// 'logistica' sale del menú (ahora la cubre la app propia de Logística del portal). Se deja el
+// SCHEMAS y los datos como estaban — no se borra nada, solo deja de estar en ORDER.
 
 /* ================================================================
    CAPA DE DATOS
@@ -992,6 +1002,8 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML='<button class="btn ghost" onclick="exportSeguimientoExcel()">Exportar Excel</button>'+(canCert()?'<button class="btn ghost" onclick="openCertPanel()">Certificar</button>':'')+(canEditOG()?'<button class="btn ghost" onclick="openLiberarPanel()">Liberar a pago</button>':'');
   }else if(view==='solp'){
     document.getElementById('topActions').innerHTML=(canEditOG()?'<button class="btn" onclick="openSolpForm()">'+ICO.plus+'Nueva SOLP</button>':'');
+  }else if(view==='evalprov'){
+    document.getElementById('topActions').innerHTML=(canEvalProv()?'<button class="btn" onclick="openEvalProvForm()">'+ICO.plus+'Nueva evaluación</button>':'');
   }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'){
     document.getElementById('topActions').innerHTML='';
   }else{
@@ -1033,6 +1045,7 @@ async function render(view){
   if(view==='compras'){ return renderCompras(); }
   if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='solp'){ return renderSolp(); }
+  if(view==='evalprov'){ return renderEvalProv(); }
   if(view==='tesoreria'){ return renderTesoreria(); }
   if(view==='solicitudes'){ return renderSolicitudesPago(); }
   if(view==='diccionarios'){ return renderDic(); }
@@ -8646,6 +8659,266 @@ document.addEventListener('click', e=>{
   setTimeout(()=>document.addEventListener('mousedown', _truncPopupOutside, true),0);
 });
 
+/* ================================================================
+   EVALUACIÓN DE PROVEEDORES — SIG / ISO 9001 §8.4
+   Modelo basado en RC-03.03 Ver 04 (26 preguntas, escala 1-5): Compras
+   evalúa Atención Personalizada + Costos y Precios (10 preguntas); el
+   área técnica/certificadores evalúa Planificación, Técnico, Calidad y
+   Seguridad (16 preguntas). Límite de aceptación y objetivo, los mismos
+   que ya usa RC-03.03 — ajustables acá si cambian de un año a otro.
+   ================================================================ */
+function canEvalProv(){ return ROLE.comprador||ROLE.certificador||ROLE.admin; }
+const EVALPROV_LIMITE=0.40, EVALPROV_OBJETIVO=0.72;
+const EVALPROV_PREGUNTAS={
+  compras:[
+    {cat:'Atención Personalizada', key:'at1', texto:'Mantiene un contacto adecuado ante la negociación'},
+    {cat:'Atención Personalizada', key:'at2', texto:'Transmite información precisa y oportuna'},
+    {cat:'Atención Personalizada', key:'at3', texto:'Responde a los problemas con soluciones rápidas y positivas'},
+    {cat:'Atención Personalizada', key:'at4', texto:'Entrega toda la documentación requerida (legal, del cliente y contractual)'},
+    {cat:'Atención Personalizada', key:'at5', texto:'Responde a la solución de reclamos'},
+    {cat:'Atención Personalizada', key:'at6', texto:'Entrega toda la documentación de seguridad requerida y en el tiempo establecido'},
+    {cat:'Costos y Precios', key:'co1', texto:'Su precio es competitivo, en relación con los vigentes en el mercado'},
+    {cat:'Costos y Precios', key:'co2', texto:'Sugiere cambios que signifiquen reducciones de Costos'},
+    {cat:'Costos y Precios', key:'co3', texto:'Es buena la relación de negociación de precios'},
+    {cat:'Costos y Precios', key:'co4', texto:'Notifica adecuadamente los posibles cambios de Precios'},
+  ],
+  proyectos:[
+    {cat:'Planificación', key:'pl1', texto:'Realiza una adecuada planificación teniendo en cuenta lo planificado por la empresa'},
+    {cat:'Planificación', key:'pl2', texto:'Ejecuta de acuerdo a lo planificado'},
+    {cat:'Planificación', key:'pl3', texto:'Existe clara predisposición para el cumplimiento de lo planificado'},
+    {cat:'Planificación', key:'pl4', texto:'Entrega o realiza el servicio puntualmente'},
+    {cat:'Planificación', key:'pl5', texto:'Anticipa o notifica las posibles demoras'},
+    {cat:'Técnico', key:'te1', texto:'El personal operativo es competente para las tareas asignadas'},
+    {cat:'Técnico', key:'te2', texto:'El personal operativo demuestra clara predisposición'},
+    {cat:'Técnico', key:'te3', texto:'Cuenta con personal operativo de reemplazo'},
+    {cat:'Técnico', key:'te4', texto:'Responde ante emergencias operativas eficientemente y bajo control de cambios'},
+    {cat:'Técnico', key:'te5', texto:'Corrige los problemas surgidos luego de concluido el servicio'},
+    {cat:'Calidad', key:'ca1', texto:'Gestiona adecuadamente la calidad de su servicio'},
+    {cat:'Calidad', key:'ca2', texto:'Calidad del servicio'},
+    {cat:'Calidad', key:'ca3', texto:'No existen rechazos del servicio'},
+    {cat:'Seguridad', key:'se1', texto:'Gestiona adecuadamente la seguridad de su servicio'},
+    {cat:'Seguridad', key:'se2', texto:'Cumple con las normas de seguridad y medio ambiente establecidas'},
+    {cat:'Seguridad', key:'se3', texto:'Demuestra clara predisposición ante las exigencias de seguridad de la empresa'},
+  ],
+};
+const EVALPROV_TODAS=[...EVALPROV_PREGUNTAS.compras, ...EVALPROV_PREGUNTAS.proyectos];
+
+function evalProvPct(row){
+  const resp=EVALPROV_TODAS.filter(p=>row[p.key]!=null);
+  if(!resp.length) return null;
+  return resp.reduce((a,p)=>a+row[p.key],0)/(resp.length*5);
+}
+function evalProvClasif(pct){ return pct==null?'—':pct<EVALPROV_LIMITE?'No apto':pct<EVALPROV_OBJETIVO?'Apto con observaciones':'Apto'; }
+function evalProvClasifCol(c){ return c==='No apto'?SOLP_COL.late:c==='Apto con observaciones'?SOLP_COL.open:c==='Apto'?SOLP_COL.ok:SOLP_COL.muted; }
+function evalProvPct1(p){ return p==null?'—':Math.round(p*100)+'%'; }
+
+const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones' };
+
+async function evalProvLoad(){
+  const [evs, crit] = await Promise.all([
+    sbFetchAll('/compras_prov_evaluaciones?select=*&order=fecha.desc'),
+    sbFetchAll('/compras_prov_criticos?select=*&order=proveedor_cod.asc'),
+  ]);
+  EVALPROV.rows=(evs||[]).map(r=>({...r, pct:evalProvPct(r), obra:r.obra_cod?solpObraNom(r.obra_cod):'', provNom:solpProvNom(r.proveedor_cod)}));
+  const hoy=solpHoy();
+  EVALPROV.criticos=(crit||[]).map(c=>{
+    const evC=EVALPROV.rows.filter(r=>r.proveedor_cod===c.proveedor_cod).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+    const ultima=c.ultima_revision||(evC[0]?evC[0].fecha:null);
+    let proxima=null;
+    if(ultima){ const d=new Date(ultima+'T00:00:00'); d.setMonth(d.getMonth()+(c.frecuencia_meses||3)); proxima=d.toISOString().slice(0,10); }
+    const estado = !proxima ? 'sin evaluar' : proxima<hoy ? 'vencido' : (new Date(proxima)-new Date(hoy))/86400000<=30 ? 'por vencer' : 'al dia';
+    return {...c, ultima_calc:ultima, proxima_calc:proxima, estado_semaforo:estado, provNom:solpProvNom(c.proveedor_cod)};
+  });
+}
+
+function evalProvTab(t){ EVALPROV.tab=t; renderEvalProv(); }
+window.evalProvTab=evalProvTab;
+
+async function renderEvalProv(){
+  if(DEMO_MODE){ C().innerHTML='<div class="empty">Evaluación de Proveedores necesita conexión a la nube (no funciona en modo demo).</div>'; return; }
+  if(!EVALPROV.rows){
+    C().innerHTML='<div class="empty">Cargando…</div>';
+    try{ await evalProvLoad(); }catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
+  }
+  if(current!=='evalprov') return;
+  const tabs='<div class="solp-tabs"><button class="'+(EVALPROV.tab==='evaluaciones'?'on':'')+'" onclick="evalProvTab(\'evaluaciones\')">Evaluaciones</button><button class="'+(EVALPROV.tab==='criticos'?'on':'')+'" onclick="evalProvTab(\'criticos\')">Proveedores críticos</button></div>';
+  C().innerHTML = tabs + (EVALPROV.tab==='criticos' ? evalProvCriticosHtml() : evalProvEvalsHtml());
+}
+window.renderEvalProv=renderEvalProv;
+
+function evalProvEvalsHtml(){
+  const rows=EVALPROV.rows, nf=n=>n.toLocaleString('es-AR');
+  const conPct=rows.filter(r=>r.pct!=null);
+  const prom = conPct.length ? conPct.reduce((a,r)=>a+r.pct,0)/conPct.length : null;
+  const noApto = conPct.filter(r=>r.pct<EVALPROV_LIMITE).length;
+  const provs=[...new Set(rows.map(r=>r.proveedor_cod))];
+  const kpi=(l,v,sub,col)=>'<div class="kpi"><div class="kpi-label">'+l+'</div><div class="kpi-value"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="kpi-sub">'+sub+'</div></div>';
+
+  const porProv=provs.map(cod=>{
+    const rs=rows.filter(r=>r.proveedor_cod===cod && r.pct!=null);
+    const p=rs.length?rs.reduce((a,r)=>a+r.pct,0)/rs.length:null;
+    const ultima=rs.length?rs.reduce((a,r)=>r.fecha>a?r.fecha:a,''):null;
+    return { nom:solpProvNom(cod), n:rs.length, prom:p, clasif:evalProvClasif(p), ultima };
+  }).filter(p=>p.n).sort((a,b)=>(a.prom??0)-(b.prom??0));
+  const tablaProv = porProv.length ? '<div class="dic-scroll"><table class="grid"><thead><tr><th>Proveedor</th><th>Evaluaciones</th><th>Promedio</th><th>Clasificación</th><th>Última</th></tr></thead><tbody>'
+    + porProv.map(p=>'<tr><td>'+esc(p.nom)+'</td><td style="text-align:right">'+p.n+'</td><td style="text-align:right">'+evalProvPct1(p.prom)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(p.clasif)+'">'+p.clasif+'</span></td><td>'+solpDMY(p.ultima)+'</td></tr>').join('')
+    + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
+
+  const det=rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
+  const puedeEditar=canEvalProv();
+  const tablaDet = det.length ? '<div class="dic-scroll"><table class="grid solp-full"><thead><tr><th>Fecha</th><th>Proveedor</th><th>Área</th><th>Obra</th><th>Rubro</th><th>Puntaje</th><th>Clasificación</th><th>Evaluador</th><th>Comentarios</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
+    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td>'+tdT(r.provNom)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td>'+tdT(r.evaluador)+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
+    + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
+
+  return '<div class="kpi-grid solp-kpis">'
+      + kpi('Evaluaciones', nf(rows.length), 'Cargadas en total')
+      + kpi('Proveedores evaluados', nf(provs.length), 'Distintos')
+      + kpi('Promedio general', evalProvPct1(prom), 'Objetivo: '+Math.round(EVALPROV_OBJETIVO*100)+'%')
+      + kpi('Por debajo del límite', nf(noApto), 'Límite de aceptación: '+Math.round(EVALPROV_LIMITE*100)+'%', noApto?SOLP_COL.late:null)
+    + '</div>'
+    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Por proveedor</h3><span class="meta">Peor promedio primero</span></div>'+tablaProv+'</div>'
+    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Detalle de evaluaciones</h3><span class="meta">'+nf(det.length)+'</span></div>'+tablaDet+'</div>';
+}
+
+function evalProvCriticosHtml(){
+  const puedeEditar=canEvalProv();
+  const rows=(EVALPROV.criticos||[]).slice().sort((a,b)=>{
+    const ord={vencido:0,'por vencer':1,'sin evaluar':1,'al dia':2};
+    return (ord[a.estado_semaforo]??3)-(ord[b.estado_semaforo]??3);
+  });
+  const badge=e=> e==='vencido' ? '<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencido</span>'
+    : e==='por vencer' ? '<span class="badge" style="color:#9a7019;background:#f5ecd6">Por vencer</span>'
+    : e==='sin evaluar' ? '<span class="badge b-gris">Sin evaluar</span>'
+    : '<span class="badge b-verde">Al día</span>';
+  const btnNuevo = puedeEditar ? '<button class="btn ghost sm" onclick="openEvalProvCriticoForm()">'+ICO.plus+'Marcar proveedor crítico</button>' : '';
+  const tabla = rows.length ? '<div class="dic-scroll"><table class="grid"><thead><tr><th>Proveedor</th><th>Motivo</th><th>¿Alternativa?</th><th>Frecuencia</th><th>Última revisión</th><th>Próxima</th><th>Estado</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
+    + rows.map(c=>'<tr><td>'+esc(c.provNom)+'</td><td class="trunc" title="'+esc(c.motivo||'')+'">'+esc(c.motivo||'—')+'</td><td>'+(c.tiene_alternativa==null?'—':c.tiene_alternativa?'Sí — '+esc(c.alternativa_texto||''):'No')+'</td><td>Cada '+c.frecuencia_meses+' meses</td><td>'+(c.ultima_calc?solpDMY(c.ultima_calc):'—')+'</td><td>'+(c.proxima_calc?solpDMY(c.proxima_calc):'—')+'</td><td>'+badge(c.estado_semaforo)+'</td>'+(puedeEditar?'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openEvalProvCriticoForm('+c.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askDelEvalProvCritico('+c.id+')">'+ICO.del+'</button></div></td>':'')+'</tr>').join('')
+    + '</tbody></table></div>' : '<div class="empty">Todavía no marcaste proveedores críticos.</div>';
+  return '<div class="card"><div class="card-h"><h3>Proveedores críticos</h3><span class="meta">Punto de auditoría — mayor control y reevaluación más frecuente</span>'+btnNuevo+'</div>'+tabla+'</div>';
+}
+
+/* ---- Alta / edición de una evaluación ---- */
+function evalProvPreguntasHtml(area, cur){
+  cur=cur||{};
+  const qs=EVALPROV_PREGUNTAS[area]||[];
+  let cat=null, html='';
+  qs.forEach(q=>{
+    if(q.cat!==cat){ if(cat) html+='</div>'; cat=q.cat; html+='<div style="font-weight:700;font-size:12.5px;margin:10px 0 4px">'+esc(cat)+'</div><div class="evalprov-qs">'; }
+    const v=cur[q.key];
+    html+='<div class="evalprov-q"><span>'+esc(q.texto)+'</span><select id="ep_'+q.key+'"><option value="">—</option>'+[1,2,3,4,5].map(n=>'<option value="'+n+'"'+(v===n?' selected':'')+'>'+n+'</option>').join('')+'</select></div>';
+  });
+  if(cat) html+='</div>';
+  return html;
+}
+function evalProvFormArea(){
+  const area=document.getElementById('ep_area').value;
+  const el=document.getElementById('ep_preguntas'); if(el) el.innerHTML=evalProvPreguntasHtml(area,{});
+}
+window.evalProvFormArea=evalProvFormArea;
+function comboEvalProvProv(){
+  const inp=document.getElementById('ep_prov'); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  const src=(DIC.proveedores||[]);
+  const items=(q?src.filter(p=>((p.codigo||'')+' '+(p.razon||'')+' '+(p.comercial||'')).toLowerCase().includes(q)):src).slice(0,80).map(p=>({code:p.codigo,name:p.razon||p.comercial||''}));
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; });
+}
+window.comboEvalProvProv=comboEvalProvProv;
+function openEvalProvForm(id){
+  if(!canEvalProv()){ toast('No tenés permiso para cargar evaluaciones.'); return; }
+  const cur = id!=null ? (EVALPROV.rows||[]).find(x=>String(x.id)===String(id)) : {};
+  const area = cur.area || 'compras';
+  const obraOpts = solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es')).map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===cur.obra_cod?' selected':'')+'>'+esc(p.desc)+'</option>').join('');
+  const body='<div class="frow c2"><div class="field"><label>Área que evalúa</label><select id="ep_area" onchange="evalProvFormArea()"><option value="compras"'+(area==='compras'?' selected':'')+'>Compras (Atención + Costos)</option><option value="proyectos"'+(area==='proyectos'?' selected':'')+'>Técnico / Proyectos (Planificación, Técnico, Calidad, Seguridad)</option></select></div>'
+    +'<div class="field"><label>Fecha</label><input id="ep_fecha" type="date" value="'+esc(cur.fecha||solpHoy())+'"></div></div>'
+    +'<div class="field"><label>Proveedor</label><input id="ep_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"></div>'
+    +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><select id="ep_obra"><option value="">— sin obra —</option>'+obraOpts+'</select></div>'
+    +'<div class="field"><label>Rubro</label><input id="ep_rubro" type="text" value="'+esc(cur.rubro||'')+'"></div></div>'
+    +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
+    +'<div class="field"><label>Comentarios</label><textarea id="ep_coment" rows="2">'+esc(cur.comentarios||'')+'</textarea></div>'
+    +'<div id="epMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarEvalProv('+(id!=null?id:'null')+')">Guardar</button>';
+  openModal(id!=null?'Editar evaluación':'Nueva evaluación', body, foot, 'wide');
+}
+window.openEvalProvForm=openEvalProvForm;
+async function guardarEvalProv(id){
+  const msg=document.getElementById('epMsg');
+  const provSel=resolveProv(document.getElementById('ep_prov').value);
+  if(!provSel){ toast('Elegí un proveedor válido del diccionario.'); return; }
+  const area=document.getElementById('ep_area').value;
+  const fecha=document.getElementById('ep_fecha').value;
+  if(!fecha){ toast('Ingresá la fecha.'); return; }
+  const obra_cod=document.getElementById('ep_obra').value||null;
+  const rubro=document.getElementById('ep_rubro').value.trim()||null;
+  const comentarios=document.getElementById('ep_coment').value.trim()||null;
+  const row={ proveedor_cod:provSel.codigo, area, fecha, obra_cod, rubro, comentarios };
+  EVALPROV_PREGUNTAS[area].forEach(q=>{ const el=document.getElementById('ep_'+q.key); row[q.key]=(el&&el.value!=='')?+el.value:null; });
+  const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  row.evaluador = MI_NOMBRE||autor;
+  try{
+    if(id==null){ row.creado_por=autor; await sbFetch('/compras_prov_evaluaciones',{method:'POST',body:JSON.stringify(row)}); }
+    else{ await sbFetch('/compras_prov_evaluaciones?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); }
+    closeModal(); toast('Evaluación guardada'); await evalProvLoad(); renderEvalProv();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
+}
+window.guardarEvalProv=guardarEvalProv;
+
+/* ---- Proveedores críticos: alta / edición / baja ---- */
+function comboEvalProvCriticoProv(){
+  const inp=document.getElementById('epc_prov'); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  const src=(DIC.proveedores||[]);
+  const items=(q?src.filter(p=>((p.codigo||'')+' '+(p.razon||'')+' '+(p.comercial||'')).toLowerCase().includes(q)):src).slice(0,80).map(p=>({code:p.codigo,name:p.razon||p.comercial||''}));
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; });
+}
+window.comboEvalProvCriticoProv=comboEvalProvCriticoProv;
+function openEvalProvCriticoForm(id){
+  if(!canEvalProv()){ toast('No tenés permiso.'); return; }
+  const cur = id!=null ? (EVALPROV.criticos||[]).find(x=>String(x.id)===String(id)) : {};
+  const body='<div class="field"><label>Proveedor</label><input id="epc_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvCriticoProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"'+(id!=null?' disabled':'')+'></div>'
+    +'<div class="field"><label>Motivo de criticidad</label><textarea id="epc_motivo" rows="2">'+esc(cur.motivo||'')+'</textarea></div>'
+    +'<div class="frow c2"><div class="field"><label>¿Tiene proveedor alternativo?</label><select id="epc_alt"><option value="">— elegí —</option><option value="si"'+(cur.tiene_alternativa===true?' selected':'')+'>Sí</option><option value="no"'+(cur.tiene_alternativa===false?' selected':'')+'>No</option></select></div>'
+    +'<div class="field"><label>¿Cuál?</label><input id="epc_alttxt" type="text" value="'+esc(cur.alternativa_texto||'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Frecuencia de reevaluación (meses)</label><input id="epc_frec" type="number" min="1" value="'+(cur.frecuencia_meses||3)+'"></div>'
+    +'<div class="field"><label>Última revisión</label><input id="epc_ultima" type="date" value="'+esc(cur.ultima_revision||'')+'"></div></div>'
+    +'<div class="field"><label><input type="checkbox" id="epc_activo" '+(cur.activo!==false?'checked':'')+'> Activo (sigue siendo crítico)</label></div>'
+    +'<div id="epcMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarEvalProvCritico('+(id!=null?id:'null')+')">Guardar</button>';
+  openModal(id!=null?'Editar proveedor crítico':'Marcar proveedor crítico', body, foot);
+}
+window.openEvalProvCriticoForm=openEvalProvCriticoForm;
+async function guardarEvalProvCritico(id){
+  const msg=document.getElementById('epcMsg');
+  const provSel=resolveProv(document.getElementById('epc_prov').value);
+  if(!provSel){ toast('Elegí un proveedor válido.'); return; }
+  const motivo=document.getElementById('epc_motivo').value.trim()||null;
+  const altVal=document.getElementById('epc_alt').value;
+  const tiene_alternativa = altVal===''?null:altVal==='si';
+  const alternativa_texto=document.getElementById('epc_alttxt').value.trim()||null;
+  const frecuencia_meses=+document.getElementById('epc_frec').value||3;
+  const ultima_revision=document.getElementById('epc_ultima').value||null;
+  const activo=document.getElementById('epc_activo').checked;
+  const row={ motivo, tiene_alternativa, alternativa_texto, frecuencia_meses, ultima_revision, activo };
+  try{
+    if(id==null){ row.proveedor_cod=provSel.codigo; row.creado_por=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||''; await sbFetch('/compras_prov_criticos',{method:'POST',body:JSON.stringify(row)}); }
+    else{ row.actualizado_en=new Date().toISOString(); await sbFetch('/compras_prov_criticos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); }
+    closeModal(); toast('Guardado'); await evalProvLoad(); renderEvalProv();
+  }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); } }
+}
+window.guardarEvalProvCritico=guardarEvalProvCritico;
+function askDelEvalProvCritico(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar.'); return; }
+  const c=(EVALPROV.criticos||[]).find(x=>String(x.id)===String(id)); if(!c) return;
+  openModal('Eliminar proveedor crítico', '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">Se quita la marca de crítico de '+esc(c.provNom)+' — no se puede deshacer. ¿Confirmás?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelEvalProvCritico('+id+')">Eliminar</button>');
+}
+window.askDelEvalProvCritico=askDelEvalProvCritico;
+async function confirmDelEvalProvCritico(id){
+  if(!ROLE.admin) return;
+  await sbFetch('/compras_prov_criticos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+  closeModal(); toast('Eliminado'); await evalProvLoad(); renderEvalProv();
+}
+window.confirmDelEvalProvCritico=confirmDelEvalProvCritico;
 
 
 function authScreen(msg, btn){
