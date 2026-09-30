@@ -8867,12 +8867,20 @@ function evalProvCriticosHtml(){
    Match de Proveedor: solo exacto (código/razón/comercial) — no se adivina por texto parecido,
    para no atribuir mal una evaluación de auditoría a un proveedor equivocado. El resto se importa
    igual, sin código, con el texto original de consulta (mismo criterio que eligió Micaela en SOLP). */
+// Match exacto pero tolerante a acentos/puntuación/razón social (S.A., SRL, etc.) — "INGENIERIA SER"
+// tiene que poder matchear "INGENIERIA SER S.A." sin por eso empezar a adivinar por texto parecido.
+const _EVALPROV_SUFIJOS=/\b(s\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?h\.?|sociedad de hecho|sociedad anonima)\b/g;
+function _evalProvNormNombre(s){
+  let t=_syncFold(s);
+  t=t.replace(/[.,\-]/g,' ').replace(_EVALPROV_SUFIJOS,' ').replace(/\s+/g,' ').trim();
+  return t;
+}
 function _evalProvMatchProveedor(texto){
-  const t=_syncNorm(texto).toUpperCase(); if(!t) return null;
+  const t=_evalProvNormNombre(texto); if(!t) return null;
   const list=(DIC.proveedores||[]);
-  return list.find(p=>(p.codigo||'').toUpperCase()===t)
-      || list.find(p=>(p.razon||'').toUpperCase()===t)
-      || list.find(p=>(p.comercial||'').toUpperCase()===t)
+  return list.find(p=>_evalProvNormNombre(p.codigo)===t)
+      || list.find(p=>_evalProvNormNombre(p.razon)===t)
+      || list.find(p=>_evalProvNormNombre(p.comercial)===t)
       || null;
 }
 function _evalProvFingerprint(r){ return [r.proveedor_cod,r.proveedor_texto,r.fecha,r.area,r.evaluador,...EVALPROV_TODAS.map(q=>r[q.key])].map(x=>x==null?'':String(x)).join('|'); }
