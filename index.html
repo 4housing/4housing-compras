@@ -95,6 +95,12 @@ table.grid.solp-mx td{text-align:right;font-variant-numeric:tabular-nums;}
 .solp-mx-c{cursor:pointer;}
 .solp-mx-tot td{font-weight:700;border-top:2px solid var(--ink);}
 .solp-foot{font-size:11.5px;color:var(--muted);margin:16px 2px 30px;line-height:1.5;max-width:110ch;}
+.solp-tabs{display:flex;gap:6px;margin:0 0 14px;}
+.solp-tabs button{border:1px solid var(--line-strong);background:#fff;border-radius:9px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
+.solp-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+table.grid.solp-full td,table.grid.solp-full th{font-size:11px;padding:4px 8px;white-space:nowrap;}
+table.grid.solp-full td.trunc,table.grid.solp-full th.trunc{max-width:130px;overflow:hidden;text-overflow:ellipsis;}
+table.grid.solp-full tbody tr:hover{background:#f4f1ea;}
 @media (max-width:1100px){ .kpi-grid.solp-kpis{grid-template-columns:repeat(3,1fr);} .solp-grid{grid-template-columns:1fr;} }
 @media (max-width:700px){ .kpi-grid.solp-kpis{grid-template-columns:repeat(2,1fr);} .solp-ms{min-width:0;flex:1 1 45%;} .solp-seg{margin-left:0;} }
 
@@ -7885,13 +7891,17 @@ const SOLP_ESTADOS = ['SIN ACCION','EN REVISION DE STOCK','STOCK DISPONIBLE','CO
 const SOLP_SERIES = [['mat','Materiales (1–999)'],['calc','Cálculo estructural (1000–1999)'],['serv','Servicios (2000–2999)'],['otros','Otros (3000+)'],['sin','Sin SOLP (0)']];
 const SOLP_RANGOS = {mat:[1,999], calc:[1000,1999], serv:[2000,2999], otros:[3000,999999], sin:[0,0]};
 const SOLP_COL = { ok:'#4f8a53', open:'#c9962a', void:'#b3b0a3', late:'#b0584f', ink:'#2b2b26', muted:'#94917f', line:'#e2dfd4', olive:'#5f7a4e' };
-const SOLP = { rows:null, rubros:null, loading:false, metric:'solp', charts:{},
+const SOLP = { rows:null, rubros:null, loading:false, metric:'solp', tab:'resumen', charts:{},
   F:{ o:new Set(), g:new Set(), e:new Set(), r:new Set(), s:new Set(), d1:'', d2:'' } };
 
 const solpSerie = s => (s===0||s==null) ? 'sin' : s<1000 ? 'mat' : s<2000 ? 'calc' : s<3000 ? 'serv' : 'otros';
 const solpDMY = d => d ? d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4) : '';
 const solpHoy = () => { const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10); };
-const solpLbl = (k,v) => v ? v : (k==='o'?'(sin obra)':k==='g'?'(sin asignar)':k==='r'?'(sin rubro)':'(vacío)');
+// Compradores se guardan "Apellido, Nombre" (a veces con apellido compuesto); para no ocupar tanto
+// espacio en gráficos/tablas se muestra "Apellido, N." — el nombre completo sigue siendo el valor
+// real usado para filtrar y guardar, esto es solo formato de exhibición.
+function solpCompCorto(n){ const p=String(n||'').split(','); if(p.length<2) return n; const ap=p[0].trim(), no=p.slice(1).join(',').trim(); return no?ap+', '+no[0].toUpperCase()+'.':ap; }
+const solpLbl = (k,v) => !v ? (k==='o'?'(sin obra)':k==='g'?'(sin asignar)':k==='r'?'(sin rubro)':'(vacío)') : (k==='g'?solpCompCorto(v):v);
 // Obra = Clasificación renglón (PROYECTO + EERR tipo ACOPIO/ESTRUCTURA/INVERSION), no DIC.proyectos:
 // ese catálogo aparte quedó chico y nunca se sincroniza; Clasificación sí, con "Sincronizar con Tango".
 function solpObrasDic(){ return (CLASIF_ALL||[]).filter(r=>(r.categoria==='PROYECTO'||r.categoria==='EERR') && String(r.habil_comp||'').toLowerCase()==='si'); }
@@ -7976,6 +7986,8 @@ function solpSerieT(k){ SOLP.F.s.has(k)?SOLP.F.s.delete(k):SOLP.F.s.add(k); rend
 function solpDate(k,v){ SOLP.F[k]=v; renderSolp(); }
 function solpClear(){ ['o','g','e','r','s'].forEach(k=>SOLP.F[k].clear()); SOLP.F.d1=SOLP.F.d2=''; SOLP.open=null; renderSolp(); }
 function solpMetric(m){ SOLP.metric=m; renderSolp(); }
+function solpTab(t){ SOLP.tab=t; renderSolp(); }
+window.solpTab=solpTab;
 function solpCell(o,g){ const F=SOLP.F; if(F.o.size===1&&F.o.has(o)&&F.g.size===1&&F.g.has(g)){F.o.clear();F.g.clear();} else {F.o.clear();F.o.add(o);F.g.clear();F.g.add(g);} renderSolp(); }
 Object.assign(window,{solpToggle,solpOnly,solpSerieT,solpDate,solpClear,solpMetric,solpCell});
 
@@ -8170,6 +8182,9 @@ function _solpMatchGestiona(txt){
   const candidatos=nombresComp().filter(n=>{ const tokN=_tokensNombre(n); return tokTxt.every(tok=>tokN.includes(tok)); });
   return candidatos.length===1 ? candidatos[0] : null;
 }
+// Huella para detectar ítems que ya están cargados (evita duplicar si se analiza/importa el mismo
+// archivo dos veces — no hay clave natural, así que se arma con los campos que identifican la fila).
+function _solpFingerprint(r){ return [r.obra_cod,r.solp,r.estado,r.gestiona,r.rubro,r.fecha_ingreso,r.f_necesidad,r.proveedor,r.num_oc,r.num_og].map(x=>x==null?'':String(x)).join('|'); }
 async function solpImportHistoricoAnalizar(){
   const f=(document.getElementById('sph_file').files||[])[0];
   const msg=document.getElementById('sphMsg');
@@ -8188,7 +8203,8 @@ async function solpImportHistoricoAnalizar(){
       prov:_syncIdx(H,'Proveedor'), oc:_syncIdx(H,'NumOC','N° OC','Num OC'), og:_syncIdx(H,'NumOG','N° OG','Num OG'),
       obs:_syncIdx(H,'Observaciones'), cotiz:_syncIdx(H,'Cotización solicitada','Cotizacion solicitada'), condpago:_syncIdx(H,'Condicion Pago','Condición Pago','Condición de Pago'),
     };
-    const listos=[], sinObra=[], sinGestiona=[];
+    const existentes=new Set((SOLP.rows||[]).map(_solpFingerprint));
+    const listos=[], sinObra=[], sinGestiona=[], yaExisten=[];
     for(let r=1;r<rows.length;r++){
       const row=rows[r]; const obraTxt=_syncNorm(row[idx.obra]); if(!obraTxt && idx.solp>=0 && row[idx.solp]==null) continue;
       const obraM=_solpMatchObra(obraTxt);
@@ -8213,11 +8229,12 @@ async function solpImportHistoricoAnalizar(){
         condicion_pago: idx.condpago>=0?(_syncNorm(row[idx.condpago])||null):null,
       };
       if(!obraM) sinObra.push(item);
+      else if(existentes.has(_solpFingerprint(item))) yaExisten.push(item);
       else if(gestTxt && !gestM) sinGestiona.push(item);
       else listos.push(item);
     }
-    if(!listos.length && !sinObra.length && !sinGestiona.length) throw new Error('No encontré filas de datos.');
-    SOLP_IMPORT={listos, sinObra, sinGestiona};
+    if(!listos.length && !sinObra.length && !sinGestiona.length && !yaExisten.length) throw new Error('No encontré filas de datos.');
+    SOLP_IMPORT={listos, sinObra, sinGestiona, yaExisten};
     renderSolpImportReport();
   }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error al leer: '+(e.message||e); }
 }
@@ -8229,8 +8246,9 @@ function renderSolpImportReport(){
   const tabla=(arr,cols)=>'<div class="dic-scroll" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+arr.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
   let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     +'<span class="badge b-verde">Listos para importar: '+s.listos.length+'</span>'
+    +'<span class="badge b-ambar">Sin matchear comprador: '+s.sinGestiona.length+'</span>'
     +'<span class="badge b-rojo">Sin matchear obra: '+s.sinObra.length+'</span>'
-    +'<span class="badge b-ambar">Sin matchear comprador: '+s.sinGestiona.length+'</span></div>';
+    +'<span class="badge b-gris">Ya estaban cargados: '+(s.yaExisten?s.yaExisten.length:0)+'</span></div>';
   if(s.sinObra.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#c62828">Sin matchear obra — no se importan (revisá el texto contra el catálogo de Proyectos)</div>'+tabla(s.sinObra,[['Obra (texto original)',r=>r.obra_txt],['SOLP',r=>r.solp],['Estado',r=>r.estado]]);
   if(s.sinGestiona.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Sin matchear comprador — se importan igual, sin "Gestiona"</div>'+tabla(s.sinGestiona,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Gestiona (texto original)',r=>r.gestiona_txt]]);
   h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Listos para importar</div>'+tabla(s.listos,[['Obra',r=>solpObraNom(r.obra_cod)],['SOLP',r=>r.solp],['Estado',r=>r.estado],['Comprador',r=>r.gestiona||'—']]);
@@ -8308,15 +8326,20 @@ async function renderSolp(){
   const kpi=(l,v,sub,col)=>'<div class="kpi"><div class="kpi-label">'+l+'</div><div class="kpi-value"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="kpi-sub">'+sub+'</div></div>';
 
   const adminBtns = ROLE.admin ? '<button class="btn ghost sm" onclick="openSolpImportRubros()">Importar Rubros</button><button class="btn ghost sm" style="margin-left:6px" onclick="openSolpImportHistorico()">Importar histórico</button>' : '';
+  const tabs='<div class="solp-tabs"><button class="'+(SOLP.tab==='resumen'?'on':'')+'" onclick="solpTab(\'resumen\')">Resumen</button><button class="'+(SOLP.tab==='detalle'?'on':'')+'" onclick="solpTab(\'detalle\')">Detalle</button></div>';
 
-  C().innerHTML =
-    '<div class="solp-status"><span id="solpStatus">'+nf(SOLP.rows.length)+' ítems cargados'+(SOLP.rubros?' · '+SOLP.rubros.length+' rubros':'')+'</span> <button class="btn ghost sm" onclick="solpRefrescar()">Recargar</button> '+adminBtns+'</div>'
-    + '<div class="card solp-filters"><div class="solp-frow">'
-      + solpMS('o','obra','Obra') + solpMS('g','gestiona','Comprador') + solpMS('e','estado','Estado') + solpMS('r','rubro','Rubro')
-      + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
-    + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')+'</div>'
-    + '<div class="solp-tags">'+tagHtml()+'</div></div>'
-    + '<div class="kpi-grid solp-kpis">'
+  // Detalle: listado plano de TODOS los ítems (abiertos y cerrados) con columnas angostas, para
+  // revisar/exportar caso por caso — el Resumen (tablero) solo mostraba las SOLP abiertas.
+  const DLIM=500;
+  const detOrd=rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||''));
+  const atiempoBadge=v=>v==='SI'?'<span class="badge b-verde">Sí</span>':v==='NO'?'<span class="badge b-rojo">No</span>':'<span class="badge b-gris">'+(v==='SIN DIAS'?'Sin días':'Sin fecha')+'</span>';
+  const td=(v,cls)=>'<td'+(cls?' class="'+cls+'"':'')+(cls==='trunc'?' title="'+esc(v||'')+'"':'')+'>'+esc(v==null?'':v)+'</td>';
+  const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
+      + '<th class="trunc">Obra</th><th>SOLP</th><th>Estado</th><th>Comprador</th><th class="trunc">Rubro</th><th>Ingreso</th><th>Necesidad</th><th>Entrega</th><th class="trunc">Proveedor</th><th>N°OC</th><th>N°OG</th><th>A tiempo</th>'+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
+    + detOrd.slice(0,DLIM).map(x=>'<tr>'+td(solpLbl('o',x.obra),'trunc')+td(x.solp)+td(x.estado)+td(solpLbl('g',x.gestiona))+td(x.rubro,'trunc')+td(solpDMY(x.fecha_ingreso))+td(solpDMY(x.f_necesidad))+td(solpDMY(x.fecha_entrega))+td(x.proveedor,'trunc')+td(x.num_oc)+td(x.num_og)+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
+    + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto.</div>':'');
+
+  const resumenHtml = '<div class="kpi-grid solp-kpis">'
       + kpi('SOLP',nf(sols.length),'Obra + número, sin duplicar')
       + kpi('Ítems',nf(rows.length),'Filas de la lista')
       + kpi('Abiertas',nf(sols.filter(s=>s.open).length),'Con algún ítem sin cerrar',SOLP_COL.open)
@@ -8335,6 +8358,17 @@ async function renderSolp(){
       + 'Cada SOLP toma un estado para las barras: abierta si tiene algún ítem sin cerrar (cerrado = CUMPLIDA, ANULADA o RECHAZADA); si no, cumplida o anulada. '
       + 'Si una SOLP tiene ítems de más de un comprador, cuenta para cada uno. Vencida = abierta con algún ítem cuya F. Necesidad S/Solp ya pasó.</div>';
 
+  C().innerHTML =
+    '<div class="solp-status"><span id="solpStatus">'+nf(SOLP.rows.length)+' ítems cargados'+(SOLP.rubros?' · '+SOLP.rubros.length+' rubros':'')+'</span> <button class="btn ghost sm" onclick="solpRefrescar()">Recargar</button> '+adminBtns+'</div>'
+    + tabs
+    + '<div class="card solp-filters"><div class="solp-frow">'
+      + solpMS('o','obra','Obra') + solpMS('g','gestiona','Comprador') + solpMS('e','estado','Estado') + solpMS('r','rubro','Rubro')
+      + '<div class="solp-dates"><span>Ingreso</span><input type="month" value="'+F.d1+'" onchange="solpDate(\'d1\',this.value)" aria-label="Desde"><input type="month" value="'+F.d2+'" onchange="solpDate(\'d2\',this.value)" aria-label="Hasta"></div>'
+    + '</div><div class="solp-chips">'+SOLP_SERIES.map(([k,l])=>'<button class="solp-chip'+(F.s.has(k)?' on':'')+'" onclick="solpSerieT(\''+k+'\')">'+l+'</button>').join('')+'</div>'
+    + '<div class="solp-tags">'+tagHtml()+'</div></div>'
+    + (SOLP.tab==='detalle' ? '<div class="card" style="margin-top:0"><div class="card-h"><h3>Detalle de ítems</h3><span class="meta">'+nf(rows.length)+' con estos filtros</span></div>'+detalleHtml+'</div>' : resumenHtml);
+
+  if(SOLP.tab!=='resumen') return;
   if(!window.Chart){ toast('No se pudo cargar la librería de gráficos. Revisá la conexión.'); return; }
   solpBar('solpCO', byO.map(d=>solpLbl('o',d.k)), byO, byO.map(d=>d.k), v=>solpOnly('o',v));
   solpBar('solpCG', byG.map(d=>solpLbl('g',d.k)), byG, byG.map(d=>d.k), v=>solpOnly('g',v));
