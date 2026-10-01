@@ -4032,7 +4032,7 @@ function ogReportRows(ogs){
       r[16]= (avancePct?avancePct.toFixed(1).replace('.0','')+'%':'0%'); // Estado (renglón)
       r[17]= o.observaciones||'';                      // Observaciones
       r[18]= o.moneda||'';                             // Moneda
-      r[19]= usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'';  // Cotización (dólar blue, promedio)
+      r[19]= tcCompra!=null?tcCompra:'';               // Cotización: el TC registrado al cargar la OG (promedio); OG viejas sin TC: el del día anterior a su fecha
       r[20]= o.comprador||'';                          // Nombre del comprador
       r[21]= o.condicion||o.tipo_contratacion||'';     // Condición de compra
       r[22]= o.solp!=null?o.solp:'';                   // SOLP N°
