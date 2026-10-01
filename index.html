@@ -8268,9 +8268,8 @@ function openSolpForm(id){
     +'<div class="field"><label>Comprador (Gestiona)</label><select id="sp_gestiona"><option value="">— elegí —</option>'+gestOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Rubro</label><select id="sp_rubro" onchange="solpFormRubroChanged()"><option value="">— sin rubro —</option>'+rubOpts+'</select></div>'
     +'<div class="field"><label>Días Compras</label><input id="sp_dias" type="number" min="0" value="'+(cur.dias_compras!=null?cur.dias_compras:'')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Fecha ingreso SOLP</label><input id="sp_fingreso" type="date" value="'+esc(cur.fecha_ingreso||hoy)+'"></div>'
-    +'<div class="field"><label>F. Necesidad en obra S/Solp *</label><input id="sp_fnec" type="date" value="'+esc(cur.f_necesidad||'')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>F. Necesidad S/Plani</label><input id="sp_fplani" type="date" value="'+esc(cur.f_necesidad_plani||'')+'"></div>'
+    +'<div class="frow c3"><div class="field"><label>Fecha ingreso SOLP</label><input id="sp_fingreso" type="date" value="'+esc(cur.fecha_ingreso||hoy)+'"></div>'
+    +'<div class="field"><label>F. Necesidad S/Solp *</label><input id="sp_fnec" type="date" value="'+esc(cur.f_necesidad||'')+'"></div>'
     +'<div class="field"><label>Fecha Entrega</label><input id="sp_fentrega" type="date" value="'+esc(cur.fecha_entrega||'')+'"></div></div>'
     +'<div class="field"><label>Proveedor(es)</label><div id="sp_provChips" class="solp-tags" style="margin-bottom:6px"></div><input id="sp_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboSolpProv()" onblur="comboHideDelayed()"></div>'
     +'<div class="frow c2"><div class="field"><label>N° OC</label><input id="sp_oc" type="text" value="'+esc(cur.num_oc||'')+'"></div>'
@@ -8328,7 +8327,6 @@ async function guardarSolp(id){
   const dias_compras=document.getElementById('sp_dias').value===''?null:+document.getElementById('sp_dias').value;
   const fecha_ingreso=document.getElementById('sp_fingreso').value;
   const f_necesidad=document.getElementById('sp_fnec').value;
-  const f_necesidad_plani=document.getElementById('sp_fplani').value||null;
   const fecha_entrega=document.getElementById('sp_fentrega').value||null;
   const proveedor_cod=SOLP_FORM_PROVS.map(p=>p.code).join(';')||null;
   const num_oc=document.getElementById('sp_oc').value.trim()||null;
@@ -8342,7 +8340,7 @@ async function guardarSolp(id){
   if(!fecha_ingreso){ toast('Ingresá la fecha de ingreso.'); return; }
   if(!f_necesidad){ toast('La fecha de necesidad es obligatoria.'); return; }
   const ahora=new Date().toISOString(), autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
-  const row={ obra_cod, solp, estado, gestiona:gestiona||null, rubro:rubro||null, dias_compras, fecha_ingreso, f_necesidad, f_necesidad_plani, fecha_entrega, proveedor_cod, num_oc, num_og, observaciones, cotizacion_solicitada, condicion_pago };
+  const row={ obra_cod, solp, estado, gestiona:gestiona||null, rubro:rubro||null, dias_compras, fecha_ingreso, f_necesidad, fecha_entrega, proveedor_cod, num_oc, num_og, observaciones, cotizacion_solicitada, condicion_pago };
   try{
     if(id==null){ row.creado_por=autor; row.creado_en=ahora; await sbFetch('/compras_solp_items',{method:'POST',body:JSON.stringify(row)}); }
     else{ row.actualizado_por=autor; row.actualizado_en=ahora; await sbFetch('/compras_solp_items?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)}); }
@@ -8468,7 +8466,8 @@ async function solpImportHistoricoAnalizar(){
       solp:_syncIdx(H,'SOLP'), obra:_syncIdx(H,'Obra'), estado:_syncIdx(H,'Estado'), gestiona:_syncIdx(H,'Gestiona'),
       rubro:_syncIdx(H,'Rubro L','RubroL','Rubro'), dias:_syncIdx(H,'Días Compras','Dias Compras','Verificacion'),
       fingreso:_syncIdx(H,'Fecha ingreso SOLP','FECHADEINGRESOSOLP'), fnec:_syncIdx(H,'F. Necesidad S/Solp','F. Necesidad en Obra S/Solp'),
-      fplani:_syncIdx(H,'F. Necesidad S/Plani'), fentrega:_syncIdx(H,'Fecha Entrega'),
+      fplani:_syncIdx(H,'F. Necesidad S/Plani'), // se usa solo como respaldo de F. Necesidad si esa viene vacía (ver abajo) — ya no es un campo propio
+      fentrega:_syncIdx(H,'Fecha Entrega'),
       prov:_syncIdx(H,'Cod Proveedor','COD PROVEEDOR','Proveedor'), provTxt:_syncIdx(H,'Datos Anteriores Proveedor','Datos Anteriores  Proveedor'),
       oc:_syncIdx(H,'NumOC','N° OC','Num OC'), og:_syncIdx(H,'NumOG','N° OG','Num OG'),
       obs:_syncIdx(H,'Observaciones'), cotiz:_syncIdx(H,'Cotización solicitada','Cotizacion solicitada'), condpago:_syncIdx(H,'Condicion Pago','Condición Pago','Condición de Pago'),
@@ -8488,8 +8487,9 @@ async function solpImportHistoricoAnalizar(){
         rubro: idx.rubro>=0?_syncNorm(row[idx.rubro]):'',
         dias_compras: idx.dias>=0?(_syncNum(row[idx.dias])||null):null,
         fecha_ingreso: idx.fingreso>=0?(_syncFechaISO(row[idx.fingreso])||null):null,
-        f_necesidad: idx.fnec>=0?(_syncFechaISO(row[idx.fnec])||null):null,
-        f_necesidad_plani: idx.fplani>=0?(_syncFechaISO(row[idx.fplani])||null):null,
+        // F. Necesidad S/Plani ya no es un campo aparte (duplicaba F. Necesidad S/Solp) — si F.
+        // Necesidad viene vacía en el Excel, se completa con S/Plani antes de perder el dato.
+        f_necesidad: idx.fnec>=0?(_syncFechaISO(row[idx.fnec])||(idx.fplani>=0?_syncFechaISO(row[idx.fplani]):null)||null):(idx.fplani>=0?(_syncFechaISO(row[idx.fplani])||null):null),
         fecha_entrega: idx.fentrega>=0?(_syncFechaISO(row[idx.fentrega])||null):null,
         proveedor_cod: idx.prov>=0?(_solpProvValidos(row[idx.prov]).join(';')||null):null,
         proveedor_texto: idx.provTxt>=0?(_syncNorm(row[idx.provTxt])||null):(idx.prov>=0?(_syncNorm(row[idx.prov])||null):null),
@@ -8533,7 +8533,7 @@ window.renderSolpImportReport=renderSolpImportReport;
 async function solpImportHistoricoAplicar(){
   const s=SOLP_IMPORT; if(!s) return;
   const msg=document.getElementById('sphMsg');
-  const filas=[...s.listos, ...s.sinGestiona].map(r=>({obra_cod:r.obra_cod, solp:r.solp, estado:r.estado||'SIN ACCION', gestiona:r.gestiona, rubro:r.rubro||null, dias_compras:r.dias_compras, fecha_ingreso:r.fecha_ingreso, f_necesidad:r.f_necesidad, f_necesidad_plani:r.f_necesidad_plani, fecha_entrega:r.fecha_entrega, proveedor_cod:r.proveedor_cod, proveedor_texto:r.proveedor_texto, num_oc:r.num_oc, num_og:r.num_og, observaciones:r.observaciones, cotizacion_solicitada:r.cotizacion_solicitada, condicion_pago:r.condicion_pago}));
+  const filas=[...s.listos, ...s.sinGestiona].map(r=>({obra_cod:r.obra_cod, solp:r.solp, estado:r.estado||'SIN ACCION', gestiona:r.gestiona, rubro:r.rubro||null, dias_compras:r.dias_compras, fecha_ingreso:r.fecha_ingreso, f_necesidad:r.f_necesidad, fecha_entrega:r.fecha_entrega, proveedor_cod:r.proveedor_cod, proveedor_texto:r.proveedor_texto, num_oc:r.num_oc, num_og:r.num_og, observaciones:r.observaciones, cotizacion_solicitada:r.cotizacion_solicitada, condicion_pago:r.condicion_pago}));
   if(!filas.length){ if(msg)msg.textContent='Nada para importar.'; return; }
   if(msg)msg.textContent='Importando '+filas.length+'…';
   try{
@@ -8616,12 +8616,12 @@ async function renderSolp(){
   const detOrd=solpApplySort(detFiltrado.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||'')));
   const atiempoBadge=v=>v==='SI'?'<span class="badge b-verde">Sí</span>':v==='NO'?'<span class="badge b-rojo">No</span>':'<span class="badge b-gris">'+(v==='SIN DIAS'?'Sin días':'Sin fecha')+'</span>';
   const td=(v,cls)=>'<td'+(cls?' class="'+cls+'"':'')+(cls==='trunc'?' title="'+esc(v||'')+'"':'')+'>'+esc(v==null?'':v)+'</td>';
-  const DET_COLS=[['Obra','obra'],['SOLP','solp'],['Estado','estado'],['Comprador','gestiona'],['Rubro','rubro'],['Días Compras','dias_compras'],['Ingreso','fecha_ingreso'],['Necesidad','f_necesidad'],['Necesidad S/Plani','f_necesidad_plani'],['Entrega','fecha_entrega'],['Proveedor','proveedor'],['N°OC','num_oc'],['N°OG','num_og'],['A tiempo','pedido_a_tiempo'],['Cotización solicitada','cotizacion_solicitada'],['Condición Pago','condicion_pago'],['Observaciones','observaciones'],['Proveedor (dato anterior, de consulta)','proveedor_texto']];
-  const detRow=x=>[solpLbl('o',x.obra),x.solp,x.estado,solpLbl('g',x.gestiona),x.rubro,x.dias_compras,solpDMY(x.fecha_ingreso),solpDMY(x.f_necesidad),solpDMY(x.f_necesidad_plani),solpDMY(x.fecha_entrega),x.proveedor,x.num_oc,x.num_og,x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'),x.cotizacion_solicitada,x.condicion_pago,x.observaciones,x.proveedor_texto];
+  const DET_COLS=[['Obra','obra'],['SOLP','solp'],['Estado','estado'],['Comprador','gestiona'],['Rubro','rubro'],['Días Compras','dias_compras'],['Ingreso','fecha_ingreso'],['Necesidad','f_necesidad'],['Entrega','fecha_entrega'],['Proveedor','proveedor'],['N°OC','num_oc'],['N°OG','num_og'],['A tiempo','pedido_a_tiempo'],['Cotización solicitada','cotizacion_solicitada'],['Condición Pago','condicion_pago'],['Observaciones','observaciones'],['Proveedor (dato anterior, de consulta)','proveedor_texto']];
+  const detRow=x=>[solpLbl('o',x.obra),x.solp,x.estado,solpLbl('g',x.gestiona),x.rubro,x.dias_compras,solpDMY(x.fecha_ingreso),solpDMY(x.f_necesidad),solpDMY(x.fecha_entrega),x.proveedor,x.num_oc,x.num_og,x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'),x.cotizacion_solicitada,x.condicion_pago,x.observaciones,x.proveedor_texto];
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
       + DET_COLS.map(c=>solpTh(c[0],c[1])).join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
     + (detOrd.length? detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
-        return '<tr>'+td(r[0],'trunc')+td(r[1])+td(r[2])+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9])+td(r[10],'trunc')+td(r[11],'trunc')+td(r[12],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+td(r[17],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
+        return '<tr>'+td(r[0],'trunc')+td(r[1])+td(r[2])+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9],'trunc')+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
@@ -8687,8 +8687,8 @@ function solpExportDetalleExcel(){
   const rows=(SOLP.rows||[]).filter(x=>solpPass(x)).filter(solpDetRowPass);
   if(!rows.length){ toast('No hay filas para exportar.'); return; }
   const ord=solpApplySort(rows.slice().sort((a,b)=> (a.obra||'').localeCompare(b.obra||'','es') || a.solp-b.solp || (a.fecha_ingreso||'').localeCompare(b.fecha_ingreso||'')));
-  const aoa=[['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Fecha ingreso SOLP','F. Necesidad S/Solp','F. Necesidad S/Plani','Fecha Entrega','Proveedor','N°OC','N°OG','¿Pedido a tiempo?','Cotización solicitada','Condición Pago','Observaciones','Proveedor (dato anterior, de consulta)']];
-  ord.forEach(x=>{ aoa.push([solpLbl('o',x.obra), x.solp, x.estado||'', x.gestiona||'', x.rubro||'', x.dias_compras!=null?x.dias_compras:'', x.fecha_ingreso?solpDMY(x.fecha_ingreso):'', x.f_necesidad?solpDMY(x.f_necesidad):'', x.f_necesidad_plani?solpDMY(x.f_necesidad_plani):'', x.fecha_entrega?solpDMY(x.fecha_entrega):'', x.proveedor||'', x.num_oc||'', x.num_og||'', x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'), x.cotizacion_solicitada||'', x.condicion_pago||'', x.observaciones||'', x.proveedor_texto||'']); });
+  const aoa=[['Obra','SOLP','Estado','Comprador','Rubro','Días Compras','Fecha ingreso SOLP','F. Necesidad S/Solp','Fecha Entrega','Proveedor','N°OC','N°OG','¿Pedido a tiempo?','Cotización solicitada','Condición Pago','Observaciones','Proveedor (dato anterior, de consulta)']];
+  ord.forEach(x=>{ aoa.push([solpLbl('o',x.obra), x.solp, x.estado||'', x.gestiona||'', x.rubro||'', x.dias_compras!=null?x.dias_compras:'', x.fecha_ingreso?solpDMY(x.fecha_ingreso):'', x.f_necesidad?solpDMY(x.f_necesidad):'', x.fecha_entrega?solpDMY(x.fecha_entrega):'', x.proveedor||'', x.num_oc||'', x.num_og||'', x.pedido_a_tiempo==='SI'?'Sí':x.pedido_a_tiempo==='NO'?'No':(x.pedido_a_tiempo==='SIN DIAS'?'Sin días':'Sin fecha'), x.cotizacion_solicitada||'', x.condicion_pago||'', x.observaciones||'', x.proveedor_texto||'']); });
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'SOLP');
   XLSX.writeFile(wb, 'SOLP_detalle_'+new Date().toISOString().slice(0,10)+'.xlsx');
