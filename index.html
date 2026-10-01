@@ -9738,7 +9738,7 @@ function evalProvDetalleCrudoHtml(){
     +epDetTh('Comentarios','comentarios',{nofilter:true})
     +(puedeEditar?'<th></th>':'')
     +'</tr></thead><tbody>'
-    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(r.evaluador_corto)+'</td><td>'+esc(r.area_lbl)+'</td>'+tdT(r.obra)+'<td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.prov_nom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
+    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(r.evaluador_corto)+'</td><td>'+esc(r.area_lbl)+'</td>'+tdT(r.obra)+'<td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.prov_nom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+(puedeEditar?'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button>'+(ROLE.admin?'<button class="iconbtn del" title="Eliminar" onclick="askDelEvalProv('+r.id+')">'+ICO.del+'</button>':'')+'</div></td>':'')+'</tr>').join('')
     +'</tbody></table></div>';
 }
 function epDetExportExcel(){
@@ -9778,7 +9778,7 @@ function evalProvEvalsHtml(){
   const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
   const puedeEditar=canEvalProv();
   const tablaDet = det.length ? '<div class="dic-scroll"><table class="grid solp-full"><thead><tr><th>Fecha</th><th>Cód.</th><th>Proveedor</th><th>Área</th><th>Obra</th><th>Rubro</th><th>Puntaje</th><th>Clasificación</th><th>Evaluador</th><th>Comentarios</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
-    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.provNom||r.proveedor_texto)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(evalProvEvaluadorCorto(r.evaluador))+'</td>'+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
+    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.provNom||r.proveedor_texto)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(evalProvEvaluadorCorto(r.evaluador))+'</td>'+tdT(r.comentarios)+(puedeEditar?'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button>'+(ROLE.admin?'<button class="iconbtn del" title="Eliminar" onclick="askDelEvalProv('+r.id+')">'+ICO.del+'</button>':'')+'</div></td>':'')+'</tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
   const adminBtns = ROLE.admin ? '<div style="margin-bottom:12px"><button class="btn ghost sm" onclick="openEvalProvImportHistorico()">Importar histórico</button></div>' : '';
@@ -10014,7 +10014,8 @@ function openEvalProvForm(id){
     +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
     +'<div class="field"><label>Comentarios</label><textarea id="ep_coment" rows="2">'+esc(cur.comentarios||'')+'</textarea></div>'
     +'<div id="epMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
-  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarEvalProv('+(id!=null?id:'null')+')">Guardar</button>';
+  const btnDel = (id!=null && ROLE.admin) ? '<button class="btn danger" style="margin-right:auto" onclick="askDelEvalProv('+id+')">Eliminar</button>' : '';
+  const foot=btnDel+'<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarEvalProv('+(id!=null?id:'null')+')">Guardar</button>';
   openModal(id!=null?'Editar evaluación':'Nueva evaluación', body, foot, 'wide');
 }
 window.openEvalProvForm=openEvalProvForm;
@@ -10040,6 +10041,19 @@ async function guardarEvalProv(id){
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
 }
 window.guardarEvalProv=guardarEvalProv;
+function askDelEvalProv(id){
+  if(!ROLE.admin){ toast('Solo un administrador puede eliminar.'); return; }
+  const r=(EVALPROV.rows||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  openModal('Eliminar evaluación', '<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">Se borra la evaluación de '+esc(r.provNom||r.proveedor_texto||'')+' del '+solpDMY(r.fecha)+' — no se puede deshacer. ¿Confirmás?</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelEvalProv('+id+')">Eliminar</button>');
+}
+window.askDelEvalProv=askDelEvalProv;
+async function confirmDelEvalProv(id){
+  if(!ROLE.admin) return;
+  await sbFetch('/compras_prov_evaluaciones?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+  closeModal(); toast('Eliminada'); await evalProvLoad(); renderEvalProv();
+}
+window.confirmDelEvalProv=confirmDelEvalProv;
 
 /* ---- Proveedores críticos: alta / edición / baja ---- */
 function comboEvalProvCriticoProv(){
