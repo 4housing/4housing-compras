@@ -8450,6 +8450,15 @@ function _evalProvMatchObra(txt){
   const aliasCod=SOLP_OBRA_ALIAS[_syncNorm(txt)];
   return aliasCod ? (list.find(p=>p.cod===aliasCod)||null) : null;
 }
+// El diccionario de Rubro es el mismo que usa SOLP (compras_solp_rubros), que trae los días de
+// entrega pegados al nombre (ej. "ARENADO Y PINTURA (7)"). El histórico de RC-03.03 tiene el rubro
+// sin esos días (ej. "Arenado y Pintura") — una comparación exacta nunca matcheaba NINGUNA fila,
+// por eso el Rubro quedaba vacío en todo el histórico. Se compara ignorando el "(...)" final.
+function _evalProvRubroBase(s){ return _syncFold(s).replace(/\s*\([^)]*\)\s*$/,'').trim(); }
+function _evalProvMatchRubro(txt){
+  const t=_evalProvRubroBase(txt); if(!t) return null;
+  return (EVALPROV.rubros||[]).find(x=>_evalProvRubroBase(x.nombre)===t) || null;
+}
 // Proveedor(es): se guarda como código, o varios separados por ";" (compras_proveedores, mismo
 // diccionario que usa la OG). El nombre se resuelve al vuelo, no se guarda.
 // "Especiales": para pedidos sin proveedor real de Tango (retiro de stock interno, pañol, o casos
@@ -9226,8 +9235,11 @@ const EVALPROV_PREGUNTAS={
 };
 const EVALPROV_TODAS=[...EVALPROV_PREGUNTAS.compras, ...EVALPROV_PREGUNTAS.proyectos];
 
-const EVALPROV_CATS=['Atención Personalizada','Costos y Precios','Planificación','Técnico','Calidad','Seguridad'];
-const EVALPROV_CAT_COL=['#4f8a53','#c9962a','#5f7a4e','#94917f','#b0584f','#2b6ca3'];
+// Mismo orden que la hoja IND del Excel original (Planificación/Técnico/Calidad/Seguridad —
+// proyectos primero — después Atención/Costos de compras), para que las tablas y gráficos de
+// Informe anual/Indicadores se puedan comparar directo contra el Excel sin reacomodar nada.
+const EVALPROV_CATS=['Planificación','Técnico','Calidad','Seguridad','Atención Personalizada','Costos y Precios'];
+const EVALPROV_CAT_COL=['#5f7a4e','#94917f','#b0584f','#2b6ca3','#4f8a53','#c9962a'];
 // Escala 1-5: no encontramos una leyenda definida en RC-03.03 — se usa esta por default de este
 // tipo de encuesta de desempeño (1 = Muy malo … 5 = Excelente). Avisar si el procedimiento escrito
 // define otra.
@@ -9253,11 +9265,7 @@ function evalProvClasif(pct){ return pct==null?'—':pct<EVALPROV_LIMITE?'No apt
 function evalProvClasifCol(c){ return c==='No apto'?SOLP_COL.late:c==='Apto con observaciones'?SOLP_COL.open:c==='Apto'?SOLP_COL.ok:SOLP_COL.muted; }
 function evalProvPct1(p){ return p==null?'—':Math.round(p*100)+'%'; }
 
-const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones', selProv:null, selRubro:null, charts:{} };
-function evalProvSelProv(v){ EVALPROV.selProv=v||null; renderEvalProv(); }
-window.evalProvSelProv=evalProvSelProv;
-function evalProvSelRubro(v){ EVALPROV.selRubro=v||null; renderEvalProv(); }
-window.evalProvSelRubro=evalProvSelRubro;
+const EVALPROV={ rows:null, criticos:null, tab:'evaluaciones', charts:{} };
 // Objetivo subió con los años (RC-03.03, hoja IND, fila "Objetivo"): 65% hasta 2019, 66% en 2020,
 // 68% en 2021, 70% en 2022-2023, 72% desde 2024. No hay dato para 2017/2018 en el Excel — se usa
 // el primer valor conocido (65%) como mejor estimación. El Límite de aceptación sí es fijo (40%).
@@ -9281,42 +9289,15 @@ function evalProvChart(id, cfg){
   if(EVALPROV.charts[id]) EVALPROV.charts[id].destroy();
   EVALPROV.charts[id]=new Chart(el, cfg);
 }
-function evalProvPromedio(rs){ const v=rs.filter(r=>r.pct!=null); return v.length?v.reduce((a,r)=>a+r.pct,0)/v.length:null; }
-function evalProvGraficoAnual(rows){
-  const years=[...new Set(rows.filter(r=>r.pct!=null).map(r=>r.fecha.slice(0,4)))].sort();
-  const data=years.map(y=>{ const p=evalProvPromedio(rows.filter(r=>r.fecha.slice(0,4)===y)); return p==null?null:Math.round(p*100); });
-  evalProvChart('epChartAnual', {type:'bar', data:{labels:years, datasets:[{label:'Promedio %', data, backgroundColor:SOLP_COL.olive, borderRadius:4, barThickness:28}]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false}},
-      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
-}
-function evalProvGraficoAnualDetalle(rows){
-  const years=[...new Set(rows.filter(r=>r.pct!=null).map(r=>r.fecha.slice(0,4)))].sort();
-  const datasets=EVALPROV_CATS.map((cat,i)=>({ label:cat, backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
-    data:years.map(y=>{ const rs=rows.filter(r=>r.fecha.slice(0,4)===y); const vals=rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null); return vals.length?Math.round(100*vals.reduce((a,v)=>a+v,0)/vals.length):null; }) }));
-  evalProvChart('epChartAnualDet', {type:'bar', data:{labels:years, datasets},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10.5}}}},
-      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
-}
-function evalProvGraficoEntidad(id, rows, filtroFn){
-  const rs=rows.filter(filtroFn);
-  const data=EVALPROV_CATS.map(cat=>{ const vals=rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null); return vals.length?Math.round(100*vals.reduce((a,v)=>a+v,0)/vals.length):null; });
-  evalProvChart(id, {type:'bar', data:{labels:EVALPROV_CATS, datasets:[{data, backgroundColor:EVALPROV_CAT_COL, borderRadius:4, barThickness:16}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false}},
-      scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
-}
-
 // ---- "Informe anual" (réplica viva de la hoja GRA: barra de Promedio + líneas de Objetivo y
 // Límite de aceptación superpuestas, igual que el Excel) ----
 function evalProvGraComboAnual(id, rows){
   const serie=evalProvSerieAnual(rows);
   const years=serie.map(s=>s.year);
   evalProvChart(id, {type:'bar', data:{labels:years, datasets:[
-    {type:'bar', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), backgroundColor:SOLP_COL.olive, borderRadius:4, barThickness:26, order:2},
-    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:3, tension:0, order:1},
-    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0, order:1},
+    {type:'bar', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), backgroundColor:'#2b6ca3', borderRadius:4, barThickness:26},
+    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:3, tension:0},
+    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0},
   ]}, options:{responsive:true,maintainAspectRatio:false,animation:false,
     plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10.5}}}},
     scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
@@ -9324,12 +9305,12 @@ function evalProvGraComboAnual(id, rows){
 function evalProvGraComboDetalle(id, rows){
   const serie=evalProvSerieAnual(rows);
   const years=serie.map(s=>s.year);
-  const barDatasets=EVALPROV_CATS.map((cat,i)=>({type:'bar', label:cat, backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3, order:2,
+  const barDatasets=EVALPROV_CATS.map((cat,i)=>({type:'bar', label:cat, backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
     data:serie.map(s=>s.porCat[i]==null?null:Math.round(s.porCat[i]*100))}));
   const lineDatasets=[
-    {type:'line', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), borderColor:'#d4c04a', backgroundColor:'#d4c04a', borderWidth:2, pointRadius:2, tension:0.25, order:1},
-    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0, tension:0, order:1},
-    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0, order:1},
+    {type:'line', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), borderColor:'#d4c04a', backgroundColor:'#d4c04a', borderWidth:2, pointRadius:2, tension:0.25},
+    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0, tension:0},
+    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0},
   ];
   evalProvChart(id, {type:'bar', data:{labels:years, datasets:[...barDatasets, ...lineDatasets]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
@@ -9341,9 +9322,9 @@ function evalProvGraComboServicio(id, rows, anio){
   const {porCat}=evalProvAggCats(rs);
   const obj=Math.round(evalProvObjetivoAnio(anio||evalProvAniosDe(rows).slice(-1)[0]||'')*100);
   evalProvChart(id, {type:'bar', data:{labels:EVALPROV_CATS, datasets:[
-    {type:'bar', label:'% del período', data:porCat.map(v=>v==null?null:Math.round(v*100)), backgroundColor:EVALPROV_CAT_COL, borderRadius:4, barThickness:18, order:2},
-    {type:'line', label:'Objetivo', data:EVALPROV_CATS.map(()=>obj), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0, order:1},
-    {type:'line', label:'Límite de aceptación', data:EVALPROV_CATS.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], order:1},
+    {type:'bar', label:'% del período', data:porCat.map(v=>v==null?null:Math.round(v*100)), backgroundColor:EVALPROV_CAT_COL, borderRadius:4, barThickness:18},
+    {type:'line', label:'Objetivo', data:EVALPROV_CATS.map(()=>obj), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0},
+    {type:'line', label:'Límite de aceptación', data:EVALPROV_CATS.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3]},
   ]}, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
     plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}}},
     scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
@@ -9450,12 +9431,6 @@ async function renderEvalProv(){
   const tabs='<div class="solp-tabs">'+tabDefs.map(([k,lbl])=>'<button class="'+(EVALPROV.tab===k?'on':'')+'" onclick="evalProvTab(\''+k+'\')">'+lbl+'</button>').join('')+'</div>';
   const paginas={criticos:evalProvCriticosHtml, detalle:evalProvDetalleCrudoHtml, informe:evalProvInformeAnualHtml, indicadores:evalProvIndicadoresHtml};
   C().innerHTML = tabs + (paginas[EVALPROV.tab] ? paginas[EVALPROV.tab]() : evalProvEvalsHtml());
-  if(EVALPROV.tab==='evaluaciones' && window.Chart){
-    evalProvGraficoAnual(EVALPROV.rows);
-    evalProvGraficoAnualDetalle(EVALPROV.rows);
-    evalProvGraficoEntidad('epChartProv', EVALPROV.rows, r=>!EVALPROV.selProv||r.proveedor_cod===EVALPROV.selProv);
-    evalProvGraficoEntidad('epChartRubro', EVALPROV.rows, r=>!EVALPROV.selRubro||r.rubro===EVALPROV.selRubro);
-  }
   if(EVALPROV.tab==='informe' && window.Chart){
     const rows=EVALPROV.rows.filter(r=>r.fecha);
     evalProvGraComboAnual('iaChartGral', IA.prov?rows.filter(r=>r.proveedor_cod===IA.prov):rows);
@@ -9736,15 +9711,8 @@ function evalProvEvalsHtml(){
       + kpi('Promedio general', evalProvPct1(prom), 'Objetivo: '+Math.round(EVALPROV_OBJETIVO*100)+'%')
       + kpi('Por debajo del límite', nf(noApto), 'Límite de aceptación: '+Math.round(EVALPROV_LIMITE*100)+'%', noApto?SOLP_COL.late:null)
     + '</div>'
-    + '<div class="solp-grid">'
-      + '<div class="card"><div class="card-h"><h3>Evolución anual</h3><span class="meta">Promedio general por año</span></div><div class="solp-cb" style="height:220px"><canvas id="epChartAnual"></canvas></div></div>'
-      + '<div class="card"><div class="card-h"><h3>Evolución anual — detalle</h3><span class="meta">Por categoría</span></div><div class="solp-cb" style="height:220px"><canvas id="epChartAnualDet"></canvas></div></div>'
-    + '</div>'
-    + '<div class="solp-grid" style="margin-top:16px">'
-      + '<div class="card"><div class="card-h"><h3>Por proveedor</h3><select onchange="evalProvSelProv(this.value)" style="font-size:12.5px;border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px"><option value="">Todos los proveedores</option>'+provs.map(cod=>'<option value="'+esc(cod)+'"'+(EVALPROV.selProv===cod?' selected':'')+'>'+esc(solpProvNom(cod))+'</option>').join('')+'</select></div><div class="solp-cb" style="height:220px"><canvas id="epChartProv"></canvas></div></div>'
-      + '<div class="card"><div class="card-h"><h3>Por rubro</h3><select onchange="evalProvSelRubro(this.value)" style="font-size:12.5px;border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px"><option value="">Todos los rubros</option>'+[...new Set(rows.map(r=>r.rubro).filter(Boolean))].sort().map(r=>'<option'+(EVALPROV.selRubro===r?' selected':'')+'>'+esc(r)+'</option>').join('')+'</select></div><div class="solp-cb" style="height:220px"><canvas id="epChartRubro"></canvas></div></div>'
-    + '</div>'
-    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Por proveedor</h3><span class="meta">Peor promedio primero</span></div>'+tablaProv+'</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin:10px 0 2px">Los gráficos (evolución anual, por proveedor, por rubro) se mudaron a la solapa <strong>Informe anual</strong>, para no repetirlos acá.</div>'
+    + '<div class="card" style="margin-top:10px"><div class="card-h"><h3>Por proveedor</h3><span class="meta">Peor promedio primero</span></div>'+tablaProv+'</div>'
     + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Detalle de evaluaciones</h3><span class="meta">'+nf(det.length)+'</span></div>'+tablaDet+'</div>';
 }
 
@@ -9848,7 +9816,7 @@ async function evalProvImportHistoricoAnalizar(){
       const codEquiv=provTxt?equivMap.get(provTxt.toUpperCase()):null;
       const provM=codEquiv ? {codigo:codEquiv} : _evalProvMatchProveedor(provTxt);
       const rubroTxt=_syncNorm(row[8]);
-      const rubroM=rubroTxt?(EVALPROV.rubros||[]).find(x=>x.nombre.toUpperCase()===rubroTxt.toUpperCase()):null;
+      const rubroM=rubroTxt?_evalProvMatchRubro(rubroTxt):null;
       const obraTxt=row[6]!=null?String(row[6]).trim():'';
       const obraM=obraTxt?_evalProvMatchObra(obraTxt):null;
       const item={
@@ -9875,6 +9843,7 @@ async function evalProvImportHistoricoAnalizar(){
         // (quedaba la Obra vacía, o el nombre viejo de una tanda anterior, para siempre).
         const patch={}; let motivo=[];
         if(!yaRow.obra_cod && obraM){ patch.obra_cod=obraM.cod; patch.obra_texto=obraTxt||yaRow.obra_texto||null; motivo.push('Obra: '+evalProvObraNom(obraM.cod)); }
+        if(!yaRow.rubro && rubroM){ patch.rubro=rubroM.nombre; patch.rubro_texto=rubroTxt||yaRow.rubro_texto||null; motivo.push('Rubro: '+rubroM.nombre); }
         if(item.evaluador && item.evaluador!==yaRow.evaluador){ patch.evaluador=item.evaluador; motivo.push('Evaluador: '+yaRow.evaluador+' → '+item.evaluador); }
         if(Object.keys(patch).length) obraParaCompletar.push({id:yaRow.id, ...patch, _motivo:motivo.join(' · ')});
         yaExisten.push(item);
