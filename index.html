@@ -7961,20 +7961,22 @@ function _evalProvMatchObra(txt){
   const aliasCod=SOLP_OBRA_ALIAS[_syncNorm(txt)];
   return aliasCod ? (list.find(p=>p.cod===aliasCod)||null) : null;
 }
-// El diccionario de Rubro es el mismo que usa SOLP (compras_solp_rubros), que trae los días de
-// entrega pegados al nombre (ej. "ARENADO Y PINTURA (7)"). El histórico de RC-03.03 tiene el rubro
-// sin esos días (ej. "Arenado y Pintura") — una comparación exacta nunca matcheaba NINGUNA fila,
-// por eso el Rubro quedaba vacío en todo el histórico. Se compara ignorando el "(...)" final.
+// El Rubro de Evaluación de Proveedores es un diccionario propio (compras_evalprov_rubros, nivel
+// SIG) — NO el mismo que usa SOLP (compras_solp_rubros, que es para tiempos de entrega y trae los
+// días pegados al nombre, ej. "ARENADO Y PINTURA (7)"). Al principio se matcheaba por error contra
+// el de SOLP, por eso el Rubro no aparecía en casi ningún informe. Se compara ignorando mayúsculas,
+// acentos y un posible "(...)" final (por las dudas, aunque el diccionario SIG no lo lleva).
 function _evalProvRubroBase(s){ return _syncFold(s).replace(/\s*\([^)]*\)\s*$/,'').trim(); }
 function _evalProvMatchRubro(txt){
   const t=_evalProvRubroBase(txt); if(!t) return null;
   return (EVALPROV.rubros||[]).find(x=>_evalProvRubroBase(x.nombre)===t) || null;
 }
-// Lista de rubros en el orden fijo de la hoja GRA (no alfabético) — los que no están en esa lista
-// (variantes nuevas que no estaban en el Excel original) quedan al final, alfabéticos.
+// compras_evalprov_rubros ya viene ordenado por su columna "orden" (ver evalProvLoad) — este
+// ordenamiento es solo un respaldo si llegara a faltar esa columna en algún registro viejo.
 function evalProvRubrosOrdenados(){
   const fold=EVALPROV_RUBRO_ORDEN.map(_evalProvRubroBase);
   return (EVALPROV.rubros||[]).slice().sort((a,b)=>{
+    if(a.orden!=null && b.orden!=null) return a.orden-b.orden;
     const ia=fold.indexOf(_evalProvRubroBase(a.nombre)), ib=fold.indexOf(_evalProvRubroBase(b.nombre));
     if(ia===-1 && ib===-1) return a.nombre.localeCompare(b.nombre,'es');
     if(ia===-1) return 1; if(ib===-1) return -1;
@@ -8947,12 +8949,13 @@ function _evalProvCierreCelda(rows, cat, rubroNombre){
 function evalProvCierreProyHtml(){
   const obras=evalProvObrasDicTodos().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
   const rows=IC.obra?EVALPROV.rows.filter(r=>r.obra_cod===IC.obra):[];
+  const rubroCols=evalProvRubrosOrdenados().map(r=>r.nombre);
   const fmtp=v=>v==null?'—':Math.round(v*100)+'%';
   const tabla = IC.obra ? ('<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead><tr><th>Indicador</th>'
-      +EVALPROV_RUBRO_ORDEN.map(r=>'<th class="trunc" style="max-width:90px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
+      +rubroCols.map(r=>'<th class="trunc" style="max-width:90px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
       +'<th>Promedio proyecto</th></tr></thead><tbody>'
     + EVALPROV_CATS.map((cat,i)=>'<tr><td class="trunc" style="max-width:150px" title="'+esc(EVALPROV_CATS_GRA[i])+'">'+esc(EVALPROV_CATS_GRA[i])+'</td>'
-      +EVALPROV_RUBRO_ORDEN.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
+      +rubroCols.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
       +'<td style="text-align:right;font-weight:700">'+fmtp(_evalProvCierreCelda(rows,cat,null))+'</td></tr>').join('')
     + '</tbody></table></div>') : '<div class="empty">Elegí un proyecto para ver su cierre por rubro.</div>';
   return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe de cierre por proyecto (hoja IND CIERRE PROY. de RC-03.03): cada indicador, promediado por rubro, dentro del proyecto elegido.</div>'
@@ -8963,9 +8966,10 @@ function evalProvCierreProyHtml(){
 function evalProvCierreProyChart(){
   if(!IC.obra) return;
   const rows=EVALPROV.rows.filter(r=>r.obra_cod===IC.obra);
+  const rubroCols=evalProvRubrosOrdenados().map(r=>r.nombre);
   const datasets=EVALPROV_CATS.map((cat,i)=>({label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
-    data:EVALPROV_RUBRO_ORDEN.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); })}));
-  evalProvChart('icChart', {type:'bar', data:{labels:EVALPROV_RUBRO_ORDEN, datasets},
+    data:rubroCols.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); })}));
+  evalProvChart('icChart', {type:'bar', data:{labels:rubroCols, datasets},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:9.5}}}},
       scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false},ticks:{font:{size:9.5},maxRotation:60,minRotation:30}}}}});
@@ -8976,7 +8980,7 @@ async function evalProvLoad(){
   const [evs, crit, rubros] = await Promise.all([
     sbFetchAll('/compras_prov_evaluaciones?select=*&order=fecha.desc'),
     sbFetchAll('/compras_prov_criticos?select=*&order=proveedor_cod.asc'),
-    sbFetchAll('/compras_solp_rubros?select=*&order=nombre.asc'), // mismas opciones de Rubro que SOLP
+    sbFetchAll('/compras_evalprov_rubros?select=*&order=orden.asc'), // Rubro SIG propio de Evaluación (NO es el Rubro de Compras/SOLP — son dos listas distintas)
   ]);
   EVALPROV.rubros=rubros||[];
   EVALPROV.rows=(evs||[]).map(r=>({...r, pct:evalProvPct(r), obra:r.obra_cod?evalProvObraNom(r.obra_cod):'', provNom:solpProvNom(r.proveedor_cod)}));
