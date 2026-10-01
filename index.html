@@ -80,7 +80,6 @@ a{color:var(--olive-deep);}
 .solp-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;align-items:center;}
 .solp-tag{background:var(--chip);border-radius:6px;padding:3px 8px;font-size:12px;display:inline-flex;gap:6px;align-items:center;}
 .solp-tag button{border:0;background:none;padding:0;color:var(--muted);font-size:14px;line-height:1;}
-.solp-clear{border:0;background:none;color:var(--olive-deep);font-size:12.5px;font-weight:700;text-decoration:underline;}
 .kpi-grid.solp-kpis{grid-template-columns:repeat(5,1fr);}
 .solp-legend{display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12.5px;margin:0 0 12px;}
 .solp-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;}
@@ -8601,7 +8600,7 @@ async function renderSolp(){
     F.s.forEach(v=>out.push('<span class="solp-tag">'+esc(SOLP_SERIES.find(s=>s[0]===v)[1])+'<button onclick="solpSerieT(\''+v+'\')" aria-label="Quitar">×</button></span>'));
     if(F.d1) out.push('<span class="solp-tag">Desde '+F.d1.slice(5)+'/'+F.d1.slice(0,4)+'<button onclick="solpDate(\'d1\',\'\')">×</button></span>');
     if(F.d2) out.push('<span class="solp-tag">Hasta '+F.d2.slice(5)+'/'+F.d2.slice(0,4)+'<button onclick="solpDate(\'d2\',\'\')">×</button></span>');
-    return out.length? out.join('')+'<button class="solp-clear" onclick="solpClear()">Limpiar filtros</button>' : '<span style="font-size:12.5px;color:var(--muted)">Sin filtros: se muestran todas las SOLP.</span>'; };
+    return out.length? out.join('')+'<button class="btn ghost sm" onclick="solpClear()">Limpiar filtros</button>' : '<span style="font-size:12.5px;color:var(--muted)">Sin filtros: se muestran todas las SOLP.</span>'; };
 
   const kpi=(l,v,sub,col)=>'<div class="kpi"><div class="kpi-label">'+l+'</div><div class="kpi-value"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="kpi-sub">'+sub+'</div></div>';
 
