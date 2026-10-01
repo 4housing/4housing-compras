@@ -242,6 +242,7 @@ table.grid.usub .row-actions{gap:4px;}
 .field textarea{resize:vertical;min-height:70px;}
 .frow{display:grid;gap:14px;}
 .frow.c2{grid-template-columns:1fr 1fr;}
+.frow.c3{grid-template-columns:1fr 1fr 1fr;}
 .frow .field{margin-bottom:0;}
 .frow+.frow{margin-top:15px;}
 
@@ -265,7 +266,7 @@ table.grid.usub .row-actions{gap:4px;}
   .navbtn{justify-content:center;}
   .kpi-grid{grid-template-columns:repeat(2,1fr);}
 }
-@media(max-width:560px){ .kpi-grid{grid-template-columns:1fr;} .frow.c2{grid-template-columns:1fr;} }
+@media(max-width:560px){ .kpi-grid{grid-template-columns:1fr;} .frow.c2{grid-template-columns:1fr;} .frow.c3{grid-template-columns:1fr;} }
 /* ===== DENSIDAD COMPACTA (más líneas por pantalla) ===== */
 .content{padding:18px 22px 48px;}
 .topbar{padding:12px 22px;}
@@ -8459,6 +8460,17 @@ function _evalProvMatchRubro(txt){
   const t=_evalProvRubroBase(txt); if(!t) return null;
   return (EVALPROV.rubros||[]).find(x=>_evalProvRubroBase(x.nombre)===t) || null;
 }
+// Lista de rubros en el orden fijo de la hoja GRA (no alfabético) — los que no están en esa lista
+// (variantes nuevas que no estaban en el Excel original) quedan al final, alfabéticos.
+function evalProvRubrosOrdenados(){
+  const fold=EVALPROV_RUBRO_ORDEN.map(_evalProvRubroBase);
+  return (EVALPROV.rubros||[]).slice().sort((a,b)=>{
+    const ia=fold.indexOf(_evalProvRubroBase(a.nombre)), ib=fold.indexOf(_evalProvRubroBase(b.nombre));
+    if(ia===-1 && ib===-1) return a.nombre.localeCompare(b.nombre,'es');
+    if(ia===-1) return 1; if(ib===-1) return -1;
+    return ia-ib;
+  });
+}
 // Proveedor(es): se guarda como código, o varios separados por ";" (compras_proveedores, mismo
 // diccionario que usa la OG). El nombre se resuelve al vuelo, no se guarda.
 // "Especiales": para pedidos sin proveedor real de Tango (retiro de stock interno, pañol, o casos
@@ -9239,7 +9251,15 @@ const EVALPROV_TODAS=[...EVALPROV_PREGUNTAS.compras, ...EVALPROV_PREGUNTAS.proye
 // proyectos primero — después Atención/Costos de compras), para que las tablas y gráficos de
 // Informe anual/Indicadores se puedan comparar directo contra el Excel sin reacomodar nada.
 const EVALPROV_CATS=['Planificación','Técnico','Calidad','Seguridad','Atención Personalizada','Costos y Precios'];
-const EVALPROV_CAT_COL=['#5f7a4e','#94917f','#b0584f','#2b6ca3','#4f8a53','#c9962a'];
+// Paleta real de RC-03.03 (hoja GRA) — son los colores de tema "Office" (Accent1-6), no invención.
+const EVALPROV_CAT_COL=['#4F81BD','#C0504D','#9BBB59','#8064A2','#4BACC6','#F79646'];
+// Etiquetas exactas de la hoja GRA (más largas/formales que los nombres cortos de EVALPROV_CATS,
+// que se usan en el resto de la app para columnas angostas). Mismo orden e índices que EVALPROV_CATS.
+const EVALPROV_CATS_GRA=['Planificación','Soporte técnico','Calidad','Seguridad y medio ambiente','Atención personalizada','Costos y precios'];
+const EVALPROV_COL_OBJETIVO='#92D050', EVALPROV_COL_LIMITE='#FF0000', EVALPROV_COL_PROMEDIO='#4F81BD', EVALPROV_COL_PROMEDIO_DET='#FFFF00', EVALPROV_COL_PROMEDIO_BARRA='#77933C';
+// Orden fijo del Servicio/Rubro en la hoja GRA (no alfabético). compras_solp_rubros guarda el nombre
+// con un sufijo de días entre paréntesis (ver _evalProvRubroBase) — se compara ignorando ese sufijo.
+const EVALPROV_RUBRO_ORDEN=['Obra Civil','Arenado y Pintura','Herrería','Extra de Herreria','Cubierta','Revestimiento','Instalacion sanitaria','Instalacion contra incendios','Instalación eléctrica','Instalación Termomecanica','Equipamiento','Aberturas','Terminaciones','Limpieza','Mantenimiento','Logistica','Asesoramiento especializado'];
 // Escala 1-5: no encontramos una leyenda definida en RC-03.03 — se usa esta por default de este
 // tipo de encuesta de desempeño (1 = Muy malo … 5 = Excelente). Avisar si el procedimiento escrito
 // define otra.
@@ -9295,9 +9315,9 @@ function evalProvGraComboAnual(id, rows){
   const serie=evalProvSerieAnual(rows);
   const years=serie.map(s=>s.year);
   evalProvChart(id, {type:'bar', data:{labels:years, datasets:[
-    {type:'bar', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), backgroundColor:'#2b6ca3', borderRadius:4, barThickness:26},
-    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:3, tension:0},
-    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0},
+    {type:'bar', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), backgroundColor:EVALPROV_COL_PROMEDIO, borderRadius:4, barThickness:26},
+    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:EVALPROV_COL_OBJETIVO, backgroundColor:EVALPROV_COL_OBJETIVO, borderWidth:2.25, pointRadius:3, tension:0},
+    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:EVALPROV_COL_LIMITE, backgroundColor:EVALPROV_COL_LIMITE, borderWidth:2.25, pointRadius:0, tension:0},
   ]}, options:{responsive:true,maintainAspectRatio:false,animation:false,
     plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10.5}}}},
     scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
@@ -9305,52 +9325,57 @@ function evalProvGraComboAnual(id, rows){
 function evalProvGraComboDetalle(id, rows){
   const serie=evalProvSerieAnual(rows);
   const years=serie.map(s=>s.year);
-  const barDatasets=EVALPROV_CATS.map((cat,i)=>({type:'bar', label:cat, backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
+  const barDatasets=EVALPROV_CATS.map((cat,i)=>({type:'bar', label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
     data:serie.map(s=>s.porCat[i]==null?null:Math.round(s.porCat[i]*100))}));
   const lineDatasets=[
-    {type:'line', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), borderColor:'#d4c04a', backgroundColor:'#d4c04a', borderWidth:2, pointRadius:2, tension:0.25},
-    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0, tension:0},
-    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3], tension:0},
+    {type:'line', label:'Promedio', data:serie.map(s=>s.promedio==null?null:Math.round(s.promedio*100)), borderColor:EVALPROV_COL_PROMEDIO_DET, backgroundColor:EVALPROV_COL_PROMEDIO_DET, borderWidth:2.25, pointRadius:2, tension:0},
+    {type:'line', label:'Objetivo', data:years.map(y=>Math.round(evalProvObjetivoAnio(y)*100)), borderColor:EVALPROV_COL_OBJETIVO, backgroundColor:EVALPROV_COL_OBJETIVO, borderWidth:2.25, pointRadius:0, tension:0},
+    {type:'line', label:'Límite de aceptación', data:years.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:EVALPROV_COL_LIMITE, backgroundColor:EVALPROV_COL_LIMITE, borderWidth:2.25, pointRadius:0, tension:0},
   ];
   evalProvChart(id, {type:'bar', data:{labels:years, datasets:[...barDatasets, ...lineDatasets]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:9.5}}}},
       scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false}}}}});
 }
-function evalProvGraComboServicio(id, rows, anio){
+// Gráficos inferiores de GRA (Proveedor / Servicio): un solo año, 6 indicadores + Promedio al
+// final en verde, sin líneas ni leyenda (son iguales en formato, cambia solo qué filas entran).
+function evalProvBarrasEntidad(id, rows, anio){
   const rs=rows.filter(r=>!anio||r.fecha.slice(0,4)===anio);
-  const {porCat}=evalProvAggCats(rs);
-  const obj=Math.round(evalProvObjetivoAnio(anio||evalProvAniosDe(rows).slice(-1)[0]||'')*100);
-  evalProvChart(id, {type:'bar', data:{labels:EVALPROV_CATS, datasets:[
-    {type:'bar', label:'% del período', data:porCat.map(v=>v==null?null:Math.round(v*100)), backgroundColor:EVALPROV_CAT_COL, borderRadius:4, barThickness:18},
-    {type:'line', label:'Objetivo', data:EVALPROV_CATS.map(()=>obj), borderColor:'#4f8a53', backgroundColor:'#4f8a53', borderWidth:2, pointRadius:0},
-    {type:'line', label:'Límite de aceptación', data:EVALPROV_CATS.map(()=>Math.round(EVALPROV_LIMITE*100)), borderColor:'#b0584f', backgroundColor:'#b0584f', borderWidth:2, pointRadius:0, borderDash:[5,3]},
-  ]}, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
-    plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}}},
-    scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
+  const {porCat,promedio}=evalProvAggCats(rs);
+  const labels=[...EVALPROV_CATS_GRA.map(c=>'% '+c), 'Promedio'];
+  const data=[...porCat.map(v=>v==null?null:Math.round(v*100)), promedio==null?null:Math.round(promedio*100)];
+  const bg=[...EVALPROV_CAT_COL, EVALPROV_COL_PROMEDIO_BARRA];
+  evalProvChart(id, {type:'bar', data:{labels, datasets:[{data, backgroundColor:bg, borderRadius:4, barThickness:26}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false},ticks:{font:{size:10},maxRotation:30,minRotation:0}}}}});
 }
 function evalProvInformeAnualHtml(){
   const rows=EVALPROV.rows.filter(r=>r.fecha);
   const anios=evalProvAniosDe(rows);
+  const anio=IA.anio||anios.slice(-1)[0]||'';
   const provs=[...new Set(rows.map(r=>r.proveedor_cod).filter(Boolean))].map(c=>({cod:c,nom:solpProvNom(c)})).sort((a,b)=>a.nom.localeCompare(b.nom,'es'));
-  const rubros=(EVALPROV.rubros||[]).map(r=>r.nombre);
-  const anioRubro=IA.anioRubro||anios.slice(-1)[0]||'';
-  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe anual (hoja GRA de RC-03.03), con datos en vivo.</div>'
-    +'<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Página 1 — General'+(IA.prov?' · '+esc(solpProvNom(IA.prov)):'')+'</h3></div>'
-    +'<div class="solp-grid">'
-      +'<div><div class="meta" style="margin-bottom:4px">Evaluación de proveedores - Anualizado</div><div class="solp-cb" style="height:240px"><canvas id="iaChartGral"></canvas></div></div>'
-      +'<div><div class="meta" style="margin-bottom:4px">Evaluación de proveedores - Anualizado - Detalle</div><div class="solp-cb" style="height:240px"><canvas id="iaChartDet"></canvas></div></div>'
-    +'</div>'
-    +'<div class="frow c2" style="margin-top:10px;max-width:480px"><div class="field"><label>Proveedor</label><select onchange="IA.prov=this.value||null;renderEvalProv()"><option value="">— todos —</option>'+provs.map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===IA.prov?' selected':'')+'>'+esc(p.nom)+'</option>').join('')+'</select></div></div>'
-    +'</div>'
-    +'<div class="card"><div class="card-h"><h3>Página 2 — Por rubro</h3></div>'
-    +'<div class="solp-cb" style="height:260px"><canvas id="iaChartServ"></canvas></div>'
-    +'<div class="frow c2" style="margin-top:10px;max-width:480px">'
-      +'<div class="field"><label>Año</label><select onchange="IA.anioRubro=this.value||null;renderEvalProv()">'+anios.map(y=>'<option'+(y===anioRubro?' selected':'')+'>'+y+'</option>').join('')+'</select></div>'
-      +'<div class="field"><label>Rubro</label><select onchange="IA.rubro=this.value||null;renderEvalProv()"><option value="">— todos —</option>'+rubros.map(r=>'<option'+(r===IA.rubro?' selected':'')+'>'+esc(r)+'</option>').join('')+'</select></div>'
-    +'</div></div>';
+  const rubros=evalProvRubrosOrdenados().map(r=>r.nombre);
+  const anioOpts=anios.map(y=>'<option'+(y===anio?' selected':'')+'>'+y+'</option>').join('');
+  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe anual (hoja GRA de RC-03.03), con datos en vivo. Los dos gráficos de arriba son siempre generales (todas las evaluaciones); el Año de abajo elige qué período se muestra en los gráficos de Proveedor y Servicio.</div>'
+    +'<div class="card">'
+      +'<div class="card-h"><h3>Evaluación de proveedores — Anualizado</h3></div>'
+      +'<div class="solp-grid">'
+        +'<div><div class="meta" style="margin-bottom:4px">Anualizado</div><div class="solp-cb" style="height:240px"><canvas id="iaChartGral"></canvas></div></div>'
+        +'<div><div class="meta" style="margin-bottom:4px">Anualizado — Detalle</div><div class="solp-cb" style="height:240px"><canvas id="iaChartDet"></canvas></div></div>'
+      +'</div>'
+      +'<div class="frow c3" style="margin:14px 0 10px;max-width:720px">'
+        +'<div class="field"><label>Año</label><select onchange="IA.anio=this.value||null;renderEvalProv()">'+anioOpts+'</select></div>'
+        +'<div class="field"><label>Proveedor</label><select onchange="IA.prov=this.value||null;renderEvalProv()"><option value="">— todos —</option>'+provs.map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===IA.prov?' selected':'')+'>'+esc(p.nom)+'</option>').join('')+'</select></div>'
+        +'<div class="field"><label>Servicio (Rubro)</label><select onchange="IA.rubro=this.value||null;renderEvalProv()"><option value="">— todos —</option>'+rubros.map(r=>'<option'+(r===IA.rubro?' selected':'')+'>'+esc(r)+'</option>').join('')+'</select></div>'
+      +'</div>'
+      +'<div class="solp-grid">'
+        +'<div><div class="meta" style="margin-bottom:4px">Proveedor'+(IA.prov?' · '+esc(solpProvNom(IA.prov)):' (todos)')+' · '+esc(anio)+'</div><div class="solp-cb" style="height:220px"><canvas id="iaChartProv"></canvas></div></div>'
+        +'<div><div class="meta" style="margin-bottom:4px">Servicio'+(IA.rubro?' · '+esc(IA.rubro):' (todos)')+' · '+esc(anio)+'</div><div class="solp-cb" style="height:220px"><canvas id="iaChartServ"></canvas></div></div>'
+      +'</div>'
+    +'</div>';
 }
-let IA={prov:null, rubro:null, anioRubro:null};
+let IA={anio:null, prov:null, rubro:null};
 
 // ---- "Indicadores" (réplica viva de la hoja IND: mensual + anual, General/Proveedor/Rubro) ----
 function evalProvIndTabla(titulo, rows, anio){
@@ -9385,7 +9410,7 @@ function evalProvIndicadoresHtml(){
   const anios=evalProvAniosDe(rows);
   const anio=IND_ST.anio||anios.slice(-1)[0]||new Date().getFullYear().toString();
   const provs=[...new Set(rows.map(r=>r.proveedor_cod).filter(Boolean))].map(c=>({cod:c,nom:solpProvNom(c)})).sort((a,b)=>a.nom.localeCompare(b.nom,'es'));
-  const rubros=(EVALPROV.rubros||[]).map(r=>r.nombre);
+  const rubros=evalProvRubrosOrdenados().map(r=>r.nombre);
   const rsProv=IND_ST.prov?rows.filter(r=>r.proveedor_cod===IND_ST.prov):[];
   const rsRubro=IND_ST.rubro?rows.filter(r=>r.rubro===IND_ST.rubro):[];
   return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe de indicadores (hoja IND de RC-03.03), con datos en vivo — el "Promedio" es el promedio de las 6 categorías, igual que el Excel (no un promedio de todas las preguntas).</div>'
@@ -9397,6 +9422,41 @@ function evalProvIndicadoresHtml(){
     +(IND_ST.rubro?evalProvIndTabla('Rubro · '+IND_ST.rubro, rsRubro, anio):'');
 }
 let IND_ST={anio:null, prov:null, rubro:null};
+
+// ---- "Cierre por proyecto" (réplica viva de la hoja IND CIERRE PROY.: cada indicador
+// promediado por rubro, dentro de un único proyecto elegido) ----
+function _evalProvCierreCelda(rows, cat, rubroNombre){
+  const rs = rubroNombre==null ? rows : rows.filter(r=>_evalProvRubroBase(r.rubro||'')===_evalProvRubroBase(rubroNombre));
+  const vals = rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null);
+  return vals.length ? vals.reduce((a,v)=>a+v,0)/vals.length : null;
+}
+function evalProvCierreProyHtml(){
+  const obras=evalProvObrasDicTodos().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
+  const rows=IC.obra?EVALPROV.rows.filter(r=>r.obra_cod===IC.obra):[];
+  const fmtp=v=>v==null?'—':Math.round(v*100)+'%';
+  const tabla = IC.obra ? ('<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead><tr><th>Indicador</th>'
+      +EVALPROV_RUBRO_ORDEN.map(r=>'<th class="trunc" style="max-width:90px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
+      +'<th>Promedio proyecto</th></tr></thead><tbody>'
+    + EVALPROV_CATS.map((cat,i)=>'<tr><td class="trunc" style="max-width:150px" title="'+esc(EVALPROV_CATS_GRA[i])+'">'+esc(EVALPROV_CATS_GRA[i])+'</td>'
+      +EVALPROV_RUBRO_ORDEN.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
+      +'<td style="text-align:right;font-weight:700">'+fmtp(_evalProvCierreCelda(rows,cat,null))+'</td></tr>').join('')
+    + '</tbody></table></div>') : '<div class="empty">Elegí un proyecto para ver su cierre por rubro.</div>';
+  return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe de cierre por proyecto (hoja IND CIERRE PROY. de RC-03.03): cada indicador, promediado por rubro, dentro del proyecto elegido.</div>'
+    +'<div class="field" style="max-width:380px;margin-bottom:10px"><label>Proyecto</label><select onchange="IC.obra=this.value||null;renderEvalProv()"><option value="">— elegí un proyecto —</option>'+obras.map(o=>'<option value="'+esc(o.cod)+'"'+(o.cod===IC.obra?' selected':'')+'>'+esc(o.desc)+'</option>').join('')+'</select></div>'
+    +'<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Por rubro</h3></div>'+tabla+'</div>'
+    +(IC.obra?'<div class="card"><div class="card-h"><h3>Valores múltiples por "Rubro"</h3></div><div class="solp-cb" style="height:300px"><canvas id="icChart"></canvas></div></div>':'');
+}
+function evalProvCierreProyChart(){
+  if(!IC.obra) return;
+  const rows=EVALPROV.rows.filter(r=>r.obra_cod===IC.obra);
+  const datasets=EVALPROV_CATS.map((cat,i)=>({label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
+    data:EVALPROV_RUBRO_ORDEN.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); })}));
+  evalProvChart('icChart', {type:'bar', data:{labels:EVALPROV_RUBRO_ORDEN, datasets},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:9.5}}}},
+      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false},ticks:{font:{size:9.5},maxRotation:60,minRotation:30}}}}});
+}
+let IC={obra:null};
 
 async function evalProvLoad(){
   const [evs, crit, rubros] = await Promise.all([
@@ -9427,17 +9487,21 @@ async function renderEvalProv(){
     try{ await evalProvLoad(); }catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
   }
   if(current!=='evalprov') return;
-  const tabDefs=[['evaluaciones','Evaluaciones'],['detalle','Detalle completo'],['criticos','Proveedores críticos'],['informe','Informe anual'],['indicadores','Indicadores']];
+  const tabDefs=[['evaluaciones','Evaluaciones'],['detalle','Detalle completo'],['criticos','Proveedores críticos'],['informe','Informe anual'],['indicadores','Indicadores'],['cierre','Cierre por proyecto']];
   const tabs='<div class="solp-tabs">'+tabDefs.map(([k,lbl])=>'<button class="'+(EVALPROV.tab===k?'on':'')+'" onclick="evalProvTab(\''+k+'\')">'+lbl+'</button>').join('')+'</div>';
-  const paginas={criticos:evalProvCriticosHtml, detalle:evalProvDetalleCrudoHtml, informe:evalProvInformeAnualHtml, indicadores:evalProvIndicadoresHtml};
+  const paginas={criticos:evalProvCriticosHtml, detalle:evalProvDetalleCrudoHtml, informe:evalProvInformeAnualHtml, indicadores:evalProvIndicadoresHtml, cierre:evalProvCierreProyHtml};
   C().innerHTML = tabs + (paginas[EVALPROV.tab] ? paginas[EVALPROV.tab]() : evalProvEvalsHtml());
   if(EVALPROV.tab==='informe' && window.Chart){
     const rows=EVALPROV.rows.filter(r=>r.fecha);
-    evalProvGraComboAnual('iaChartGral', IA.prov?rows.filter(r=>r.proveedor_cod===IA.prov):rows);
-    evalProvGraComboDetalle('iaChartDet', IA.prov?rows.filter(r=>r.proveedor_cod===IA.prov):rows);
-    const anioRubro=IA.anioRubro||evalProvAniosDe(rows).slice(-1)[0]||'';
-    evalProvGraComboServicio('iaChartServ', IA.rubro?rows.filter(r=>r.rubro===IA.rubro):rows, anioRubro);
+    const anio=IA.anio||evalProvAniosDe(rows).slice(-1)[0]||'';
+    // Los 2 gráficos de arriba son siempre "General" (todas las evaluaciones) — Proveedor/Servicio
+    // solo filtran los 2 gráficos de abajo, igual que la hoja GRA del Excel.
+    evalProvGraComboAnual('iaChartGral', rows);
+    evalProvGraComboDetalle('iaChartDet', rows);
+    evalProvBarrasEntidad('iaChartProv', IA.prov?rows.filter(r=>r.proveedor_cod===IA.prov):rows, anio);
+    evalProvBarrasEntidad('iaChartServ', IA.rubro?rows.filter(r=>r.rubro===IA.rubro):rows, anio);
   }
+  if(EVALPROV.tab==='cierre' && window.Chart) evalProvCierreProyChart();
 }
 window.renderEvalProv=renderEvalProv;
 
