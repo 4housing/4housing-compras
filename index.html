@@ -947,31 +947,35 @@ const Data = {
 let current='compras';
 
 /* ===== ROLES ===== */
-let ROLE={comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true};
+let ROLE={comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, asiento:true};
 let DEMO_ROLE='admin';
 let MI_NOMBRE='';   // nombre del usuario logueado tal como aparece en Comprador/Certificador de las OGs (para "Mi gestión" en Seguimiento)
 const DEMO_ROLES={
-  admin:{comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, lbl:'Admin (todo)', nombre:''},
-  comprador:{comprador:true, certificador:false, tesorero:false, confidencial:false, admin:false, lbl:'Comprador', nombre:'Mendoza, Mario Nicolas'},
-  certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, lbl:'Certificador (técnica)', nombre:'Seoane, Micaela'},
-  tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, lbl:'Tesorero', nombre:''},
+  admin:{comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, asiento:true, lbl:'Admin (todo)', nombre:''},
+  comprador:{comprador:true, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false, lbl:'Comprador', nombre:'Mendoza, Mario Nicolas'},
+  certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, asiento:false, lbl:'Certificador (técnica)', nombre:'Seoane, Micaela'},
+  tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, asiento:false, lbl:'Tesorero', nombre:''},
 };
-function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin}; MI_NOMBRE=r.nombre||''; }
+function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento}; MI_NOMBRE=r.nombre||''; }
 async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
-  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false};   // por defecto, sin permisos
+  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false};   // por defecto, sin permisos
   MI_NOMBRE='';
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
     const rows=await sbFetch('/compras_usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
     const u=rows&&rows[0];
-    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin}; MI_NOMBRE=u.nombre||''; }
+    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
 function canCert(){ return ROLE.certificador||ROLE.admin; }
 function canPago(){ return ROLE.tesorero||ROLE.admin; }
+// N° de asiento Tango: a diferencia del resto de Tesorería (cualquier tesorero/admin), esto lo
+// puede cargar solo un grupo chico de personas (hoy: Pablo, Micaela, Gustavo, Alexis Carranza) —
+// pedido explícito de Micaela, no el rol Tesorero completo.
+function canAsiento(){ return ROLE.admin||ROLE.asiento; }
 /* Restricciones por usuario: cada comprador/certificador solo actúa sobre lo que tiene asignado.
    El admin no tiene esta restricción (puede actuar "como cualquiera"). */
 function puedeCrearOG(){ return ROLE.admin||ROLE.comprador; }
@@ -4807,7 +4811,7 @@ function opsView(){
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
-      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')+' <input type="text" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento" title="N° de asiento en Tango, una vez importado y corregidos los auxiliares" onblur="guardarAsientoOP('+p.id+',this.value)" onkeydown="if(event.key===\'Enter\') this.blur()" style="width:78px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px;margin-top:2px;display:block"></td>'
+      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')+' <input type="text" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onblur="guardarAsientoOP('+p.id+',this.value)" onkeydown="if(event.key===\'Enter\') this.blur()" style="width:78px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px;margin-top:2px;display:block'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'"></td>'
       +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
   }).join('') || '<tr><td colspan="16" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="12" style="text-align:right">Total mostrado</td>'
@@ -5463,7 +5467,7 @@ window.savePago=savePago;
 /* N° de asiento Tango de cada OP: se carga a mano después de importar el asiento en Tango y corregir
    los auxiliares (Tango no los importa bien), para tener registro de que ese pago ya quedó asentado. */
 async function guardarAsientoOP(id, valor){
-  if(!canPago()){ toast('Solo Tesorería/Admin puede cargar el N° de asiento.'); return; }
+  if(!canAsiento()){ toast('No tenés permiso para cargar el N° de asiento.'); return; }
   valor=(valor||'').trim();
   const p=(mem.pagos||[]).find(x=>String(x.id)===String(id)); if(!p) return;
   if(p.asiento_num===valor) return;   // sin cambios
@@ -8766,7 +8770,11 @@ function openSolpForm(id){
   const cur = id!=null ? (SOLP.rows||[]).find(x=>String(x.id)===String(id)) : {};
   const serieVal = id!=null ? solpSerie(cur.solp) : 'mat';
   const obraOpts = solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es')).map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===cur.obra_cod?' selected':'')+'>'+esc(p.desc)+'</option>').join('');
-  const gestOpts = nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===cur.gestiona?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('');
+  // Comprador (Gestiona): igual criterio que en la OG — cada usuario no-admin solo puede
+  // figurar como sí mismo (tanto al crear como al editar), el admin puede elegir a cualquiera.
+  const gestOpts = ROLE.admin
+    ? nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===cur.gestiona?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('')
+    : '<option value="'+esc(MI_NOMBRE||cur.gestiona||'')+'" selected>'+esc(MI_NOMBRE?ogxName(MI_NOMBRE):(cur.gestiona?ogxName(cur.gestiona):'(sin nombre asociado)'))+'</option>';
   const estOpts = SOLP_ESTADOS.map(e=>'<option'+(e===(cur.estado||'SIN ACCION')?' selected':'')+'>'+esc(e)+'</option>').join('');
   const rubOpts = (SOLP.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('');
   const condPagoOpts = SOLP_COND_PAGO.map(c=>'<option'+(c===cur.condicion_pago?' selected':'')+'>'+esc(c)+'</option>').join('')
@@ -8776,7 +8784,7 @@ function openSolpForm(id){
     +'<div class="field"><label>Estado</label><select id="sp_estado"><option value="">— elegí —</option>'+estOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Serie de SOLP</label><select id="sp_serie" onchange="solpFormRenumerar()"'+(id!=null?' disabled':'')+'>'+SOLP_SERIES.map(([k,l])=>'<option value="'+k+'"'+(k===serieVal?' selected':'')+'>'+l+'</option>').join('')+'</select></div>'
     +'<div class="field"><label>N° SOLP</label><input id="sp_num" type="number" min="0" value="'+(id!=null?cur.solp:'')+'"></div></div>'
-    +'<div class="field"><label>Comprador (Gestiona)</label><select id="sp_gestiona"><option value="">— elegí —</option>'+gestOpts+'</select></div>'
+    +'<div class="field"><label>Comprador (Gestiona)</label><select id="sp_gestiona"'+(ROLE.admin?'':' disabled')+'>'+(ROLE.admin?'<option value="">— elegí —</option>':'')+gestOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Rubro</label><select id="sp_rubro" onchange="solpFormRubroChanged()"><option value="">— sin rubro —</option>'+rubOpts+'</select></div>'
     +'<div class="field"><label>Días Compras</label><input id="sp_dias" type="number" min="0" value="'+(cur.dias_compras!=null?cur.dias_compras:'')+'"></div></div>'
     +'<div class="frow c3"><div class="field"><label>Fecha ingreso SOLP</label><input id="sp_fingreso" type="date" value="'+esc(cur.fecha_ingreso||hoy)+'"></div>'
@@ -9132,7 +9140,7 @@ async function renderSolp(){
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
       + DET_COLS.map(c=>solpTh(c[0],c[1])).join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
     + (detOrd.length? detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
-        return '<tr>'+td(r[0],'trunc')+td(r[1])+'<td>'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+td(r[9],'trunc')+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
+        return '<tr>'+td(r[0],'trunc')+td(r[1])+'<td>'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+'<td class="trunc" title="'+esc(x.proveedor||'')+'">'+esc(x.proveedor_cod||'—')+'</td>'+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
