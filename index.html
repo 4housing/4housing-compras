@@ -8737,13 +8737,19 @@ const EVALPROV_CAT_COL=['#4f8a53','#c9962a','#5f7a4e','#94917f','#b0584f','#2b6c
 // define otra.
 const EVALPROV_ESCALA=['1 · Muy malo','2 · Malo','3 · Regular','4 · Bueno','5 · Excelente'];
 
+// 0 = "no aplica / sin responder" (igual que el Excel original: sus fórmulas de puntaje son
+// AVERAGEIF(rango,"<>0") en vez de promediar todo el rango) — la escala real es 1 a 5, el 0
+// nunca es una respuesta válida. Sin este chequeo, las ~16-20 columnas en 0 de la otra área
+// (las que no corresponden al área de esa evaluación) se promediaban como si fueran respuestas
+// bajas de verdad, y el puntaje no coincidía con las solapas IND/GRA del Excel.
+function _evalProvValida(v){ return v!=null && v!==0; }
 function evalProvPct(row){
-  const resp=EVALPROV_TODAS.filter(p=>row[p.key]!=null);
+  const resp=EVALPROV_TODAS.filter(p=>_evalProvValida(row[p.key]));
   if(!resp.length) return null;
   return resp.reduce((a,p)=>a+row[p.key],0)/(resp.length*5);
 }
 function evalProvCatPctRow(row, cat){
-  const resp=EVALPROV_TODAS.filter(p=>p.cat===cat && row[p.key]!=null);
+  const resp=EVALPROV_TODAS.filter(p=>p.cat===cat && _evalProvValida(row[p.key]));
   if(!resp.length) return null;
   return resp.reduce((a,p)=>a+row[p.key],0)/(resp.length*5);
 }
@@ -9144,7 +9150,11 @@ async function evalProvImportHistoricoAnalizar(){
         fecha, evaluador: _syncNorm(row[3])||_syncNorm(row[4])||'—',
         comentarios: _syncNorm(row[35])||null,
       };
-      EVALPROV_TODAS.forEach((q,i)=>{ item[q.key]=_syncNum(row[9+i]); });
+      // El Excel guarda 0 en las preguntas que no corresponden al área de esa evaluación (no "no
+      // aplica" en blanco) — _syncNum devolvería 0 para eso, no null, y tanto el promedio como la
+      // detección de área (abajo) tratarían esas columnas como si fueran respuestas reales. Acá se
+      // convierte 0 a null (la escala real es 1-5, el 0 nunca es una respuesta válida).
+      EVALPROV_TODAS.forEach((q,i)=>{ const n=_syncNum(row[9+i]); item[q.key]=n||null; });
       const nCompras=EVALPROV_PREGUNTAS.compras.filter(q=>item[q.key]!=null).length;
       const nProyectos=EVALPROV_PREGUNTAS.proyectos.filter(q=>item[q.key]!=null).length;
       if(!nCompras && !nProyectos) continue;
