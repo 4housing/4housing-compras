@@ -8902,19 +8902,27 @@ function evalProvIndTabla(titulo, rows, anio){
   const anual=anios.map(y=>evalProvAggCats(rows.filter(r=>r.fecha.slice(0,4)===y)));
   const totalAnio=evalProvAggCats(rows.filter(r=>r.fecha.slice(0,4)===anio));
   const fmtp=v=>v==null?'—':Math.round(v*100)+'%';
+  // Dos bloques bien diferenciados: "mes a mes" del año elegido (fondo celeste) vs.
+  // "año a año" comparativo (fondo blanco), con un borde grueso en la costura entre los dos.
+  const STY_MES='background:#eaf1f7';
+  const STY_TOT='background:#dce8f0;font-weight:700';
+  const STY_SEAM='border-left:2px solid var(--line-strong)';
   const filaCat=(catIdx,label)=>'<tr><td class="trunc" style="max-width:160px" title="'+esc(label)+'">'+esc(label)+'</td>'
-    +mensual.map(m=>'<td style="text-align:right">'+fmtp(m.porCat[catIdx])+'</td>').join('')
-    +'<td style="text-align:right;font-weight:700">'+fmtp(totalAnio.porCat[catIdx])+'</td>'
-    +anual.map(a=>'<td style="text-align:right">'+fmtp(a.porCat[catIdx])+'</td>').join('')
+    +mensual.map(m=>'<td style="text-align:right;'+STY_MES+'">'+fmtp(m.porCat[catIdx])+'</td>').join('')
+    +'<td style="text-align:right;'+STY_TOT+'">'+fmtp(totalAnio.porCat[catIdx])+'</td>'
+    +anual.map((a,i)=>'<td style="text-align:right'+(i===0?';'+STY_SEAM:'')+'">'+fmtp(a.porCat[catIdx])+'</td>').join('')
     +'</tr>';
   const filaProm=()=>'<tr style="font-weight:700;border-top:2px solid var(--line)"><td>Promedio</td>'
-    +mensual.map(m=>'<td style="text-align:right">'+fmtp(m.promedio)+'</td>').join('')
-    +'<td style="text-align:right">'+fmtp(totalAnio.promedio)+'</td>'
-    +anual.map(a=>'<td style="text-align:right">'+fmtp(a.promedio)+'</td>').join('')
+    +mensual.map(m=>'<td style="text-align:right;'+STY_MES+'">'+fmtp(m.promedio)+'</td>').join('')
+    +'<td style="text-align:right;'+STY_TOT+'">'+fmtp(totalAnio.promedio)+'</td>'
+    +anual.map((a,i)=>'<td style="text-align:right'+(i===0?';'+STY_SEAM:'')+'">'+fmtp(a.promedio)+'</td>').join('')
     +'</tr>';
-  const filaCte=(label,v)=>'<tr style="color:var(--muted)"><td>'+label+'</td>'+meses.map(()=>'<td></td>').join('')+'<td></td>'+anios.map(y=>'<td style="text-align:right">'+Math.round((label==='Objetivo'?evalProvObjetivoAnio(y):v)*100)+'%</td>').join('')+'</tr>';
+  const filaCte=(label,v)=>'<tr style="color:var(--muted)"><td>'+label+'</td>'+meses.map(()=>'<td style="'+STY_MES+'"></td>').join('')+'<td style="'+STY_TOT+'"></td>'+anios.map((y,i)=>'<td style="text-align:right'+(i===0?';'+STY_SEAM:'')+'">'+Math.round((label==='Objetivo'?evalProvObjetivoAnio(y):v)*100)+'%</td>').join('')+'</tr>';
   return '<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>'+esc(titulo)+'</h3></div>'
-    +'<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead><tr><th>Indicador</th>'+mesesLbl.map(m=>'<th>'+m+'</th>').join('')+'<th>Total '+anio+'</th>'+anios.map(y=>'<th>'+y+'</th>').join('')+'</tr></thead><tbody>'
+    +'<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead>'
+    +'<tr><th></th><th colspan="'+(mesesLbl.length+1)+'" style="text-align:center;'+STY_MES+';color:#2f5676">Mes a mes · '+esc(anio)+'</th><th colspan="'+anios.length+'" style="text-align:center;'+STY_SEAM+'">Comparativo año a año</th></tr>'
+    +'<tr><th>Indicador</th>'+mesesLbl.map(m=>'<th style="'+STY_MES+'">'+m+'</th>').join('')+'<th style="'+STY_TOT+'">Total '+esc(anio)+'</th>'+anios.map((y,i)=>'<th'+(i===0?' style="'+STY_SEAM+'"':'')+'>'+y+'</th>').join('')+'</tr>'
+    +'</thead><tbody>'
     +EVALPROV_CATS.map((cat,i)=>filaCat(i,'% '+cat)).join('')
     +filaProm()
     +filaCte('Objetivo')
@@ -8946,6 +8954,13 @@ function _evalProvCierreCelda(rows, cat, rubroNombre){
   const vals = rs.map(r=>evalProvCatPctRow(r,cat)).filter(v=>v!=null);
   return vals.length ? vals.reduce((a,v)=>a+v,0)/vals.length : null;
 }
+// Para el gráfico (no la tabla, que sigue mostrando los 17 rubros completos): solo los rubros con
+// al menos un dato. Con los 17 siempre presentes quedaban carteles enteros vacíos y se perdía la
+// relación barra-rubro — así el gráfico queda compacto y cada grupo de barras cae justo al lado
+// de su nombre.
+function _evalProvCierreRubrosConDatos(rows){
+  return evalProvRubrosOrdenados().map(r=>r.nombre).filter(r=>EVALPROV_CATS.some(cat=>_evalProvCierreCelda(rows,cat,r)!=null));
+}
 function evalProvCierreProyHtml(){
   const obras=evalProvObrasDicTodos().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
   const rows=IC.obra?EVALPROV.rows.filter(r=>r.obra_cod===IC.obra):[];
@@ -8958,21 +8973,26 @@ function evalProvCierreProyHtml(){
       +rubroCols.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
       +'<td style="text-align:right;font-weight:700">'+fmtp(_evalProvCierreCelda(rows,cat,null))+'</td></tr>').join('')
     + '</tbody></table></div>') : '<div class="empty">Elegí un proyecto para ver su cierre por rubro.</div>';
+  const rubrosConDatos=IC.obra?_evalProvCierreRubrosConDatos(rows):[];
+  const chartH=Math.max(160, 34*rubrosConDatos.length+40);
   return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe de cierre por proyecto (hoja IND CIERRE PROY. de RC-03.03): cada indicador, promediado por rubro, dentro del proyecto elegido.</div>'
     +'<div class="field" style="max-width:380px;margin-bottom:10px"><label>Proyecto</label><select onchange="IC.obra=this.value||null;renderEvalProv()"><option value="">— elegí un proyecto —</option>'+obras.map(o=>'<option value="'+esc(o.cod)+'"'+(o.cod===IC.obra?' selected':'')+'>'+esc(o.desc)+'</option>').join('')+'</select></div>'
     +'<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Por rubro</h3></div>'+tabla+'</div>'
-    +(IC.obra?'<div class="card"><div class="card-h"><h3>Valores múltiples por "Rubro"</h3></div><div class="solp-cb" style="height:300px"><canvas id="icChart"></canvas></div></div>':'');
+    +(IC.obra?('<div class="card"><div class="card-h"><h3>Por rubro — gráfico</h3><span class="meta">Solo los rubros con datos; cada fila es un rubro, las barras sus 6 indicadores</span></div>'
+      +(rubrosConDatos.length?'<div class="solp-cb" style="height:'+chartH+'px"><canvas id="icChart"></canvas></div>':'<div class="empty">Este proyecto no tiene evaluaciones con rubro cargado.</div>')+'</div>'):'');
 }
 function evalProvCierreProyChart(){
   if(!IC.obra) return;
   const rows=EVALPROV.rows.filter(r=>r.obra_cod===IC.obra);
-  const rubroCols=evalProvRubrosOrdenados().map(r=>r.nombre);
+  const rubroCols=_evalProvCierreRubrosConDatos(rows);
+  if(!rubroCols.length) return;
   const datasets=EVALPROV_CATS.map((cat,i)=>({label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
-    data:rubroCols.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); })}));
+    data:rubroCols.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); }),
+    datalabels:{display:true, color:'#404040', anchor:'end', align:'right', font:{size:8}, formatter:_evalProvDLFmt}}));
   evalProvChart('icChart', {type:'bar', data:{labels:rubroCols, datasets},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:9.5}}}},
-      scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},x:{grid:{display:false},ticks:{font:{size:9.5},maxRotation:60,minRotation:30}}}}});
+      scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:10.5}}}}}});
 }
 let IC={obra:null};
 
