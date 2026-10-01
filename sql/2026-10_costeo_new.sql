@@ -28,7 +28,8 @@ left join (values
   ('GC AMOBLAMIENTO','Mobiliario'),
   ('GC OBRA CIVIL','Obra Civil'), ('GC CORRALON','Obra Civil'),
   ('GC LOGISTICA','Logistica & Montaje'), ('GC MONTAJE','Logistica & Montaje'),
-  ('GC INST TERMOMECANICA','Climatizacion')
+  ('GC INST TERMOMECANICA','Climatizacion'),
+  ('GC HONORARIOS','Otros'), ('GC SERVICIOS','Otros'), ('GC ASERRADERO','Otros'), ('GC POSVENTA','Otros')
 ) as m(viejo, nuevo)
   on upper(regexp_replace(trim(o.costeo), '\s+', ' ', 'g')) = m.viejo
 group by 1,2 order by 3 desc;
@@ -55,15 +56,16 @@ from (values
   ('GC AMOBLAMIENTO','Mobiliario'),
   ('GC OBRA CIVIL','Obra Civil'), ('GC CORRALON','Obra Civil'),
   ('GC LOGISTICA','Logistica & Montaje'), ('GC MONTAJE','Logistica & Montaje'),
-  ('GC INST TERMOMECANICA','Climatizacion')
+  ('GC INST TERMOMECANICA','Climatizacion'),
+  ('GC HONORARIOS','Otros'), ('GC SERVICIOS','Otros'), ('GC ASERRADERO','Otros'), ('GC POSVENTA','Otros')
 ) as m(viejo, nuevo)
 where upper(regexp_replace(trim(o.costeo), '\s+', ' ', 'g')) = m.viejo
   and (o.costeo_new is null or o.costeo_new = '');
 
 commit;
 
--- 3) Control: OG con COSTEO viejo que quedaron SIN equivalente (HONORARIOS, SERVICIOS,
---    ASERRADERO, POSVENTA u otros valores raros). Hay que definirlas a mano.
+-- 3) Control: OG con COSTEO viejo que quedaron SIN equivalente (valores fuera de la lista,
+--    mal escritos, etc.). Debería dar vacío; si trae algo, hay que definirlas a mano.
 select costeo, count(*) as ogs
 from public.compras_ogs
 where coalesce(costeo,'') not in ('', 'No Aplica')
