@@ -9448,8 +9448,8 @@ function evalProvCierreProyHtml(){
   const rubroCols=evalProvRubrosOrdenados().map(r=>r.nombre);
   const fmtp=v=>v==null?'—':Math.round(v*100)+'%';
   const tabla = IC.obra ? ('<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead><tr><th>Indicador</th>'
-      +rubroCols.map(r=>'<th class="trunc" style="max-width:90px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
-      +'<th>Promedio proyecto</th></tr></thead><tbody>'
+      +rubroCols.map(r=>'<th style="max-width:72px;white-space:normal;font-size:9.5px;line-height:1.25;vertical-align:bottom;padding:4px 5px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
+      +'<th style="max-width:72px;white-space:normal;font-size:9.5px;line-height:1.25;vertical-align:bottom;padding:4px 5px">Promedio proyecto</th></tr></thead><tbody>'
     + EVALPROV_CATS.map((cat,i)=>'<tr><td class="trunc" style="max-width:150px" title="'+esc(EVALPROV_CATS_GRA[i])+'">'+esc(EVALPROV_CATS_GRA[i])+'</td>'
       +rubroCols.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
       +'<td style="text-align:right;font-weight:700">'+fmtp(_evalProvCierreCelda(rows,cat,null))+'</td></tr>').join('')
@@ -9714,6 +9714,82 @@ function epProvTh(label, col){
   return '<th style="white-space:nowrap"><span style="cursor:pointer;user-select:none" onclick="epProvSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+sortArrow+'</span></span> <span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openEpProvColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
 }
 
+/* ---- Mismo filtro/orden tipo Excel para "Detalle de evaluaciones" (solapa Evaluaciones, namespace propio) ---- */
+let EPEVAL_COL_FILTRO={};
+let EPEVAL_SORT=null;
+function epEvalColUnique(col){
+  const s=new Set(); let hasEmpty=false;
+  (EVALPROV._evalDetBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
+}
+function epEvalColFilterActive(col){ return !!(EPEVAL_COL_FILTRO[col] && EPEVAL_COL_FILTRO[col].length); }
+function epEvalRowPass(row){
+  return Object.keys(EPEVAL_COL_FILTRO).every(col=>{ const allow=EPEVAL_COL_FILTRO[col]; if(!allow||!allow.length) return true; return allow.includes(String(row[col]==null?'':row[col])); });
+}
+function epEvalApplySort(rowsIn){
+  if(!EPEVAL_SORT) return rowsIn;
+  const {col,dir}=EPEVAL_SORT;
+  return rowsIn.slice().sort((a,b)=>{
+    const av=a[col], bv=b[col];
+    if(typeof av==='number' || typeof bv==='number') return ((av||0)-(bv||0))*dir;
+    return String(av==null?'':av).localeCompare(String(bv==null?'':bv),'es',{numeric:true})*dir;
+  });
+}
+function epEvalSortToggle(col){
+  const cur=EPEVAL_SORT;
+  if(!cur || cur.col!==col) EPEVAL_SORT={col, dir:1};
+  else if(cur.dir===1) EPEVAL_SORT={col, dir:-1};
+  else EPEVAL_SORT=null;
+  renderEvalProv();
+}
+window.epEvalSortToggle=epEvalSortToggle;
+function closeEpEvalColFilter(){ const p=document.getElementById('dicFilterPop'); if(p) p.remove(); document.removeEventListener('mousedown', epEvalColFilterOutside, true); }
+function epEvalColFilterOutside(e){ const p=document.getElementById('dicFilterPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.dicfbtn'))) closeEpEvalColFilter(); }
+function openEpEvalColFilter(col, ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; closeEpEvalColFilter();
+  const vals=epEvalColUnique(col);
+  const sel = EPEVAL_COL_FILTRO[col] ? new Set(EPEVAL_COL_FILTRO[col]) : new Set(vals);
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
+  const pop=document.createElement('div'); pop.id='dicFilterPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="epEvalColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="epEvalColFilterToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="dicfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="epEvalColFilterApply(\''+col+'\')">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="epEvalColFilterClear(\''+col+'\')">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', epEvalColFilterOutside, true),0);
+}
+window.openEpEvalColFilter=openEpEvalColFilter;
+function epEvalColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
+window.epEvalColFilterSearch=epEvalColFilterSearch;
+function epEvalColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
+window.epEvalColFilterToggleAll=epEvalColFilterToggleAll;
+function epEvalColFilterApply(col){
+  const all=[...document.querySelectorAll('#dicfList .dicfchk')];
+  const visible=all.filter(c=>{ const it=c.closest('.dicfitem'); return it && it.style.display!=='none'; });
+  const chk=visible.filter(c=>c.checked).map(c=>c.value);
+  if(visible.length===all.length && chk.length===all.length){ delete EPEVAL_COL_FILTRO[col]; }
+  else { EPEVAL_COL_FILTRO[col]=chk; }
+  closeEpEvalColFilter(); renderEvalProv();
+}
+window.epEvalColFilterApply=epEvalColFilterApply;
+function epEvalColFilterClear(col){ delete EPEVAL_COL_FILTRO[col]; closeEpEvalColFilter(); renderEvalProv(); }
+window.epEvalColFilterClear=epEvalColFilterClear;
+function epEvalColFilterClearAll(){ EPEVAL_COL_FILTRO={}; renderEvalProv(); }
+window.epEvalColFilterClearAll=epEvalColFilterClearAll;
+function epEvalTh(label, col, opts){
+  opts=opts||{};
+  const sorting=EPEVAL_SORT && EPEVAL_SORT.col===col;
+  const sortArrow=sorting?(EPEVAL_SORT.dir===1?' ▲':' ▼'):'';
+  const sortSpan='<span style="cursor:pointer;user-select:none" onclick="epEvalSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+sortArrow+'</span></span>';
+  if(opts.nofilter) return '<th style="white-space:nowrap">'+sortSpan+'</th>';
+  const active=epEvalColFilterActive(col);
+  return '<th style="white-space:nowrap">'+sortSpan+' <span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openEpEvalColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
+}
+
 // Vista "cruda": una fila por evaluación, con las 26 preguntas como columnas separadas —
 // igual a como está la hoja BD del Excel RC-03.03, en vez del puntaje ya resumido.
 function evalProvDetalleCrudoHtml(){
@@ -9774,11 +9850,20 @@ function evalProvEvalsHtml(){
     + porProv.map(p=>'<tr><td>'+esc(p.cod||'—')+'</td><td class="trunc" title="'+esc(p.nom)+'">'+esc(p.nom)+'</td><td style="text-align:right">'+p.n+'</td><td style="text-align:right">'+evalProvPct1(p.prom)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(p.clasif)+'">'+p.clasif+'</span></td><td>'+solpDMY(p.ultima)+'</td></tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
-  const det=rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  const tdT=(v)=>'<td class="trunc" title="'+esc(v||'')+'">'+esc(v||'')+'</td>';
+  const detBase=rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(r=>({
+    id:r.id, fecha:r.fecha, cod:r.proveedor_cod||'', nom:r.provNom||r.proveedor_texto||'',
+    area:r.area==='compras'?'Compras':'Técnico', obra:r.obra||'', rubro:r.rubro||'',
+    pct:r.pct, clasif:evalProvClasif(r.pct), evaluador:evalProvEvaluadorCorto(r.evaluador)||'',
+    comentarios:r.comentarios||''
+  }));
+  EVALPROV._evalDetBase=detBase;
+  const det=epEvalApplySort(detBase.filter(epEvalRowPass));
   const puedeEditar=canEvalProv();
-  const tablaDet = det.length ? '<div class="dic-scroll"><table class="grid solp-full"><thead><tr><th>Fecha</th><th>Cód.</th><th>Proveedor</th><th>Área</th><th>Obra</th><th>Rubro</th><th>Puntaje</th><th>Clasificación</th><th>Evaluador</th><th>Comentarios</th>'+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
-    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.provNom||r.proveedor_texto)+'<td>'+(r.area==='compras'?'Compras':'Técnico')+'</td>'+tdT(r.obra)+tdT(r.rubro)+'<td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(evalProvClasif(r.pct))+'">'+evalProvClasif(r.pct)+'</span></td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(evalProvEvaluadorCorto(r.evaluador))+'</td>'+tdT(r.comentarios)+(puedeEditar?'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button>'+(ROLE.admin?'<button class="iconbtn del" title="Eliminar" onclick="askDelEvalProv('+r.id+')">'+ICO.del+'</button>':'')+'</div></td>':'')+'</tr>').join('')
+  const limpiarEval=Object.keys(EPEVAL_COL_FILTRO).length?'<button class="btn ghost sm" onclick="epEvalColFilterClearAll()">Limpiar filtros</button>':'';
+  const tablaDet = detBase.length ? '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">'+det.length+' de '+detBase.length+' evaluaciones'+limpiarEval+'</div><div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
+      +epEvalTh('Fecha','fecha')+epEvalTh('Cód.','cod')+epEvalTh('Proveedor','nom')+epEvalTh('Área','area')+epEvalTh('Obra','obra')+epEvalTh('Rubro','rubro')+epEvalTh('Puntaje','pct')+epEvalTh('Clasificación','clasif')+epEvalTh('Evaluador','evaluador')+epEvalTh('Comentarios','comentarios',{nofilter:true})
+      +(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
+    + det.slice(0,300).map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td>'+esc(r.cod||'—')+'</td><td class="trunc" title="'+esc(r.nom)+'">'+esc(r.nom)+'</td><td>'+esc(r.area)+'</td><td class="trunc" title="'+esc(r.obra)+'">'+esc(r.obra||'—')+'</td><td class="trunc" title="'+esc(r.rubro)+'">'+esc(r.rubro||'—')+'</td><td style="text-align:right">'+evalProvPct1(r.pct)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(r.clasif)+'">'+r.clasif+'</span></td><td class="trunc" title="'+esc(r.evaluador)+'">'+esc(r.evaluador)+'</td><td class="trunc" title="'+esc(r.comentarios)+'">'+esc(r.comentarios)+'</td>'+(puedeEditar?'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button>'+(ROLE.admin?'<button class="iconbtn del" title="Eliminar" onclick="askDelEvalProv('+r.id+')">'+ICO.del+'</button>':'')+'</div></td>':'')+'</tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
   const adminBtns = ROLE.admin ? '<div style="margin-bottom:12px"><button class="btn ghost sm" onclick="openEvalProvImportHistorico()">Importar histórico</button></div>' : '';
@@ -9791,7 +9876,7 @@ function evalProvEvalsHtml(){
     + '</div>'
     + '<div style="font-size:11.5px;color:var(--muted);margin:10px 0 2px">Los gráficos (evolución anual, por proveedor, por rubro) se mudaron a la solapa <strong>Informe anual</strong>, para no repetirlos acá.</div>'
     + '<div class="card" style="margin-top:10px"><div class="card-h"><h3>Por proveedor</h3><span class="meta">Peor promedio primero</span></div>'+tablaProv+'</div>'
-    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Detalle de evaluaciones</h3><span class="meta">'+nf(det.length)+'</span></div>'+tablaDet+'</div>';
+    + '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Detalle de evaluaciones</h3></div>'+tablaDet+'</div>';
 }
 
 function evalProvCriticosHtml(){
