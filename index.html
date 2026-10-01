@@ -2706,14 +2706,18 @@ function gpImputar(o, mapIdx){
   const cands=[ {tipo:'subrubro', clave:o.subrubro}, {tipo:'rubro', clave:o.rubro},
                 {tipo:'costeo', clave:o.costeo_tag}, {tipo:'grupo', clave:o.grupo},
                 {tipo:'prefijo', clave:gpPrefijoArt(o.cod_articulo)} ];
+  // COSTEO_NEW es la sección del costeo elegida a propósito en la OC: tiene prioridad sobre subrubro/rubro.
+  const esCosteoNew=COSTEO_NEW_OPC.includes(o.costeo_tag);
+  if(esCosteoNew) cands.unshift(cands.splice(2,1)[0]);
   // 1) mapeo guardado
   for(const c of cands){ if(gpEsNA(c.clave)) continue; const k=gpNorm(c.clave); const hit=mapIdx[c.tipo+'|'+k]; if(hit) return {seccion:hit, imputado_por:c.tipo}; }
   // 2) auto-match contra las secciones del presupuesto
   const secs=(GP.presupuesto||[]).map(s=>({seccion:s.seccion, n:gpNorm(s.seccion)}));
-  for(const c of [ {tipo:'subrubro', clave:o.subrubro}, {tipo:'rubro', clave:o.rubro}, {tipo:'costeo', clave:o.costeo_tag}, {tipo:'grupo', clave:o.grupo} ]){
-    if(gpEsNA(c.clave)) continue;
+  for(const c of cands){
+    if(c.tipo==='prefijo' || gpEsNA(c.clave)) continue;
     const cand=gpNorm(gpSinPrefijo(c.clave));
-    if(cand.length<4) continue;
+    const exacto=c.tipo==='costeo' && esCosteoNew;   // COSTEO_NEW cortos (ej. "MOD") valen si coinciden exacto
+    if(cand.length<4 && !exacto) continue;
     for(const s of secs){
       if(!s.n) continue;
       if(s.n===cand || (cand.indexOf(s.n)>=0 && s.n.length>=5) || (s.n.indexOf(cand)>=0 && cand.length>=5)){
@@ -2745,7 +2749,7 @@ async function gpTangoAnalizar(){
     if(!rows) throw new Error('No encontré una hoja con columnas “Nro. Orden de Compra” y “Total”. ¿Es el informe de Tango del proyecto?');
     const H=rows[0];
     const I={
-      fecha:_syncIdx(H,'Fecha de generación','Fecha de generacion','Fecha de emisión','Fecha de emision'), costeo:_syncIdx(H,'COSTEO (Adic.)','COSTEO'),
+      fecha:_syncIdx(H,'Fecha de generación','Fecha de generacion','Fecha de emisión','Fecha de emision'), costeo:_syncIdx(H,'COSTEO (Adic.)','COSTEO'), costeoNew:_syncIdx(H,'COSTEO_NEW (Adic.)','COSTEO_NEW'),
       prov:_syncIdx(H,'Cód. proveedor','Cod. proveedor'), art:_syncIdx(H,'Cód. Artículo','Cod. Articulo'),
       desc:_syncIdx(H,'Descripción','Descripcion'), grupo:_syncIdx(H,'Grupo'), oc:_syncIdx(H,'Nro. Orden de Compra','Nro Orden de Compra'),
       cantPed:_syncIdx(H,'Cantidad pedida'), cantRec:_syncIdx(H,'Cantidad Recibida'), cantFac:_syncIdx(H,'Cantidad Facturada'),
@@ -2763,7 +2767,9 @@ async function gpTangoAnalizar(){
         cod_articulo: I.art>=0?_syncNorm(row[I.art]):'',
         descripcion: I.desc>=0?_syncNorm(row[I.desc]):'',
         grupo: I.grupo>=0?gpLimpiaClasif(row[I.grupo]):'',
-        costeo_tag: I.costeo>=0?gpLimpiaClasif(row[I.costeo]):'',
+        // COSTEO_NEW (Adic.) manda; las OC viejas (sin COSTEO_NEW) siguen con su COSTEO viejo, como antes.
+        costeo_tag: (I.costeoNew>=0?costeoNewDe(gpLimpiaClasif(row[I.costeoNew])):'')
+                    || (I.costeo>=0?gpLimpiaClasif(row[I.costeo]):''),
         rubro: I.rubro>=0?gpLimpiaClasif(row[I.rubro]):'',
         subrubro: I.subrubro>=0?gpLimpiaClasif(row[I.subrubro]):'',
         cantidad_pedida: I.cantPed>=0?_syncNum(row[I.cantPed]):null,
@@ -2810,6 +2816,7 @@ function gpRevisarSinClasificar(){
   const grupos={};
   sc.forEach(o=>{
     let tipo='subrubro', clave=gpEsNA(o.subrubro)?'':o.subrubro;
+    if(COSTEO_NEW_OPC.includes(o.costeo_tag)){ tipo='costeo'; clave=o.costeo_tag; }   // COSTEO_NEW manda (igual que gpImputar)
     if(!clave){ tipo='rubro'; clave=gpEsNA(o.rubro)?'':o.rubro; }
     if(!clave){ tipo='costeo'; clave=gpEsNA(o.costeo_tag)?'':o.costeo_tag; }
     if(!clave){ tipo='grupo'; clave=gpEsNA(o.grupo)?'':o.grupo; }
@@ -3283,6 +3290,29 @@ function dicTh(tabKey, label, col){
     +'<span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openDicColFilter(\''+tabKey+'\',\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
 }
 const COSTEO_OPC=["GC AISLACION", "GC AMOBLAMIENTO", "GC ARENADO  Y PINTURA", "GC ART SANITARIOS", "GC ART. ILUMINACION", "GC ASERRADERO", "GC CARPINTERIA", "GC CHAPA", "GC CORRALON", "GC ELECTRODOMESTICOS", "GC EQUIPAMIENTO", "GC ESTRUCT MODULAR", "GC HERRAJES", "GC HERRERIA", "GC HIERROS", "GC HONORARIOS", "GC INST ELECTRICA", "GC INST GAS", "GC INST SANITARIA", "GC INST TERMOMECANICA", "GC LOGISTICA", "GC MONTAJE", "GC OBRA CIVIL", "GC OBRA SECA", "GC PANELES", "GC PISO", "GC POSVENTA", "GC REVESTIMIENTO", "GC SANITARIOS", "GC SERVICIOS", "GC VIDRIOS Y ESPEJOS"];
+// COSTEO_NEW (oct 2026): de qué SECCIÓN del costeo de Pablo sale la compra (mismo nombre que la columna
+// "Sección" del Excel del costeo, así Gestión de Proyectos imputa solo). En Tango es el adicional COSTEO_NEW;
+// el COSTEO viejo (COSTEO_OPC) queda solo como histórico y ya no se carga en OG nuevas.
+const COSTEO_NEW_OPC=["Estructura Modular", "Acero / Hierro", "Aislacion / Revestimiento", "Piso", "Aberturas", "Instalacion Electrica", "Pintura", "Sanitario", "Cocina", "MOD", "Prorrateables", "Equipamiento", "Mobiliario", "Obra Civil", "Logistica & Montaje", "Climatizacion", "Otros"];
+// Equivalencia COSTEO viejo -> COSTEO_NEW (la misma que aplica el SQL de reclasificación).
+const COSTEO_VIEJO_A_NEW={"GC ESTRUCT MODULAR":"Estructura Modular", "GC PANELES":"Estructura Modular",
+  "GC HIERROS":"Acero / Hierro", "GC HERRERIA":"Acero / Hierro", "GC CHAPA":"Acero / Hierro",
+  "GC AISLACION":"Aislacion / Revestimiento", "GC REVESTIMIENTO":"Aislacion / Revestimiento", "GC OBRA SECA":"Aislacion / Revestimiento",
+  "GC PISO":"Piso", "GC CARPINTERIA":"Aberturas", "GC VIDRIOS Y ESPEJOS":"Aberturas", "GC HERRAJES":"Aberturas",
+  "GC INST ELECTRICA":"Instalacion Electrica", "GC ART. ILUMINACION":"Instalacion Electrica",
+  "GC ARENADO Y PINTURA":"Pintura", "GC INST SANITARIA":"Sanitario", "GC SANITARIOS":"Sanitario", "GC ART SANITARIOS":"Sanitario", "GC INST GAS":"Sanitario",
+  "GC ELECTRODOMESTICOS":"Cocina", "GC EQUIPAMIENTO":"Equipamiento", "GC AMOBLAMIENTO":"Mobiliario",
+  "GC OBRA CIVIL":"Obra Civil", "GC CORRALON":"Obra Civil", "GC LOGISTICA":"Logistica & Montaje", "GC MONTAJE":"Logistica & Montaje",
+  "GC INST TERMOMECANICA":"Climatizacion",
+  "GC HONORARIOS":"Otros", "GC SERVICIOS":"Otros", "GC ASERRADERO":"Otros", "GC POSVENTA":"Otros"};
+// Devuelve el COSTEO_NEW equivalente a un COSTEO viejo ('' si no hay). Compara sin acentos/mayúsculas/espacios dobles.
+function costeoNewDe(viejo){
+  const k=String(viejo==null?'':viejo).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+  if(!k) return '';
+  const nuevo=COSTEO_NEW_OPC.find(x=>x.toUpperCase()===k); if(nuevo) return nuevo;   // ya es un valor nuevo
+  for(const v in COSTEO_VIEJO_A_NEW){ if(v.replace(/\s+/g,' ')===k) return COSTEO_VIEJO_A_NEW[v]; }
+  return '';
+}
 const ESTRUCTURA_OPC=["ACOPIO", "ALQUILER CONTENEDORES 3ROS", "ALQUILERES", "BIENES DE USO", "COTO", "ENERG ELECT", "FOOD&BEV", "GASOIL", "GASTOS DTM", "GC MANTENIMIENTO", "GS LIMPIEZA", "GS VAR OFICINA", "GS VAR TALLER", "GTO COMERCIAL", "GTO PUBLICIDAD", "GTOS BANCARIOS", "GTOS MANT MODULO", "GTOS MANT REEFER", "GTOS TRANSPORTE ALQUILER", "HERRAMIENTAS", "HONOR CONTABLES", "HONOR ESCRIBANO", "HONOR LEGALES", "HONOR OTROS", "INVERSION", "LIBRERIA", "LICENCIAS", "MANTEN BS USO", "MEDIC LAB PREP", "MENSAJERIA", "MOVILIDAD COMBUSTIBLE", "MUEBLES Y UTILES", "PATENTES", "PEAJES", "PROVEEDORES", "RECOL RESIDUOS", "REMISES", "RODADOS", "RRHH", "SEGURIDAD ALARMA", "SEGUROS", "SISTEMAS", "STOCK NQN", "TELEFONO"];
 const POSTVENTA_OPC=["ABERTURAS", "ACERO / HIERRO", "AISLACION / REV", "CLIMATIZACION", "CUBIERTA", "DESVIO", "ELECTRICIDAD", "EQUIPAMIENTO", "ESTRUCTURA", "HERRERIA", "INST ELECTRICA", "LOGIST PERSONAL", "LOGISTICA", "MAT OBRA CIVIL", "MO INST CLIMATI", "MO INST ELECTRI", "MO REVESTIMIENT", "MONTAJE", "PINTURA", "PISO", "POST VENTA", "SANITARIO"];
 const CONDICION_OPC=["CON ANTICIPO", "CONTADO", "TRANSFERENCIA", "COMPENSACIÓN CLIENTE", "COMPENSACIÓN PROVEEDORES", "VER OBSERVACIONES"];
@@ -3947,7 +3977,8 @@ const REPORT_COLS=['Talonario oc','Fecha de emisión','Cód. clasificación (Ren
   'Nombre del comprador','Condición de compra','SOLP_N° (Adic.)','CERTIFICADOR (Adic.)','COSTEO (Adic.)','ESTRUCTURA (Adic.)',
   'COMPRA_URGENTE (Adic.)','POSTVENTA (Adic.)','DESVIO_ (Adic.)','Desvio (Adic.)','RUBRO (Adic.)','SUBRUBRO (Adic.)','ALCANCE (Adic.)',
   'MODULO 1 (Adic.)','MODULO 2 (Adic.)','MODULO 3 (Adic.)','MODULO 4 (Adic.)','MODULO 5 (Adic.)',
-  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)'];
+  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)',
+  'COSTEO_NEW (Adic.)'];
 
 function renglonPagadoPct(o, idx){
   // El pago es a nivel OG (por %), aplica igual a todos los renglones. Fuente real: Tesorería.
@@ -4006,7 +4037,7 @@ function ogReportRows(ogs){
       r[21]= o.condicion||o.tipo_contratacion||'';     // Condición de compra
       r[22]= o.solp!=null?o.solp:'';                   // SOLP N°
       r[23]= o.certificador||'';                       // CERTIFICADOR
-      r[24]= o.costeo||'';                             // COSTEO
+      r[24]= o.costeo||'';                             // COSTEO (viejo, histórico)
       r[25]= o.estructura||'';                         // ESTRUCTURA
       r[26]= o.compra_urgente||'';                     // COMPRA_URGENTE
       r[27]= o.postventa||'';                          // POSTVENTA
@@ -4024,6 +4055,7 @@ function ogReportRows(ogs){
       r[40]= cantCerrada;                               // Cantidad Cerrada (no es costo: cancelada, no se certifica ni paga)
       r[41]= round2(montoCerrado);                      // Monto Cerrado
       r[42]= motivosCerrado;                             // Motivo de Cierre
+      r[43]= o.costeo_new||'';                           // COSTEO_NEW (sección del costeo)
       rows.push(r);
     });
   });
@@ -5827,7 +5859,8 @@ function openOG(id){
   const condOpts=optSel(CONDICION_OPC,cur.condicion);
   const monOpts=optSel(MONEDA_OPC,cur.moneda);
   const lugarOpts=optSel(LUGAR_PAGO_OPC,cur.lugar_pago||'La Huella');
-  const costeoOpts=optSelNA(COSTEO_OPC,cur.costeo);
+  const costeoNewOpts=optSelNA(COSTEO_NEW_OPC,cur.costeo_new||costeoNewDe(cur.costeo));   // OG sin reclasificar: sugiere el equivalente
+  const costeoViejo=(cur.costeo && cur.costeo!=='No Aplica')?cur.costeo:'';                 // histórico, solo lectura
   const estrOpts=optSelNA(ESTRUCTURA_OPC,cur.estructura);
   const postOpts=optSelNA(POSTVENTA_OPC,cur.postventa);
   const desvOpts=optSelNA(DESVIO_OPC,cur.desvio);
@@ -5868,7 +5901,8 @@ function openOG(id){
     +'<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:6px 0 8px">Datos adicionales</div>'
     +'<div class="frow c2"><div class="field"><label>SOLP N°</label><input id="og_solp" type="number" value="'+esc(cur.solp!=null?cur.solp:'')+'"></div>'
     +'<div class="field"><label>Compra urgente</label><select id="og_urgente">'+urgOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>COSTEO (de qué parte del presupuesto sale)</label><select id="og_costeo">'+costeoOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>COSTEO_NEW (de qué sección del costeo sale)</label><select id="og_costeo_new">'+costeoNewOpts+'</select>'
+      +(costeoViejo?'<div style="font-size:11px;color:var(--muted);margin-top:4px">Costeo anterior (histórico): '+esc(costeoViejo)+'</div>':'')+'</div>'
     +'<div class="field"><label>ESTRUCTURA (si es gasto de estructura)</label><select id="og_estructura">'+estrOpts+'</select></div></div>'
     +'<div class="field"><label>POSTVENTA (si es post-venta, dónde se generó)</label><select id="og_postventa">'+postOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Desvío</label><select id="og_desvio">'+desvOpts+'</select></div>'
@@ -6184,7 +6218,7 @@ async function saveOG(id){
     comprador:gv('og_comprador'), certificador:gv('og_certificador'),
     solp:(gv('og_solp')===''?null:+gv('og_solp')), compra_urgente:gv('og_urgente'),
     bonif_pct:(gv('og_bonif_pct')===''?0:+gv('og_bonif_pct')),
-    costeo:gv('og_costeo'), estructura:gv('og_estructura'), postventa:gv('og_postventa'),
+    costeo_new:gv('og_costeo_new'), estructura:gv('og_estructura'), postventa:gv('og_postventa'),
     desvio:gv('og_desvio'), desvio_txt:gv('og_desvio_txt'), alcance:gv('og_alcance'), observaciones:gv('og_obs'),
     items };
   obj.monto_total = items.length ? items.reduce((a,it)=>a+(it.cant*it.precio_unit),0) : (gv('og_monto')===''?null:+gv('og_monto'));
@@ -6621,7 +6655,7 @@ function exportDicTab(){
   } else if(DIC_TAB==='opcog'){
     const filt=arr=>{ let rows=arr; if(q) rows=rows.filter(x=>String(x).toLowerCase().includes(q)); return rows; };
     const wb=XLSX.utils.book_new();
-    [['Costeo',COSTEO_OPC],['Estructura',ESTRUCTURA_OPC],['Postventa',POSTVENTA_OPC],['Condicion de compra',CONDICION_OPC],['Desvio',DESVIO_OPC]].forEach(([nombre,arr])=>{
+    [['Costeo_NEW',COSTEO_NEW_OPC],['Costeo (historico)',COSTEO_OPC],['Estructura',ESTRUCTURA_OPC],['Postventa',POSTVENTA_OPC],['Condicion de compra',CONDICION_OPC],['Desvio',DESVIO_OPC]].forEach(([nombre,arr])=>{
       const rows=filt(arr); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[nombre],...rows.map(x=>[x])]), nombre.slice(0,31));
     });
     XLSX.writeFile(wb,'Diccionario_OpcionesOG_'+hoy+'.xlsx'); toast('Exportado a Excel'); return;
@@ -8183,7 +8217,8 @@ function paintDic(){
       return card(title, rows.length+' opciones', '',
         '<table class="grid"><tbody>'+rows.map(x=>'<tr><td>'+esc(x)+'</td></tr>').join('')+'</tbody></table>'); };
     html='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Opciones de los desplegables de la OG. Salen del histórico de tus informes; revisalas y decime qué sacar o unificar (ej. variantes abreviadas en COSTEO).</div>'
-      +listCard('COSTEO',COSTEO_OPC)+'<div style="height:12px"></div>'
+      +listCard('COSTEO_NEW (sección del costeo)',COSTEO_NEW_OPC)+'<div style="height:12px"></div>'
+      +listCard('COSTEO (histórico, ya no se carga)',COSTEO_OPC)+'<div style="height:12px"></div>'
       +listCard('ESTRUCTURA',ESTRUCTURA_OPC)+'<div style="height:12px"></div>'
       +listCard('POSTVENTA',POSTVENTA_OPC)+'<div style="height:12px"></div>'
       +listCard('Condición de compra',CONDICION_OPC)+'<div style="height:12px"></div>'
