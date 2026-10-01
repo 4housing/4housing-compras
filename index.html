@@ -3975,11 +3975,10 @@ const REPORT_COLS=['Talonario oc','Fecha de emisión','Cód. clasificación (Ren
   'Nro. Orden de Compra','Cód. proveedor','Cód. Artículo','Descripción','Descripción artículo (Renglón)',
   'Desc. adicional artículo (Renglón)','Cantidad pedida','Cantidad Pendiente de recibir','Cantidad Pendiente de Facturar',
   'Cantidad Recibida','Cantidad Facturada','Total','Estado (renglón)','Observaciones','Moneda','Cotización',
-  'Nombre del comprador','Condición de compra','SOLP_N° (Adic.)','CERTIFICADOR (Adic.)','COSTEO (Adic.)','ESTRUCTURA (Adic.)',
+  'Nombre del comprador','Condición de compra','SOLP_N° (Adic.)','CERTIFICADOR (Adic.)','COSTEO (Adic.)','COSTEO_NEW (Adic.)','ESTRUCTURA (Adic.)',
   'COMPRA_URGENTE (Adic.)','POSTVENTA (Adic.)','DESVIO_ (Adic.)','Desvio (Adic.)','RUBRO (Adic.)','SUBRUBRO (Adic.)','ALCANCE (Adic.)',
-  'MODULO 1 (Adic.)','MODULO 2 (Adic.)','MODULO 3 (Adic.)','MODULO 4 (Adic.)','MODULO 5 (Adic.)',
-  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)',
-  'COSTEO_NEW (Adic.)'];
+  'MODULO_1 (Adic.)','MODULO_2 (Adic.)','MODULO_3 (Adic.)','MODULO_4 (Adic.)','MODULO_5 (Adic.)',
+  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)'];
 
 function renglonPagadoPct(o, idx){
   // El pago es a nivel OG (por %), aplica igual a todos los renglones. Fuente real: Tesorería.
@@ -4039,24 +4038,25 @@ function ogReportRows(ogs){
       r[22]= o.solp!=null?o.solp:'';                   // SOLP N°
       r[23]= o.certificador||'';                       // CERTIFICADOR
       r[24]= o.costeo||'';                             // COSTEO (viejo, histórico)
-      r[25]= o.estructura||'';                         // ESTRUCTURA
-      r[26]= o.compra_urgente||'';                     // COMPRA_URGENTE
-      r[27]= o.postventa||'';                          // POSTVENTA
-      r[28]= o.desvio||'';                             // DESVIO_
-      r[29]= o.desvio_txt||'';                         // Desvio (texto)
-      r[30]= '';                                       // RUBRO (no se usa)
-      r[31]= '';                                       // SUBRUBRO (no se usa)
-      r[32]= o.alcance||'';                            // ALCANCE
+      r[25]= o.costeo_new||'';                         // COSTEO_NEW (sección del costeo)
+      r[26]= o.estructura||'';                         // ESTRUCTURA
+      r[27]= o.compra_urgente||'';                     // COMPRA_URGENTE
+      r[28]= o.postventa||'';                          // POSTVENTA
+      r[29]= o.desvio||'';                             // DESVIO_
+      r[30]= o.desvio_txt||'';                         // Desvio (texto)
+      r[31]= '';                                       // RUBRO (no se usa)
+      r[32]= '';                                       // SUBRUBRO (no se usa)
+      r[33]= o.alcance||'';                            // ALCANCE
       const mods = esOG ? [] : (it.modulos||[]);
-      r[33]= mods[0]||''; r[34]= mods[1]||''; r[35]= mods[2]||''; r[36]= mods[3]||''; r[37]= mods[4]||'';  // MODULO 1-5
+      r[34]= mods[0]||''; r[35]= mods[1]||''; r[36]= mods[2]||''; r[37]= mods[3]||''; r[38]= mods[4]||'';  // MODULO_1-5
+      // ---- columnas propias de la app (Tango no las tiene; van al final) ----
       // Equivalente en pesos de compra: USD → total×TC ; pesos → total tal cual
-      r[38]= esUSD ? (tcCompra!=null?round2(total*tcCompra):'') : round2(total);
+      r[39]= esUSD ? (tcCompra!=null?round2(total*tcCompra):'') : round2(total);
       // Pesos pagados (foto del momento): reparto proporcional del total pagado en pesos según el peso de la fila
-      r[39]= round2( ogTot ? ppOG*(total/ogTot) : (esOG?ppOG:0) );
-      r[40]= cantCerrada;                               // Cantidad Cerrada (no es costo: cancelada, no se certifica ni paga)
-      r[41]= round2(montoCerrado);                      // Monto Cerrado
-      r[42]= motivosCerrado;                             // Motivo de Cierre
-      r[43]= o.costeo_new||'';                           // COSTEO_NEW (sección del costeo)
+      r[40]= round2( ogTot ? ppOG*(total/ogTot) : (esOG?ppOG:0) );
+      r[41]= cantCerrada;                               // Cantidad Cerrada (no es costo: cancelada, no se certifica ni paga)
+      r[42]= round2(montoCerrado);                      // Monto Cerrado
+      r[43]= motivosCerrado;                             // Motivo de Cierre
       rows.push(r);
     });
   });
