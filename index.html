@@ -8966,15 +8966,16 @@ function evalProvCierreProyHtml(){
   const rows=IC.obra?EVALPROV.rows.filter(r=>r.obra_cod===IC.obra):[];
   const rubroCols=evalProvRubrosOrdenados().map(r=>r.nombre);
   const fmtp=v=>v==null?'—':Math.round(v*100)+'%';
+  const thRubro='text-align:center;vertical-align:middle;max-width:78px;white-space:normal;font-size:9.5px;font-weight:500;letter-spacing:-.1px;line-height:1.2;padding:5px 4px';
   const tabla = IC.obra ? ('<div class="dic-scroll"><table class="grid" style="font-size:11px"><thead><tr><th>Indicador</th>'
-      +rubroCols.map(r=>'<th style="max-width:72px;white-space:normal;font-size:9.5px;line-height:1.25;vertical-align:bottom;padding:4px 5px" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
-      +'<th style="max-width:72px;white-space:normal;font-size:9.5px;line-height:1.25;vertical-align:bottom;padding:4px 5px">Promedio proyecto</th></tr></thead><tbody>'
+      +rubroCols.map(r=>'<th style="'+thRubro+'" title="'+esc(r)+'">'+esc(r)+'</th>').join('')
+      +'<th style="'+thRubro+'">Promedio proyecto</th></tr></thead><tbody>'
     + EVALPROV_CATS.map((cat,i)=>'<tr><td class="trunc" style="max-width:150px" title="'+esc(EVALPROV_CATS_GRA[i])+'">'+esc(EVALPROV_CATS_GRA[i])+'</td>'
       +rubroCols.map(r=>'<td style="text-align:right">'+fmtp(_evalProvCierreCelda(rows,cat,r))+'</td>').join('')
       +'<td style="text-align:right;font-weight:700">'+fmtp(_evalProvCierreCelda(rows,cat,null))+'</td></tr>').join('')
     + '</tbody></table></div>') : '<div class="empty">Elegí un proyecto para ver su cierre por rubro.</div>';
   const rubrosConDatos=IC.obra?_evalProvCierreRubrosConDatos(rows):[];
-  const chartH=Math.max(160, 34*rubrosConDatos.length+40);
+  const chartH=Math.max(260, 120*rubrosConDatos.length+60);
   return '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Réplica del informe de cierre por proyecto (hoja IND CIERRE PROY. de RC-03.03): cada indicador, promediado por rubro, dentro del proyecto elegido.</div>'
     +'<div class="field" style="max-width:380px;margin-bottom:10px"><label>Proyecto</label><select onchange="IC.obra=this.value||null;renderEvalProv()"><option value="">— elegí un proyecto —</option>'+obras.map(o=>'<option value="'+esc(o.cod)+'"'+(o.cod===IC.obra?' selected':'')+'>'+esc(o.desc)+'</option>').join('')+'</select></div>'
     +'<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Por rubro</h3></div>'+tabla+'</div>'
@@ -8986,13 +8987,14 @@ function evalProvCierreProyChart(){
   const rows=EVALPROV.rows.filter(r=>r.obra_cod===IC.obra);
   const rubroCols=_evalProvCierreRubrosConDatos(rows);
   if(!rubroCols.length) return;
-  const datasets=EVALPROV_CATS.map((cat,i)=>({label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3,
+  const datasets=EVALPROV_CATS.map((cat,i)=>({label:EVALPROV_CATS_GRA[i], backgroundColor:EVALPROV_CAT_COL[i], borderRadius:3, maxBarThickness:22, categoryPercentage:0.85, barPercentage:0.9,
     data:rubroCols.map(r=>{ const v=_evalProvCierreCelda(rows,cat,r); return v==null?null:Math.round(v*100); }),
-    datalabels:{display:true, color:'#404040', anchor:'end', align:'right', font:{size:8}, formatter:_evalProvDLFmt}}));
+    datalabels:{display:true, color:'#404040', anchor:'end', align:'right', offset:2, font:{size:10}, formatter:_evalProvDLFmt}}));
   evalProvChart('icChart', {type:'bar', data:{labels:rubroCols, datasets},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:9.5}}}},
-      scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:10.5}}}}}});
+      layout:{padding:{right:26}},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10.5}}}},
+      scales:{x:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},grid:{color:SOLP_COL.line}},y:{grid:{display:false},ticks:{font:{size:11.5}}}}}});
 }
 let IC={obra:null};
 
