@@ -8956,6 +8956,79 @@ function epDetTh(label, col, opts){
   return '<th style="white-space:nowrap">'+sortSpan+' <span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openEpDetColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
 }
 
+/* ---- Mismo filtro/orden tipo Excel para "Por proveedor" (namespace propio) ---- */
+let EPPROV_COL_FILTRO={};
+let EPPROV_SORT=null;
+function epProvColUnique(col){
+  const s=new Set(); let hasEmpty=false;
+  (EVALPROV._provBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
+  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  return hasEmpty ? ['',...vals] : vals;
+}
+function epProvColFilterActive(col){ return !!(EPPROV_COL_FILTRO[col] && EPPROV_COL_FILTRO[col].length); }
+function epProvRowPass(row){
+  return Object.keys(EPPROV_COL_FILTRO).every(col=>{ const allow=EPPROV_COL_FILTRO[col]; if(!allow||!allow.length) return true; return allow.includes(String(row[col]==null?'':row[col])); });
+}
+function epProvApplySort(rowsIn){
+  if(!EPPROV_SORT) return rowsIn;
+  const {col,dir}=EPPROV_SORT;
+  return rowsIn.slice().sort((a,b)=>{
+    const av=a[col], bv=b[col];
+    if(typeof av==='number' || typeof bv==='number') return ((av||0)-(bv||0))*dir;
+    return String(av==null?'':av).localeCompare(String(bv==null?'':bv),'es',{numeric:true})*dir;
+  });
+}
+function epProvSortToggle(col){
+  const cur=EPPROV_SORT;
+  if(!cur || cur.col!==col) EPPROV_SORT={col, dir:1};
+  else if(cur.dir===1) EPPROV_SORT={col, dir:-1};
+  else EPPROV_SORT=null;
+  renderEvalProv();
+}
+window.epProvSortToggle=epProvSortToggle;
+function closeEpProvColFilter(){ const p=document.getElementById('dicFilterPop'); if(p) p.remove(); document.removeEventListener('mousedown', epProvColFilterOutside, true); }
+function epProvColFilterOutside(e){ const p=document.getElementById('dicFilterPop'); if(p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.dicfbtn'))) closeEpProvColFilter(); }
+function openEpProvColFilter(col, ev){
+  ev.stopPropagation(); const btn=ev.currentTarget; closeEpProvColFilter();
+  const vals=epProvColUnique(col);
+  const sel = EPPROV_COL_FILTRO[col] ? new Set(EPPROV_COL_FILTRO[col]) : new Set(vals);
+  const item=v=>'<label class="dicfitem" data-v="'+esc(v)+'" style="display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;font-size:12px"><input type="checkbox" class="dicfchk" value="'+esc(v)+'" '+(sel.has(v)?'checked':'')+'>'+(v===''?'<em style="color:var(--muted)">(Vacío)</em>':esc(v))+'</label>';
+  const pop=document.createElement('div'); pop.id='dicFilterPop';
+  pop.style.cssText='position:absolute;z-index:9999;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:210px;max-width:300px;font-size:12.5px';
+  pop.innerHTML='<input type="text" placeholder="Buscar" oninput="epProvColFilterSearch(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:12.5px">'
+    +'<label style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-weight:700;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer"><input type="checkbox" '+(sel.size===vals.length?'checked':'')+' onchange="epProvColFilterToggleAll(this.checked)">(Seleccionar todo)</label>'
+    +'<div id="dicfList" style="max-height:220px;overflow:auto">'+vals.map(item).join('')+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" style="flex:1" onclick="epProvColFilterApply(\''+col+'\')">Aplicar</button><button class="btn ghost sm" style="flex:1" onclick="epProvColFilterClear(\''+col+'\')">Limpiar</button></div>';
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(); const vw=document.documentElement.clientWidth;
+  pop.style.top=(window.scrollY+r.bottom+4)+'px'; pop.style.left=(window.scrollX+Math.max(8,Math.min(r.left, vw-310)))+'px';
+  setTimeout(()=>document.addEventListener('mousedown', epProvColFilterOutside, true),0);
+}
+window.openEpProvColFilter=openEpProvColFilter;
+function epProvColFilterSearch(q){ q=(q||'').toLowerCase(); document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ const m=el.getAttribute('data-v').toLowerCase().includes(q); el.style.display=m?'flex':'none'; if(q){ const c=el.querySelector('.dicfchk'); if(c) c.checked=m; } }); }
+window.epProvColFilterSearch=epProvColFilterSearch;
+function epProvColFilterToggleAll(ck){ document.querySelectorAll('#dicfList .dicfitem').forEach(el=>{ if(el.style.display!=='none'){ const c=el.querySelector('.dicfchk'); if(c) c.checked=ck; } }); }
+window.epProvColFilterToggleAll=epProvColFilterToggleAll;
+function epProvColFilterApply(col){
+  const all=[...document.querySelectorAll('#dicfList .dicfchk')];
+  const visible=all.filter(c=>{ const it=c.closest('.dicfitem'); return it && it.style.display!=='none'; });
+  const chk=visible.filter(c=>c.checked).map(c=>c.value);
+  if(visible.length===all.length && chk.length===all.length){ delete EPPROV_COL_FILTRO[col]; }
+  else { EPPROV_COL_FILTRO[col]=chk; }
+  closeEpProvColFilter(); renderEvalProv();
+}
+window.epProvColFilterApply=epProvColFilterApply;
+function epProvColFilterClear(col){ delete EPPROV_COL_FILTRO[col]; closeEpProvColFilter(); renderEvalProv(); }
+window.epProvColFilterClear=epProvColFilterClear;
+function epProvColFilterClearAll(){ EPPROV_COL_FILTRO={}; renderEvalProv(); }
+window.epProvColFilterClearAll=epProvColFilterClearAll;
+function epProvTh(label, col){
+  const sorting=EPPROV_SORT && EPPROV_SORT.col===col;
+  const sortArrow=sorting?(EPPROV_SORT.dir===1?' ▲':' ▼'):'';
+  const active=epProvColFilterActive(col);
+  return '<th style="white-space:nowrap"><span style="cursor:pointer;user-select:none" onclick="epProvSortToggle(\''+col+'\')" title="Ordenar">'+esc(label)+'<span style="font-size:9px;color:'+(sorting?'#1a7a3a;font-weight:900':'var(--muted)')+'">'+sortArrow+'</span></span> <span class="dicfbtn" style="cursor:pointer;user-select:none" onclick="openEpProvColFilter(\''+col+'\',event)" title="Filtrar"><span style="font-size:9px;'+(active?'color:#1a7a3a;font-weight:900':'color:var(--muted)')+'">▼</span></span></th>';
+}
+
 // Vista "cruda": una fila por evaluación, con las 26 preguntas como columnas separadas —
 // igual a como está la hoja BD del Excel RC-03.03, en vez del puntaje ya resumido.
 function evalProvDetalleCrudoHtml(){
@@ -9003,14 +9076,17 @@ function evalProvEvalsHtml(){
   const provs=[...new Set(rows.map(r=>r.proveedor_cod))];
   const kpi=(l,v,sub,col)=>'<div class="kpi"><div class="kpi-label">'+l+'</div><div class="kpi-value"'+(col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="kpi-sub">'+sub+'</div></div>';
 
-  const porProv=provs.map(cod=>{
+  const porProvBase=provs.map(cod=>{
     const rs=rows.filter(r=>r.proveedor_cod===cod && r.pct!=null);
     const p=rs.length?rs.reduce((a,r)=>a+r.pct,0)/rs.length:null;
     const ultima=rs.length?rs.reduce((a,r)=>r.fecha>a?r.fecha:a,''):null;
-    return { nom:solpProvNom(cod), n:rs.length, prom:p, clasif:evalProvClasif(p), ultima };
-  }).filter(p=>p.n).sort((a,b)=>(a.prom??0)-(b.prom??0));
-  const tablaProv = porProv.length ? '<div class="dic-scroll"><table class="grid"><thead><tr><th>Proveedor</th><th>Evaluaciones</th><th>Promedio</th><th>Clasificación</th><th>Última</th></tr></thead><tbody>'
-    + porProv.map(p=>'<tr><td>'+esc(p.nom)+'</td><td style="text-align:right">'+p.n+'</td><td style="text-align:right">'+evalProvPct1(p.prom)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(p.clasif)+'">'+p.clasif+'</span></td><td>'+solpDMY(p.ultima)+'</td></tr>').join('')
+    return { cod, nom:solpProvNom(cod), n:rs.length, prom:p, clasif:evalProvClasif(p), ultima };
+  }).filter(p=>p.n);
+  EVALPROV._provBase=porProvBase;
+  const porProv=epProvApplySort(porProvBase.filter(epProvRowPass).slice().sort((a,b)=>(a.prom??0)-(b.prom??0)));
+  const limpiarProv=Object.keys(EPPROV_COL_FILTRO).length?'<button class="btn ghost sm" onclick="epProvColFilterClearAll()">Limpiar filtros</button>':'';
+  const tablaProv = porProvBase.length ? '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">'+porProv.length+' de '+porProvBase.length+' proveedores'+limpiarProv+'</div><div class="dic-scroll"><table class="grid"><thead><tr>'+epProvTh('Cód.','cod')+epProvTh('Proveedor','nom')+epProvTh('Evaluaciones','n')+epProvTh('Promedio','prom')+epProvTh('Clasificación','clasif')+epProvTh('Última','ultima')+'</tr></thead><tbody>'
+    + porProv.map(p=>'<tr><td>'+esc(p.cod||'—')+'</td><td class="trunc" title="'+esc(p.nom)+'">'+esc(p.nom)+'</td><td style="text-align:right">'+p.n+'</td><td style="text-align:right">'+evalProvPct1(p.prom)+'</td><td><span class="badge" style="background:#f4f1ea;color:'+evalProvClasifCol(p.clasif)+'">'+p.clasif+'</span></td><td>'+solpDMY(p.ultima)+'</td></tr>').join('')
     + '</tbody></table></div>' : '<div class="empty">Todavía no hay evaluaciones cargadas.</div>';
 
   const det=rows.slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
