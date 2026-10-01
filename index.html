@@ -949,6 +949,8 @@ let current='compras';
 
 /* ===== ROLES ===== */
 let ROLE={comprador:true, certificador:true, tesorero:true, confidencial:true, admin:true, asiento:true};
+let ES_DIRECCION=false;   // es_direccion del portal (perfiles) — habilita acciones de estructura en Gestión de Proyectos
+function esDireccion(){ return !!ES_DIRECCION; }
 let DEMO_ROLE='admin';
 let MI_NOMBRE='';   // nombre del usuario logueado tal como aparece en Comprador/Certificador de las OGs (para "Mi gestión" en Seguimiento)
 const DEMO_ROLES={
@@ -957,11 +959,11 @@ const DEMO_ROLES={
   certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, asiento:false, lbl:'Certificador (técnica)', nombre:'Seoane, Micaela'},
   tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, asiento:false, lbl:'Tesorero', nombre:''},
 };
-function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento}; MI_NOMBRE=r.nombre||''; }
+function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento}; MI_NOMBRE=r.nombre||''; ES_DIRECCION=(DEMO_ROLE==='admin'); }
 async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
   ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false};   // por defecto, sin permisos
-  MI_NOMBRE='';
+  MI_NOMBRE=''; ES_DIRECCION=false;
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
@@ -969,6 +971,11 @@ async function loadRole(){
     const u=rows&&rows[0];
     if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
+  // es_direccion del portal (perfiles) — igual criterio que nav.js. Habilita la estructura de Gestión de Proyectos.
+  try{
+    const uid=(AUTH_USER&&AUTH_USER.id)||'';
+    if(uid){ const pr=await sbFetch('/perfiles?select=es_direccion&id=eq.'+encodeURIComponent(uid)); ES_DIRECCION=!!(pr&&pr[0]&&pr[0].es_direccion); }
+  }catch(e){ /* si falla, no es dirección */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
 function canCert(){ return ROLE.certificador||ROLE.admin; }
@@ -2488,7 +2495,7 @@ window.renderProyectos=renderProyectos;
 
 /* -------- Lista de proyectos -------- */
 function gpRenderLista(){
-  document.getElementById('topActions').innerHTML = (puedeCrearOG()? '<button class="btn" onclick="gpNuevoProyecto()">'+ICO.plus+'Nuevo proyecto</button>':'');
+  document.getElementById('topActions').innerHTML = (esDireccion()? '<button class="btn" onclick="gpNuevoProyecto()">'+ICO.plus+'Nuevo proyecto</button>':'');
   const ps=GP.proyectos||[];
   const cards = ps.map(p=>{
     const est=(p.estado||'en_curso');
@@ -2563,7 +2570,7 @@ async function gpGuardarProyecto(id){
     if(id){ await sbFetch('/compras_gp_proyectos?id=eq.'+id,{method:'PATCH', body:JSON.stringify(obj)}); }
     else{ const r=await sbFetch('/compras_gp_proyectos',{method:'POST', body:JSON.stringify(obj)}); pid=r&&r[0]&&r[0].id; }
     if(parsed && parsed.secciones && parsed.secciones.length && pid){
-      await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
+      await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid+'&origen=eq.costeo',{method:'DELETE',prefer:'return=minimal'});   // preserva los rubros manuales (origen='manual')
       const rows=parsed.secciones.map(s=>({proyecto_id:pid, seccion:s.seccion, orden:s.orden, presupuesto_ars:s.presupuesto_ars, presupuesto_usd:s.presupuesto_usd}));
       for(let k=0;k<rows.length;k+=500){ await sbFetch('/compras_gp_presupuesto',{method:'POST', body:JSON.stringify(rows.slice(k,k+500)), prefer:'return=minimal'}); }
     }
@@ -2640,8 +2647,8 @@ async function gpCosteoAnalizar(){
   const pid=GP.actualId;
   try{
     await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
-    const rows=parsed.secciones.map(s=>({proyecto_id:pid, seccion:s.seccion, orden:s.orden, presupuesto_ars:s.presupuesto_ars, presupuesto_usd:s.presupuesto_usd}));
-    for(let k=0;k<rows.length;k+=500){ await sbFetch('/compras_gp_presupuesto',{method:'POST', body:JSON.stringify(rows.slice(k,k+500)), prefer:'return=minimal'}); }
+    const rows=parsed.secciones.map(s=>({proyecto_id:pid, seccion:s.seccion, orden:s.orden, presupuesto_ars:s.presupuesto_ars, presupuesto_usd:s.presupuesto_usd, origen:'costeo'}));
+    for(let k=0;k<rows.length;k+=500){ await sbFetch('/compras_gp_presupuesto',{method:'POST', body:JSON.stringify(rows.slice(k,k+500)), prefer:'resolution=merge-duplicates,return=minimal'}); }
     const upd={actualizado_en:new Date().toISOString()};
     if(parsed.tc!=null) upd.tc_presupuesto=parsed.tc;
     if(parsed.meta!=null) upd.meta_ahorro_pct=parsed.meta;
@@ -2650,6 +2657,48 @@ async function gpCosteoAnalizar(){
   }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
 }
 window.gpCosteoAnalizar=gpCosteoAnalizar;
+
+/* -------- Rubros manuales (solo dirección) -------- */
+function gpAgregarRubro(){
+  if(!esDireccion()){ toast('Solo dirección puede agregar rubros.'); return; }
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Rubro propio que el costeo no detalla (honorarios, seguros, gastos comerciales, fletes…). Se conserva cuando se re-importa el costeo. El presupuesto es opcional: si lo dejás en 0, el gasto aparece como “no presupuestado”.</div>'
+    +'<div class="field"><label>Nombre del rubro *</label><input id="gp_rubro_nom" type="text" placeholder="ej. Honorarios / Seguros / Gastos comerciales"></div>'
+    +'<div class="frow c2"><div class="field"><label>Presupuesto ($)</label><input id="gp_rubro_ars" type="number" step="0.01" value="0"></div>'
+      +'<div class="field"><label>Presupuesto (USD)</label><input id="gp_rubro_usd" type="number" step="0.01" value="0"></div></div>'
+    +'<div id="gpRubroMsg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarRubro()">Agregar</button>';
+  openModal('Agregar rubro', body, foot);
+}
+window.gpAgregarRubro=gpAgregarRubro;
+async function gpGuardarRubro(){
+  const msg=document.getElementById('gpRubroMsg'); const setErr=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  if(!esDireccion()){ setErr('Solo dirección puede agregar rubros.'); return; }
+  const nom=(document.getElementById('gp_rubro_nom').value||'').trim();
+  if(!nom){ setErr('Poné un nombre.'); return; }
+  if((GP.presupuesto||[]).some(s=>gpNorm(s.seccion)===gpNorm(nom))){ setErr('Ya existe una sección con ese nombre.'); return; }
+  const ars=+document.getElementById('gp_rubro_ars').value||0, usd=+document.getElementById('gp_rubro_usd').value||0;
+  const orden=Math.max(0,...(GP.presupuesto||[]).map(s=>+s.orden||0))+1;
+  msg.style.color='var(--muted)'; msg.textContent='Guardando…';
+  try{
+    await sbFetch('/compras_gp_presupuesto',{method:'POST', prefer:'return=minimal', body:JSON.stringify({proyecto_id:GP.actualId, seccion:nom, orden, presupuesto_ars:ars, presupuesto_usd:usd, origen:'manual'})});
+    closeModal(); toast('Rubro agregado'); renderProyectos();
+  }catch(e){ setErr('No se pudo agregar: '+(e.message||e)); }
+}
+window.gpGuardarRubro=gpGuardarRubro;
+async function gpEliminarRubro(id){
+  if(!esDireccion()){ toast('Solo dirección puede eliminar rubros.'); return; }
+  const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  if(!confirm('¿Eliminar el rubro manual "'+s.seccion+'"? Las OC que tenga imputadas quedarán "Sin clasificar".')) return;
+  try{
+    // libera las OC imputadas a ese rubro
+    await sbFetch('/compras_gp_oc?proyecto_id=eq.'+GP.actualId+'&seccion=eq.'+encodeURIComponent(s.seccion),{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({seccion:'Sin clasificar', imputado_por:'sin_clasificar'})});
+    // borra el mapeo que apuntaba a ese rubro (para que no se vuelva a imputar solo)
+    await sbFetch('/compras_gp_mapeo?proyecto_id=eq.'+GP.actualId+'&seccion=eq.'+encodeURIComponent(s.seccion),{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_gp_presupuesto?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    toast('Rubro eliminado'); renderProyectos();
+  }catch(e){ alert('No se pudo eliminar: '+(e.message||e)); }
+}
+window.gpEliminarRubro=gpEliminarRubro;
 
 /* -------- Imputación Tango -> sección -------- */
 // Devuelve {seccion, imputado_por, nuevoMapeo?} para un renglón de OC.
@@ -2832,7 +2881,7 @@ function gpAgregado(){
     const pend=Math.max(presAr-comp,0);
     const desv=comp-presAr;
     const avance=presAr>0?comp/presAr:(comp>0?1:0);
-    return {seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
+    return {id:s.id, origen:s.origen||'costeo', seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
   });
   const tot=filas.reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
   return {filas, tot, sinClasArs, sinClasN, tc, tol};
@@ -2840,16 +2889,18 @@ function gpAgregado(){
 
 function gpRenderTablero(){
   const p=GP.proyecto; const ag=gpAgregado();
-  const puede=puedeCrearOG();
+  const dir=esDireccion();            // estructura (crear/editar/costeo/rubros/eliminar) = solo dirección
+  const puede=puedeCrearOG();         // operativo (importar Tango) = compradores/admin
   document.getElementById('topActions').innerHTML=''
     +'<button class="btn ghost" onclick="gpVolver()">← Proyectos</button>'
-    +(puede?'<button class="btn ghost" onclick="gpActualizarCosteo()">Actualizar costeo</button>':'')
-    +(puede?'<button class="btn ghost" onclick="gpEditarProyecto()">Editar</button>':'')
+    +(dir?'<button class="btn ghost" onclick="gpActualizarCosteo()">Actualizar costeo</button>':'')
+    +(dir?'<button class="btn ghost" onclick="gpAgregarRubro()">Agregar rubro</button>':'')
+    +(dir?'<button class="btn ghost" onclick="gpEditarProyecto()">Editar</button>':'')
     +(puede?'<button class="btn" onclick="gpImportTango()">'+ICO.plus+'Importar Tango</button>':'');
 
   if(!(GP.presupuesto||[]).length){
     C().innerHTML='<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 style="margin:0">'+esc(p.nombre)+'</h3></div>'
-      +'<div style="padding:16px">Este proyecto todavía no tiene presupuesto. '+(puede?'Usá <b>Actualizar costeo</b> para cargar el Excel del costeo.':'Falta cargar el costeo.')+'</div></div>';
+      +'<div style="padding:16px">Este proyecto todavía no tiene presupuesto. '+(dir?'Usá <b>Actualizar costeo</b> para cargar el Excel del costeo.':'Falta que dirección cargue el costeo.')+'</div></div>';
     return;
   }
 
@@ -2866,7 +2917,8 @@ function gpRenderTablero(){
 
   // Tabla por sección
   const th='<th>Sección</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
-  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)+'</td>'
+  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)
+    +(f.origen==='manual'?' <span class="badge b-azul" style="font-size:9.5px">manual</span>'+(dir?' <a href="#" title="Eliminar rubro" onclick="event.stopPropagation();gpEliminarRubro('+f.id+');return false" style="color:#b0584f;text-decoration:none">✕</a>':''):'')+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.presAr,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.comp,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.pend,0)+'</td>'
