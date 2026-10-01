@@ -9254,7 +9254,7 @@ function openEvalProvForm(id){
     +'<div class="field"><label>Fecha</label><input id="ep_fecha" type="date" value="'+esc(cur.fecha||solpHoy())+'"></div></div>'
     +'<div class="field"><label>Proveedor</label><input id="ep_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"></div>'
     +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><select id="ep_obra"><option value="">— sin obra —</option>'+obraOpts+'</select></div>'
-    +'<div class="field"><label>Rubro</label><select id="ep_rubro"><option value="">— sin rubro —</option>'+(EVALPROV.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('')+'</select></div></div>'
+    +'<div class="field"><label>Rubro *</label><select id="ep_rubro" required><option value="">— elegí un rubro —</option>'+(EVALPROV.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('')+'</select></div></div>'
     +'<div style="font-size:11.5px;color:var(--muted);margin:10px 0 2px">Escala: '+EVALPROV_ESCALA.join(' · ')+'</div>'
     +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
     +'<div class="field"><label>Comentarios</label><textarea id="ep_coment" rows="2">'+esc(cur.comentarios||'')+'</textarea></div>'
@@ -9272,6 +9272,7 @@ async function guardarEvalProv(id){
   if(!fecha){ toast('Ingresá la fecha.'); return; }
   const obra_cod=document.getElementById('ep_obra').value||null;
   const rubro=document.getElementById('ep_rubro').value.trim()||null;
+  if(!rubro){ toast('Elegí un rubro.'); return; }
   const comentarios=document.getElementById('ep_coment').value.trim()||null;
   const row={ proveedor_cod:provSel.codigo, area, fecha, obra_cod, rubro, comentarios };
   EVALPROV_PREGUNTAS[area].forEach(q=>{ const el=document.getElementById('ep_'+q.key); row[q.key]=(el&&el.value!=='')?+el.value:null; });
