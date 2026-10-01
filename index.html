@@ -9673,6 +9673,28 @@ const EVALPROV_EVALUADOR_CORTO={
   'Mendoza Nicolas':'Mendoza, N.', 'Micaela Gregori':'Gregori, M.', 'Palacios Gonzalo':'Palacios, G.',
   'Rodrigo Perez':'Perez, R.', 'Rubio, Fabiana':'Rubio, F.', 'Sabrina Machado':'Machado, S.',
   'Sebastian Kruk':'Kruk, S.', 'Tavella, María Eliana':'Tavella, M.', 'Vacaflor, Evelyn':'Vacaflor, E.',
+  // Alias agregados tras revisar el filtro de "Detalle completo": mismas personas de arriba,
+  // encontradas con el nombre y apellido al revés, con una tilde/letra distinta, o abreviadas —
+  // ninguna es una persona nueva, solo otra forma de escribir a alguien ya confirmado.
+  'Almendra':'Hermida, A.', 'Almendra Hermidia':'Hermida, A.', 'Alvarez Rossi Emiliana':'Alvarez Rossi, E.',
+  'Ana Julia Bustillo':'Bustillo, A.', 'Antonella Fucci':'Fucci, A.', 'Belen Gonzalez':'González, B.',
+  'Gonzlez Belen':'González, B.', 'Bermudez Hector':'Bermudez, H.', 'Bermúdez Héctor':'Bermudez, H.',
+  'Burgos Facundo':'Burgos, F.', 'Camila T':'Toffoli, C.', 'Camila T.':'Toffoli, C.',
+  'Evelyn':'Vacaflor, E.', 'Eze Bosco':'Bosco, E.', 'Fabiana Rubio':'Rubio, F.',
+  'Giantomasi':'Giantomasi, A.', 'González':'González, B.', 'Gonzalo Palacios':'Palacios, G.',
+  'Gregori Micaela':'Gregori, M.', 'Imeriali Bruno':'Imperiali, B.', 'Imperiali Bruno':'Imperiali, B.',
+  'Liendro Andrea':'Liendro, A.', 'Machado Sabrina':'Machado, S.', 'Nicolas Mendoza':'Mendoza, N.',
+  'Paula':'Fariñas, P.', 'Pedretti Gustavo':'Pedretti, G.', 'Rubio Fabiana':'Rubio, F.',
+  'Suarez Ana':'Suarez, A.', 'Vorrasi Maria Jazmun':'Vorrasi, J.',
+  // Evaluaciones hechas entre dos o tres personas — mismo criterio que pidió Micaela (Apellido,
+  // Inicial separados por " / "). Cubre las variantes de puntuación/orden con las que aparece
+  // escrita la misma combinación en el histórico.
+  'Alejo Zucchelli / Fabiana Rubio':'Zucchelli, A. / Rubio, F.', 'Alejo Zucchelli  / Fabiana Rubio':'Zucchelli, A. / Rubio, F.',
+  'Almendra , Ayelén':'Hermida, A. / Bustamante, A.', 'Almendra, Ayelén':'Hermida, A. / Bustamante, A.',
+  'Ileana Callero - Almendra Hermida':'Callero, I. / Hermida, A.', 'Ileana, Almendra, Ayelén':'Callero, I. / Hermida, A. / Bustamante, A.',
+  'Paula y Micaela':'Fariñas, P. / Leska, M.', 'Paula, Almendra y Micaela':'Fariñas, P. / Hermida, A. / Leska, M.',
+  'Sabrina , Nancy y Almendra':'Machado, S. / Soto, N. / Hermida, A.', 'Sabrina, Nancy y Almendra':'Machado, S. / Soto, N. / Hermida, A.',
+  'Sabrina, Nancy, Almendra':'Machado, S. / Soto, N. / Hermida, A.', 'Sabrina y Almendra':'Machado, S. / Hermida, A.',
 };
 // Búsqueda tolerante a mayúsculas/acentos: el histórico tiene el mismo nombre en varias
 // mayúsculas/minúsculas distintas ("Croce Mariano" / "CROCE MARIANO") y una comparación
@@ -9939,7 +9961,7 @@ function evalProvDetalleCrudoHtml(){
   return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:11.5px;color:var(--muted)">'+rows.length+' de '+base.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.'
     +'<button class="btn ghost sm" onclick="epDetExportExcel()">Exportar a Excel</button>'+limpiar+'</div>'
     +'<div class="dic-scroll"><table class="grid solp-full" style="font-size:11.5px"><thead><tr>'
-    +epDetTh('Fecha','fecha')+epDetTh('Evaluador','evaluador')+epDetTh('Área','area_lbl')+epDetTh('Obra','obra')+epDetTh('Cód.','proveedor_cod')+epDetTh('Proveedor','prov_nom')+epDetTh('Rubro','rubro')
+    +epDetTh('Fecha','fecha')+epDetTh('Evaluador','evaluador_corto')+epDetTh('Área','area_lbl')+epDetTh('Obra','obra')+epDetTh('Cód.','proveedor_cod')+epDetTh('Proveedor','prov_nom')+epDetTh('Rubro','rubro')
     +qHead
     +epDetTh('Comentarios','comentarios',{nofilter:true})
     +(puedeEditar?'<th></th>':'')
