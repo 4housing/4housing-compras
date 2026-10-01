@@ -2458,6 +2458,13 @@ function gpEsNA(v){ const k=gpNorm(v); return !k || k==='#NA' || k==='#N/A' || k
 // Limpia un campo de clasificación: devuelve '' si es un marcador "sin dato"
 function gpLimpiaClasif(v){ const s=_syncNorm(v); return gpEsNA(s)?'':s; }
 // Prefijo de familia del código de artículo Tango: GCHIE12009 -> GCHIE
+// N° de OC de Tango (" 0000100031125" = punto de venta 00001/00002 + 8 dígitos, o "00001-00031125"):
+// se muestra sin punto de venta ni ceros adelante -> "31125". Lo que no tenga ese formato queda tal cual.
+// Se usa en Gestión de Proyectos y en Solicitudes de pago (Informe OC).
+function nroOCTango(v){
+  const t=String(v==null?'':v).trim(); const m=t.match(/^(\d{5})-?(\d{8})$/);
+  return m ? (m[2].replace(/^0+/,'')||'0') : t;
+}
 function gpPrefijoArt(cod){ const m=String(cod||'').toUpperCase().match(/^([A-Z]{2,6})/); return m?m[1]:''; }
 function gpMoney(v){ return '$ '+fmtNum(v,0); }
 function gpUsd(v){ return 'US$ '+fmtNum(v,0); }
@@ -2761,7 +2768,7 @@ async function gpTangoAnalizar(){
     for(let r=1;r<rows.length;r++){
       const row=rows[r]; const oc=_syncNorm(row[I.oc]); if(!oc) continue;
       const o={
-        oc_numero:oc,
+        oc_numero:nroOCTango(oc),
         fecha: I.fecha>=0?(_syncFechaISO(row[I.fecha])||null):null,
         proveedor_cod: I.prov>=0?_syncNorm(row[I.prov]):'',
         cod_articulo: I.art>=0?_syncNorm(row[I.art]):'',
@@ -2940,7 +2947,7 @@ function gpRenderTablero(){
   // Detalle de OC (filtrable por sección)
   const filtro=GP.filtroSeccion;
   const detalle=(GP.oc||[]).filter(o=>!filtro || o.seccion===filtro);
-  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(o.oc_numero)+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
+  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
 
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
@@ -3304,7 +3311,8 @@ const COSTEO_VIEJO_A_NEW={"GC ESTRUCT MODULAR":"Estructura Modular", "GC PANELES
   "GC ELECTRODOMESTICOS":"Cocina", "GC EQUIPAMIENTO":"Equipamiento", "GC AMOBLAMIENTO":"Mobiliario",
   "GC OBRA CIVIL":"Obra Civil", "GC CORRALON":"Obra Civil", "GC LOGISTICA":"Logistica & Montaje", "GC MONTAJE":"Logistica & Montaje",
   "GC INST TERMOMECANICA":"Climatizacion",
-  "GC HONORARIOS":"Otros", "GC SERVICIOS":"Otros", "GC ASERRADERO":"Otros", "GC POSVENTA":"Otros"};
+  "GC HONORARIOS":"Otros", "GC SERVICIOS":"Otros", "GC ASERRADERO":"Otros", "GC POSVENTA":"Otros",
+  "CONSUMIBLES":"Prorrateables"};   // valor que aparece en OG viejas aunque no está en COSTEO_OPC
 // Devuelve el COSTEO_NEW equivalente a un COSTEO viejo ('' si no hay). Compara sin acentos/mayúsculas/espacios dobles.
 function costeoNewDe(viejo){
   const k=String(viejo==null?'':viejo).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
@@ -3974,11 +3982,10 @@ const REPORT_COLS=['Talonario oc','Fecha de emisión','Cód. clasificación (Ren
   'Nro. Orden de Compra','Cód. proveedor','Cód. Artículo','Descripción','Descripción artículo (Renglón)',
   'Desc. adicional artículo (Renglón)','Cantidad pedida','Cantidad Pendiente de recibir','Cantidad Pendiente de Facturar',
   'Cantidad Recibida','Cantidad Facturada','Total','Estado (renglón)','Observaciones','Moneda','Cotización',
-  'Nombre del comprador','Condición de compra','SOLP_N° (Adic.)','CERTIFICADOR (Adic.)','COSTEO (Adic.)','ESTRUCTURA (Adic.)',
+  'Nombre del comprador','Condición de compra','SOLP_N° (Adic.)','CERTIFICADOR (Adic.)','COSTEO (Adic.)','COSTEO_NEW (Adic.)','ESTRUCTURA (Adic.)',
   'COMPRA_URGENTE (Adic.)','POSTVENTA (Adic.)','DESVIO_ (Adic.)','Desvio (Adic.)','RUBRO (Adic.)','SUBRUBRO (Adic.)','ALCANCE (Adic.)',
-  'MODULO 1 (Adic.)','MODULO 2 (Adic.)','MODULO 3 (Adic.)','MODULO 4 (Adic.)','MODULO 5 (Adic.)',
-  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)',
-  'COSTEO_NEW (Adic.)'];
+  'MODULO_1 (Adic.)','MODULO_2 (Adic.)','MODULO_3 (Adic.)','MODULO_4 (Adic.)','MODULO_5 (Adic.)',
+  'Equiv. en pesos (compra)','Pesos pagados','Cantidad Cerrada','Monto Cerrado','Motivo de Cierre (Adic.)'];
 
 function renglonPagadoPct(o, idx){
   // El pago es a nivel OG (por %), aplica igual a todos los renglones. Fuente real: Tesorería.
@@ -4032,30 +4039,31 @@ function ogReportRows(ogs){
       r[16]= (avancePct?avancePct.toFixed(1).replace('.0','')+'%':'0%'); // Estado (renglón)
       r[17]= o.observaciones||'';                      // Observaciones
       r[18]= o.moneda||'';                             // Moneda
-      r[19]= usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'';  // Cotización (dólar blue, promedio)
+      r[19]= tcCompra!=null?tcCompra:'';               // Cotización: el TC registrado al cargar la OG (promedio); OG viejas sin TC: el del día anterior a su fecha
       r[20]= o.comprador||'';                          // Nombre del comprador
       r[21]= o.condicion||o.tipo_contratacion||'';     // Condición de compra
       r[22]= o.solp!=null?o.solp:'';                   // SOLP N°
       r[23]= o.certificador||'';                       // CERTIFICADOR
       r[24]= o.costeo||'';                             // COSTEO (viejo, histórico)
-      r[25]= o.estructura||'';                         // ESTRUCTURA
-      r[26]= o.compra_urgente||'';                     // COMPRA_URGENTE
-      r[27]= o.postventa||'';                          // POSTVENTA
-      r[28]= o.desvio||'';                             // DESVIO_
-      r[29]= o.desvio_txt||'';                         // Desvio (texto)
-      r[30]= '';                                       // RUBRO (no se usa)
-      r[31]= '';                                       // SUBRUBRO (no se usa)
-      r[32]= o.alcance||'';                            // ALCANCE
+      r[25]= o.costeo_new||'';                         // COSTEO_NEW (sección del costeo)
+      r[26]= o.estructura||'';                         // ESTRUCTURA
+      r[27]= o.compra_urgente||'';                     // COMPRA_URGENTE
+      r[28]= o.postventa||'';                          // POSTVENTA
+      r[29]= o.desvio||'';                             // DESVIO_
+      r[30]= o.desvio_txt||'';                         // Desvio (texto)
+      r[31]= '';                                       // RUBRO (no se usa)
+      r[32]= '';                                       // SUBRUBRO (no se usa)
+      r[33]= o.alcance||'';                            // ALCANCE
       const mods = esOG ? [] : (it.modulos||[]);
-      r[33]= mods[0]||''; r[34]= mods[1]||''; r[35]= mods[2]||''; r[36]= mods[3]||''; r[37]= mods[4]||'';  // MODULO 1-5
+      r[34]= mods[0]||''; r[35]= mods[1]||''; r[36]= mods[2]||''; r[37]= mods[3]||''; r[38]= mods[4]||'';  // MODULO_1-5
+      // ---- columnas propias de la app (Tango no las tiene; van al final) ----
       // Equivalente en pesos de compra: USD → total×TC ; pesos → total tal cual
-      r[38]= esUSD ? (tcCompra!=null?round2(total*tcCompra):'') : round2(total);
+      r[39]= esUSD ? (tcCompra!=null?round2(total*tcCompra):'') : round2(total);
       // Pesos pagados (foto del momento): reparto proporcional del total pagado en pesos según el peso de la fila
-      r[39]= round2( ogTot ? ppOG*(total/ogTot) : (esOG?ppOG:0) );
-      r[40]= cantCerrada;                               // Cantidad Cerrada (no es costo: cancelada, no se certifica ni paga)
-      r[41]= round2(montoCerrado);                      // Monto Cerrado
-      r[42]= motivosCerrado;                             // Motivo de Cierre
-      r[43]= o.costeo_new||'';                           // COSTEO_NEW (sección del costeo)
+      r[40]= round2( ogTot ? ppOG*(total/ogTot) : (esOG?ppOG:0) );
+      r[41]= cantCerrada;                               // Cantidad Cerrada (no es costo: cancelada, no se certifica ni paga)
+      r[42]= round2(montoCerrado);                      // Monto Cerrado
+      r[43]= motivosCerrado;                             // Motivo de Cierre
       rows.push(r);
     });
   });
@@ -4254,7 +4262,7 @@ async function ocInformeAnalizar(){
       out.push({
         fecha_emision: idx.fecha>=0?(_syncFechaISO(row[idx.fecha])||null):null,
         clasif_cod: idx.clasif>=0?_syncNorm(row[idx.clasif]):'',
-        oc_numero: oc,
+        oc_numero: nroOCTango(oc),
         renglon: idx.renglon>=0?(+row[idx.renglon]||null):null,
         remito_numero: idx.remito>=0?_syncNorm(row[idx.remito]):'',
         proveedor_cod: idx.prov>=0?_syncNorm(row[idx.prov]):'',
@@ -4303,7 +4311,7 @@ function ocInformeSugerirOCs(proveedorCod){
   const rows=(DIC.oc_informe||[]).filter(r=>String(r.proveedor_cod||'').toUpperCase()===cod && !r.comprobante_numero && !r.remito_numero
     && !String(r.estado_oc||'').toUpperCase().includes('ANULADA'));
   const porOC={};
-  rows.forEach(r=>{ const g=(porOC[r.oc_numero]=porOC[r.oc_numero]||{oc_numero:r.oc_numero, clasif_cod:r.clasif_cod, comprador:r.comprador, fecha_emision:r.fecha_emision, estado_oc:r.estado_oc, importe:0}); g.importe+=(+r.importe_neto||0); });
+  rows.forEach(r=>{ const nro=nroOCTango(r.oc_numero); const g=(porOC[nro]=porOC[nro]||{oc_numero:nro, clasif_cod:r.clasif_cod, comprador:r.comprador, fecha_emision:r.fecha_emision, estado_oc:r.estado_oc, importe:0}); g.importe+=(+r.importe_neto||0); });
   return Object.values(porOC).sort((a,b)=>String(b.fecha_emision||'').localeCompare(String(a.fecha_emision||'')));
 }
 
@@ -4333,7 +4341,7 @@ function solicitudesPagoView(){
     return '<tr>'
       +'<td><strong>'+esc(s.nro_factura||'—')+'</strong>'+(s.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoSolicitud('+s.id+')">'+ICO.pdf+'</button>':'')+'</td>'
       +'<td style="font-size:11px">'+esc(s.proveedor_cod||'')+' '+esc(s.proveedor||'')+'</td>'
-      +'<td>'+esc(s.oc_numero||'—')+'</td>'
+      +'<td>'+esc(nroOCTango(s.oc_numero)||'—')+'</td>'
       +'<td>'+esc(s.proyecto_cod||'—')+'</td>'
       +'<td style="font-size:11px">'+esc(s.comprador||'')+'</td>'
       +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
@@ -4381,7 +4389,7 @@ function solPagoFacturaBlur(){
   const msg=document.getElementById('spMsg');
   if(matches.length){
     const m=matches[0];
-    const ocEl=document.getElementById('sp_oc'); if(ocEl && !ocEl.value) ocEl.value=m.oc_numero||'';
+    const ocEl=document.getElementById('sp_oc'); if(ocEl && !ocEl.value) ocEl.value=nroOCTango(m.oc_numero);
     const remEl=document.getElementById('sp_remito'); if(remEl && !remEl.value) remEl.value=m.remito_numero||'';
     const proyEl=document.getElementById('sp_proyecto'); if(proyEl && !proyEl.value) proyEl.value=m.clasif_cod||'';
     const compEl=document.getElementById('sp_comprador'); if(compEl && !compEl.value && nombresComp().includes(m.comprador)) compEl.value=m.comprador;
@@ -4401,7 +4409,7 @@ function openSolicitudPagoForm(id){
   const body='<div class="field"><label>Proveedor</label><input id="sp_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProvSol()" oninput="comboProvSol()" onblur="comboHideDelayed()"></div>'
     +'<div class="frow c2"><div class="field"><label>N° de factura</label><input id="sp_factura" type="text" value="'+esc(cur.nro_factura||'')+'" placeholder="Ej. A0000700005352" onblur="solPagoFacturaBlur()"></div>'
     +'<div class="field"><label>Comprador</label><select id="sp_comprador"><option value="">— elegí —</option>'+compOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>N° de OC (Tango)</label><input id="sp_oc" type="text" value="'+esc(cur.oc_numero||'')+'"></div>'
+    +'<div class="frow c2"><div class="field"><label>N° de OC (Tango)</label><input id="sp_oc" type="text" value="'+esc(nroOCTango(cur.oc_numero))+'"></div>'
     +'<div class="field"><label>N° de Remito</label><input id="sp_remito" type="text" value="'+esc(cur.remito_numero||'')+'"></div></div>'
     +'<div class="field"><label>Proyecto / Auxiliar</label><select id="sp_proyecto"><option value="">— elegí —</option>'+proyOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Monto</label><input id="sp_monto" type="number" step="0.01" value="'+(cur.monto!=null?cur.monto:'')+'"></div>'
@@ -4423,7 +4431,7 @@ async function guardarSolicitudPago(id){
   const nro_factura=(document.getElementById('sp_factura').value||'').trim();
   if(!nro_factura){ toast('Ingresá el N° de factura.'); return; }
   const comprador=document.getElementById('sp_comprador').value||'';
-  const oc_numero=(document.getElementById('sp_oc').value||'').trim();
+  const oc_numero=nroOCTango(document.getElementById('sp_oc').value);
   const remito_numero=(document.getElementById('sp_remito').value||'').trim();
   const proyecto_cod=document.getElementById('sp_proyecto').value||'';
   const monto=+document.getElementById('sp_monto').value||0;
@@ -4467,7 +4475,7 @@ function openSolicitudPagoDetalle(id){
   const body='<div style="font-size:12.5px;line-height:1.7">'
     +'<strong>Proveedor:</strong> '+esc(s.proveedor_cod||'')+' — '+esc(s.proveedor||'')+'<br>'
     +'<strong>Factura:</strong> '+esc(s.nro_factura||'—')+(s.adjunto_path?' · <a href="#" onclick="verAdjuntoSolicitud('+s.id+');return false">ver adjunto</a>':'')+'<br>'
-    +'<strong>OC:</strong> '+esc(s.oc_numero||'—')+' &nbsp; <strong>Remito:</strong> '+esc(s.remito_numero||'—')+'<br>'
+    +'<strong>OC:</strong> '+esc(nroOCTango(s.oc_numero)||'—')+' &nbsp; <strong>Remito:</strong> '+esc(s.remito_numero||'—')+'<br>'
     +'<strong>Proyecto:</strong> '+esc(s.proyecto_cod||'—')+' &nbsp; <strong>Comprador:</strong> '+esc(s.comprador||'—')+'<br>'
     +'<strong>Monto:</strong> '+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'<br>'
     +'<strong>Estado:</strong> '+esc(s.estado||'Pendiente')
