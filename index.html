@@ -510,6 +510,7 @@ const ICO={
   pdf:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v6h6"/></svg>',
   ban:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg>',
   copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 13l4 4L19 7"/></svg>',
 };
 
 /* ===== color de badges por texto de estado (genérico y editable) ===== */
@@ -4315,7 +4316,11 @@ function opsView(){
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
-      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')+' <input type="text" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onblur="guardarAsientoOP('+p.id+',this.value)" onkeydown="if(event.key===\'Enter\') this.blur()" style="width:78px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px;margin-top:2px;display:block'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'"></td>'
+      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')
+        +'<div style="display:flex;gap:4px;align-items:center;margin-top:2px">'
+        +'<input type="text" id="asientoInp'+p.id+'" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares. Escribí y apretá Enter (o el ✓) para guardar — no se guarda solo con hacer click afuera.':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onkeydown="if(event.key===\'Enter\'){ guardarAsientoOP('+p.id+',this.value); this.blur(); }" style="width:62px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'">'
+        +(canAsiento()?'<button class="iconbtn" title="Guardar N° de asiento" onclick="guardarAsientoOP('+p.id+',document.getElementById(\'asientoInp'+p.id+'\').value)" style="flex:none">'+ICO.check+'</button>':'')
+        +'</div></td>'
       +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
   }).join('') || '<tr><td colspan="16" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="12" style="text-align:right">Total mostrado</td>'
