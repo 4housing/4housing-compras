@@ -5816,7 +5816,7 @@ function renderCertPanel(){
   const box=document.getElementById('cpList'); if(!box) return;
   const who=document.getElementById('cp_cert').value;
   if(!who){ box.innerHTML='<div style="font-size:12.5px;color:var(--muted);padding:6px 0">Elegí tu nombre para ver tus OG pendientes.</div>'; return; }
-  const list=(mem.ogs||[]).filter(o=>o.certificador===who && ogAcumPct(o.id)<99.999);
+  const list=(mem.ogs||[]).filter(o=>!o.anulada && o.certificador===who && ogAcumPct(o.id)<99.999);
   if(!list.length){ box.innerHTML='<div class="empty" style="padding:22px">No tenés OG pendientes de certificar. 🎉</div>'; return; }
   box.innerHTML='<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:2px 0 6px">'+list.length+' OG pendiente'+(list.length>1?'s':'')+' de certificar</div>'
     +list.map(o=>{ const rem=100-ogAcumPct(o.id);
