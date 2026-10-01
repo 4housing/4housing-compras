@@ -9122,7 +9122,7 @@ const EVALPROV_EVALUADOR_CORTO={
   // Confirmado con Micaela: no se puede identificar quién evaluó estas filas (texto suelto, un
   // código de obra, o un rubro cargado por error en el campo Evaluador) — se muestran así en vez
   // de mostrar el texto crudo, que no era un nombre.
-  '4164':'Sin identificar', 'CASA ELENA - PL0053':'Sin identificar',
+  '4164':'Sin identificar', 'CASA ELENA - PL0053':'Sin identificar', '0':'Sin identificar',
   'Instalación de aberturas':'Sin identificar', 'rtt':'Sin identificar',
 };
 // Búsqueda tolerante a mayúsculas/acentos: el histórico tiene el mismo nombre en varias
@@ -9152,7 +9152,9 @@ let EPDET_SORT=null;
 function epDetColUnique(col){
   const s=new Set(); let hasEmpty=false;
   (EVALPROV._detBase||[]).forEach(r=>{ const v=r[col]; if(v!=null && v!=='') s.add(String(v)); else hasEmpty=true; });
-  const vals=[...s].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+  // "Sin identificar" va primero en vez de ordenarse alfabéticamente — así queda arriba de todo,
+  // fácil de tildar/destildar, en vez de perdido en el medio de la lista de nombres.
+  const vals=[...s].sort((a,b)=> (a==='Sin identificar')!==(b==='Sin identificar') ? (a==='Sin identificar'?-1:1) : a.localeCompare(b,'es',{numeric:true}));
   return hasEmpty ? ['',...vals] : vals;
 }
 function epDetColFilterActive(col){ return !!(EPDET_COL_FILTRO[col] && EPDET_COL_FILTRO[col].length); }
