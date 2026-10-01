@@ -668,6 +668,10 @@ colResizeObserver.observe(document.body, {childList:true, subtree:true});
    'table' = tabla PostgREST cuando se conecte Supabase.
    ================================================================ */
 const SCHEMAS = {
+  proyectos: {
+    title:'Gestión de Proyectos', sub:'Base presupuestaria del costeo + seguimiento de OC de Tango contra presupuesto, por rubro', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 15l3.5-4 3 3L20 7"/><path d="M20 11V7h-4"/></svg>',
+  },
   compras: {
     title:'Compras', sub:'Órdenes de gasto (OG): certificación de avances y liberación de pagos', table:'ogs',
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/></svg>',
@@ -831,7 +835,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
   },
 };
-const ORDER=['compras','seguimiento','solp','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
+const ORDER=['proyectos','compras','seguimiento','solp','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
 // 'logistica' sale del menú (ahora la cubre la app propia de Logística del portal). Se deja el
 // SCHEMAS y los datos como estaban — no se borra nada, solo deja de estar en ORDER.
 
@@ -1004,8 +1008,8 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML=(canEditOG()?'<button class="btn" onclick="openSolpForm()">'+ICO.plus+'Nueva SOLP</button>':'');
   }else if(view==='evalprov'){
     document.getElementById('topActions').innerHTML=(canEvalProv()?'<button class="btn" onclick="openEvalProvForm()">'+ICO.plus+'Nueva evaluación</button>':'');
-  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'){
-    document.getElementById('topActions').innerHTML='';
+  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'||view==='proyectos'){
+    document.getElementById('topActions').innerHTML='';   // 'proyectos' arma sus acciones dentro de renderProyectos (dependen del proyecto elegido)
   }else{
     document.getElementById('topActions').innerHTML=
       '<button class="btn" onclick="openForm(\''+view+'\')">'+ICO.plus+'Nuevo</button>';
@@ -1042,6 +1046,7 @@ window.go=go;
 async function render(view){
   const s=SCHEMAS[view];
   if(s.custom && view==='mantenimiento'){ return renderMantShell(); }
+  if(view==='proyectos'){ return renderProyectos(); }
   if(view==='compras'){ return renderCompras(); }
   if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='solp'){ return renderSolp(); }
@@ -2418,6 +2423,497 @@ function renderPanol(){
     +'</div>';
 }
 window.renderPanol=renderPanol;
+
+/* ================================================================
+   GESTIÓN DE PROYECTOS
+   Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
+   Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
+   ================================================================ */
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], charts:{}, filtroSeccion:'' };
+
+// Normaliza para comparar (sin acentos, mayúsculas, espacios colapsados)
+function gpNorm(s){ return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim(); }
+// Saca el prefijo tipo "A1- " / "B4- " de un subrubro/rubro
+function gpSinPrefijo(s){ return String(s==null?'':s).replace(/^\s*[A-Z]?\d*\s*-\s*/i,'').trim(); }
+// Prefijo de familia del código de artículo Tango: GCHIE12009 -> GCHIE
+function gpPrefijoArt(cod){ const m=String(cod||'').toUpperCase().match(/^([A-Z]{2,6})/); return m?m[1]:''; }
+function gpMoney(v){ return '$ '+fmtNum(v,0); }
+function gpUsd(v){ return 'US$ '+fmtNum(v,0); }
+function gpPct(v){ return (v==null||isNaN(v))?'—':((v*100).toFixed(1)+'%'); }
+function gpEmail(){ return (typeof AUTH_USER!=='undefined' && AUTH_USER && AUTH_USER.email) || ''; }
+
+async function gpLoadLista(){
+  GP.proyectos = (await sbFetch('/compras_gp_proyectos?select=*&order=creado_en.desc')) || [];
+}
+async function gpLoadProyecto(id){
+  GP.proyecto=(GP.proyectos||[]).find(p=>String(p.id)===String(id))||null;
+  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; return; }
+  const [pres, oc, map, imp] = await Promise.all([
+    sbFetch('/compras_gp_presupuesto?select=*&proyecto_id=eq.'+id+'&order=orden.asc'),
+    sbFetchAll('/compras_gp_oc?select=*&proyecto_id=eq.'+id),
+    sbFetch('/compras_gp_mapeo?select=*&proyecto_id=eq.'+id),
+    sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc')
+  ]);
+  GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[];
+}
+
+async function renderProyectos(){
+  if(DEMO_MODE){ document.getElementById('topActions').innerHTML=''; C().innerHTML='<div class="empty">Gestión de Proyectos requiere estar conectado a Supabase (no disponible en modo demo).</div>'; return; }
+  C().innerHTML='<div class="empty">Cargando…</div>';
+  try{ await gpLoadLista(); }
+  catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
+  if(GP.actualId && !(GP.proyectos||[]).some(p=>String(p.id)===String(GP.actualId))) GP.actualId=null;
+  if(!GP.actualId){ return gpRenderLista(); }
+  C().innerHTML='<div class="empty">Cargando proyecto…</div>';
+  try{ await gpLoadProyecto(GP.actualId); }
+  catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar el proyecto: '+esc(e.message)+'</div>'; return; }
+  gpRenderTablero();
+}
+window.renderProyectos=renderProyectos;
+
+/* -------- Lista de proyectos -------- */
+function gpRenderLista(){
+  document.getElementById('topActions').innerHTML = (puedeCrearOG()? '<button class="btn" onclick="gpNuevoProyecto()">'+ICO.plus+'Nuevo proyecto</button>':'');
+  const ps=GP.proyectos||[];
+  const cards = ps.map(p=>{
+    const est=(p.estado||'en_curso');
+    const cls=est==='cerrado'?'b-gris':(est==='pausado'?'b-ambar':'b-verde');
+    return '<button class="card" onclick="gpAbrir('+p.id+')" style="text-align:left;cursor:pointer;border:1px solid var(--line-strong);padding:0">'
+      +'<div class="card-h"><h3 style="margin:0">'+esc(p.nombre)+'</h3><span class="badge '+cls+'">'+esc(est)+'</span></div>'
+      +'<div style="padding:8px 16px 14px;font-size:12.5px;color:var(--muted)">'
+        +(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?esc(fmtNum(p.tc_presupuesto,0)):'—')
+      +'</div></button>';
+  }).join('');
+  C().innerHTML = '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Elegí un proyecto para ver su tablero, o creá uno nuevo cargando el costeo como base presupuestaria.</div>'
+    + (ps.length
+        ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">'+cards+'</div>'
+        : '<div class="empty">Todavía no hay proyectos. Usá “Nuevo proyecto” para crear el primero cargando su costeo.</div>');
+}
+function gpAbrir(id){ GP.actualId=id; GP.filtroSeccion=''; renderProyectos(); }
+window.gpAbrir=gpAbrir;
+function gpVolver(){ GP.actualId=null; renderProyectos(); }
+window.gpVolver=gpVolver;
+
+/* -------- Alta / edición de proyecto -------- */
+function gpNuevoProyecto(){ gpProyectoForm(null); }
+window.gpNuevoProyecto=gpNuevoProyecto;
+function gpEditarProyecto(){ gpProyectoForm(GP.proyecto); }
+window.gpEditarProyecto=gpEditarProyecto;
+function gpProyectoForm(p){
+  const obras=(typeof DIC!=='undefined'&&DIC.proyectos)?DIC.proyectos:[];
+  const opts='<option value="">(sin vincular)</option>'+obras.map(o=>'<option value="'+esc(o.codigo)+'"'+(p&&p.codigo===o.codigo?' selected':'')+'>'+esc(o.codigo+' · '+o.nombre)+'</option>').join('');
+  const estSel=e=>['en_curso','pausado','cerrado'].map(v=>'<option value="'+v+'"'+((p&&p.estado===v)||(!p&&v==='en_curso')?' selected':'')+'>'+({en_curso:'En curso',pausado:'Pausado',cerrado:'Cerrado'}[v])+'</option>').join('');
+  const nuevo=!p;
+  const body=''
+    +(nuevo?'<div class="field"><label>Costeo del proyecto (.xlsx)</label><input id="gp_costeo" type="file" accept=".xlsx,.xls"><div style="font-size:11.5px;color:var(--muted);margin-top:4px">Si lo subís, leo la pestaña “Tablero Compras” y completo el presupuesto por sección, el TC y la meta de ahorro automáticamente. Podés cargarlo después.</div></div>':'')
+    +'<div class="field"><label>Nombre del proyecto *</label><input id="gp_nombre" type="text" value="'+esc(p?p.nombre:'')+'" placeholder="ej. PL0096 ANDY — Oficina Albardón"></div>'
+    +'<div class="frow c2"><div class="field"><label>Obra (maestro Tango)</label><select id="gp_codigo">'+opts+'</select></div>'
+      +'<div class="field"><label>Estado</label><select id="gp_estado">'+estSel()+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>TC presupuesto</label><input id="gp_tc" type="number" step="0.01" value="'+esc(p&&p.tc_presupuesto!=null?p.tc_presupuesto:'')+'" placeholder="ej. 1515"></div>'
+      +'<div class="field"><label>Meta de ahorro (%)</label><input id="gp_meta" type="number" step="0.1" value="'+esc(p&&p.meta_ahorro_pct!=null?(p.meta_ahorro_pct*100):'')+'" placeholder="ej. 5"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Tolerancia de desvío (%)</label><input id="gp_tol" type="number" step="0.1" value="'+esc(p&&p.tolerancia_desvio_pct!=null?(p.tolerancia_desvio_pct*100):'2')+'"></div>'
+      +'<div class="field"><label>&nbsp;</label><div style="font-size:11.5px;color:var(--muted);padding-top:10px">± para considerar “en presupuesto”.</div></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Inicio de compras</label><input id="gp_fini" type="date" value="'+esc(p&&p.fecha_inicio_compras?String(p.fecha_inicio_compras).slice(0,10):'')+'"></div>'
+      +'<div class="field"><label>Fin objetivo de compras</label><input id="gp_ffin" type="date" value="'+esc(p&&p.fecha_fin_compras?String(p.fecha_fin_compras).slice(0,10):'')+'"></div></div>'
+    +'<div class="field"><label>Notas</label><textarea id="gp_notas" rows="2">'+esc(p?p.notas||'':'')+'</textarea></div>'
+    +'<div id="gpFormMsg" style="font-size:12px;color:var(--muted);margin-top:4px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button>'
+    +(p?'<button class="btn ghost" style="color:#b0584f" onclick="gpEliminarProyecto('+p.id+')">Eliminar</button>':'')
+    +'<button class="btn" onclick="gpGuardarProyecto('+(p?p.id:'null')+')">Guardar</button>';
+  openModal(p?'Editar proyecto':'Nuevo proyecto', body, foot);
+}
+
+async function gpGuardarProyecto(id){
+  const g=x=>document.getElementById(x);
+  const msg=g('gpFormMsg'); const setErr=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  const nombre=(g('gp_nombre').value||'').trim();
+  if(!nombre){ setErr('El nombre es obligatorio.'); return; }
+  msg.style.color='var(--muted)'; msg.textContent='Guardando…';
+  let parsed=null;
+  const fEl=g('gp_costeo'); const file=fEl?(fEl.files||[])[0]:null;
+  if(file){ try{ parsed=await gpParseCosteo(file); }catch(e){ setErr('Costeo: '+(e.message||e)); return; } }
+  const tcManual=g('gp_tc').value!==''?(+g('gp_tc').value):null;
+  const metaManual=g('gp_meta').value!==''?(+g('gp_meta').value/100):null;
+  const tolManual=g('gp_tol').value!==''?(+g('gp_tol').value/100):null;
+  const obj={
+    nombre, codigo:g('gp_codigo').value||null, estado:g('gp_estado').value,
+    tc_presupuesto: tcManual!=null?tcManual:(parsed&&parsed.tc!=null?parsed.tc:null),
+    meta_ahorro_pct: metaManual!=null?metaManual:(parsed&&parsed.meta!=null?parsed.meta:null),
+    tolerancia_desvio_pct: tolManual!=null?tolManual:(parsed&&parsed.tol!=null?parsed.tol:0.02),
+    fecha_inicio_compras: g('gp_fini').value||null, fecha_fin_compras: g('gp_ffin').value||null,
+    notas:(g('gp_notas').value||'').trim()||null, actualizado_en:new Date().toISOString()
+  };
+  try{
+    let pid=id;
+    if(id){ await sbFetch('/compras_gp_proyectos?id=eq.'+id,{method:'PATCH', body:JSON.stringify(obj)}); }
+    else{ const r=await sbFetch('/compras_gp_proyectos',{method:'POST', body:JSON.stringify(obj)}); pid=r&&r[0]&&r[0].id; }
+    if(parsed && parsed.secciones && parsed.secciones.length && pid){
+      await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
+      const rows=parsed.secciones.map(s=>({proyecto_id:pid, seccion:s.seccion, orden:s.orden, presupuesto_ars:s.presupuesto_ars, presupuesto_usd:s.presupuesto_usd}));
+      for(let k=0;k<rows.length;k+=500){ await sbFetch('/compras_gp_presupuesto',{method:'POST', body:JSON.stringify(rows.slice(k,k+500)), prefer:'return=minimal'}); }
+    }
+    closeModal(); toast(id?'Proyecto actualizado':'Proyecto creado'+(parsed?' con '+parsed.secciones.length+' secciones':''));
+    GP.actualId=pid; renderProyectos();
+  }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
+}
+window.gpGuardarProyecto=gpGuardarProyecto;
+
+async function gpEliminarProyecto(id){
+  if(!confirm('¿Eliminar este proyecto y todo su presupuesto, OC importadas y mapeos? No se puede deshacer.')) return;
+  try{
+    await sbFetch('/compras_gp_proyectos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); // cascade borra el resto
+    closeModal(); toast('Proyecto eliminado'); GP.actualId=null; renderProyectos();
+  }catch(e){ alert('No se pudo eliminar: '+(e.message||e)); }
+}
+window.gpEliminarProyecto=gpEliminarProyecto;
+
+/* -------- Parseo del costeo (pestaña "Tablero Compras") -------- */
+function gpNumNear(row, c){ for(let k=1;k<=3;k++){ const v=row[c+k]; if(v!==''&&v!=null){ const n=_syncNum(v); if(!isNaN(n)) return n; } } return null; }
+async function gpParseCosteo(file){
+  const wb=await _syncReadWb(file);
+  let found=null;
+  for(const name of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:false,defval:''});
+    for(let i=0;i<Math.min(rows.length,80);i++){
+      const h=(rows[i]||[]).map(gpNorm);
+      const cSec=h.indexOf('SECCION');
+      const cArs=h.findIndex(x=>x==='PRESUPUESTO ($)');
+      const cUsd=h.findIndex(x=>x==='PRESUPUESTO (US$)');
+      if(cSec>=0 && cArs>=0){ found={rows, hdr:i, cSec, cArs, cUsd}; break; }
+    }
+    if(found) break;
+  }
+  if(!found) throw new Error('No encontré la tabla “AVANCE POR SECCIÓN” (columnas “Sección” y “Presupuesto ($)”). ¿Es el Excel del costeo con la pestaña “Tablero Compras”?');
+  const {rows,hdr,cSec,cArs,cUsd}=found;
+  const secciones=[];
+  for(let r=hdr+1;r<rows.length;r++){
+    const row=rows[r]||[]; const sec=_syncNorm(row[cSec]);
+    if(!sec){ if(secciones.length) break; else continue; }
+    if(gpNorm(sec).indexOf('TOTAL')>=0) break;   // fila TOTAL PROYECTO
+    secciones.push({ seccion:sec, orden:secciones.length, presupuesto_ars:_syncNum(row[cArs])||0, presupuesto_usd:cUsd>=0?(_syncNum(row[cUsd])||0):0 });
+  }
+  if(!secciones.length) throw new Error('Encontré la tabla pero sin filas de sección.');
+  // TC, meta de ahorro y tolerancia: buscar en cualquier celda de cualquier hoja
+  let tc=null, meta=null, tol=null;
+  for(const name of wb.SheetNames){
+    const rr=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:false,defval:''});
+    for(const row of rr){
+      for(let c=0;c<row.length;c++){
+        const cell=gpNorm(row[c]);
+        if(tc==null){ const m=cell.match(/\bTC\s*([0-9][0-9.]*)/); if(m){ const v=_syncNum(m[1]); if(v>0) tc=v; } }
+        if(meta==null && cell.indexOf('META DE AHORRO')>=0){ const v=gpNumNear(row,c); if(v!=null) meta=v; }
+        if(tol==null && cell.indexOf('TOLERANCIA DE DESVIO')>=0){ const v=gpNumNear(row,c); if(v!=null) tol=v; }
+      }
+    }
+  }
+  return {secciones, tc, meta, tol};
+}
+async function gpActualizarCosteo(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el Excel del costeo. Leo la pestaña “Tablero Compras” y reemplazo el presupuesto por sección de este proyecto (no toca las OC importadas).</div>'
+    +'<div class="field"><label>Costeo (.xlsx) *</label><input id="gp_costeo2" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="gpCosteoMsg" style="font-size:12px;color:var(--muted);margin-top:6px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpCosteoAnalizar()">Actualizar presupuesto</button>';
+  openModal('Actualizar costeo / presupuesto', body, foot);
+}
+window.gpActualizarCosteo=gpActualizarCosteo;
+async function gpCosteoAnalizar(){
+  const msg=document.getElementById('gpCosteoMsg'); const setErr=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  const file=(document.getElementById('gp_costeo2').files||[])[0];
+  if(!file){ setErr('Necesito el archivo.'); return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  let parsed; try{ parsed=await gpParseCosteo(file); }catch(e){ setErr(e.message||String(e)); return; }
+  const pid=GP.actualId;
+  try{
+    await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
+    const rows=parsed.secciones.map(s=>({proyecto_id:pid, seccion:s.seccion, orden:s.orden, presupuesto_ars:s.presupuesto_ars, presupuesto_usd:s.presupuesto_usd}));
+    for(let k=0;k<rows.length;k+=500){ await sbFetch('/compras_gp_presupuesto',{method:'POST', body:JSON.stringify(rows.slice(k,k+500)), prefer:'return=minimal'}); }
+    const upd={actualizado_en:new Date().toISOString()};
+    if(parsed.tc!=null) upd.tc_presupuesto=parsed.tc;
+    if(parsed.meta!=null) upd.meta_ahorro_pct=parsed.meta;
+    await sbFetch('/compras_gp_proyectos?id=eq.'+pid,{method:'PATCH', body:JSON.stringify(upd)});
+    closeModal(); toast('Presupuesto actualizado: '+parsed.secciones.length+' secciones'); renderProyectos();
+  }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
+}
+window.gpCosteoAnalizar=gpCosteoAnalizar;
+
+/* -------- Imputación Tango -> sección -------- */
+// Devuelve {seccion, imputado_por, nuevoMapeo?} para un renglón de OC.
+function gpImputar(o, mapIdx){
+  const cands=[ {tipo:'subrubro', clave:o.subrubro}, {tipo:'rubro', clave:o.rubro},
+                {tipo:'prefijo', clave:gpPrefijoArt(o.cod_articulo)}, {tipo:'grupo', clave:o.grupo} ];
+  // 1) mapeo guardado
+  for(const c of cands){ const k=gpNorm(c.clave); if(!k) continue; const hit=mapIdx[c.tipo+'|'+k]; if(hit) return {seccion:hit, imputado_por:c.tipo}; }
+  // 2) auto-match contra las secciones del presupuesto
+  const secs=(GP.presupuesto||[]).map(s=>({seccion:s.seccion, n:gpNorm(s.seccion)}));
+  for(const c of [ {tipo:'subrubro', clave:o.subrubro}, {tipo:'rubro', clave:o.rubro}, {tipo:'grupo', clave:o.grupo} ]){
+    if(!c.clave) continue;
+    const cand=gpNorm(gpSinPrefijo(c.clave));
+    if(cand.length<4) continue;
+    for(const s of secs){
+      if(!s.n) continue;
+      if(s.n===cand || (cand.indexOf(s.n)>=0 && s.n.length>=5) || (s.n.indexOf(cand)>=0 && cand.length>=5)){
+        return {seccion:s.seccion, imputado_por:c.tipo, nuevoMapeo:{tipo:c.tipo, clave:gpNorm(c.clave), seccion:s.seccion}};
+      }
+    }
+  }
+  return {seccion:'Sin clasificar', imputado_por:'sin_clasificar'};
+}
+
+function gpImportTango(){
+  if(!(GP.presupuesto||[]).length){ if(!confirm('Este proyecto todavía no tiene presupuesto cargado, así que todo caerá en “Sin clasificar”. ¿Importar igual?')) return; }
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el informe de Tango del proyecto (el que trae los campos <b>RUBRO / SUBRUBRO (Adic.)</b>). Reemplaza la foto de OC del proyecto — es una instantánea; volvé a subirlo cuando quieras actualizar.</div>'
+    +'<div class="field"><label>Informe de Tango (.xlsx) *</label><input id="gp_tango_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="gpTangoMsg" style="font-size:12px;color:var(--muted);margin-top:6px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpTangoAnalizar()">Importar e imputar</button>';
+  openModal('Importar informe de Tango', body, foot);
+}
+window.gpImportTango=gpImportTango;
+
+async function gpTangoAnalizar(){
+  const msg=document.getElementById('gpTangoMsg'); const setErr=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  const file=(document.getElementById('gp_tango_file').files||[])[0];
+  if(!file){ setErr('Necesito el archivo.'); return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(file);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'Nro. Orden de Compra','Nro Orden de Compra')>=0 && _syncIdx(h,'Total')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas “Nro. Orden de Compra” y “Total”. ¿Es el informe de Tango del proyecto?');
+    const H=rows[0];
+    const I={
+      fecha:_syncIdx(H,'Fecha de generación','Fecha de generacion'), costeo:_syncIdx(H,'COSTEO (Adic.)','COSTEO'),
+      prov:_syncIdx(H,'Cód. proveedor','Cod. proveedor'), art:_syncIdx(H,'Cód. Artículo','Cod. Articulo'),
+      desc:_syncIdx(H,'Descripción','Descripcion'), grupo:_syncIdx(H,'Grupo'), oc:_syncIdx(H,'Nro. Orden de Compra','Nro Orden de Compra'),
+      cantPed:_syncIdx(H,'Cantidad pedida'), cantRec:_syncIdx(H,'Cantidad Recibida'), cantFac:_syncIdx(H,'Cantidad Facturada'),
+      total:_syncIdx(H,'Total'), estado:_syncIdx(H,'Estado'), moneda:_syncIdx(H,'Moneda'), comprador:_syncIdx(H,'Nombre del comprador'),
+      rubro:_syncIdx(H,'RUBRO (Adic.)','RUBRO'), subrubro:_syncIdx(H,'SUBRUBRO (Adic.)','SUBRUBRO')
+    };
+    const mapIdx={}; (GP.mapeo||[]).forEach(m=>{ mapIdx[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
+    const out=[], nuevos={}; let total=0;
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]; const oc=_syncNorm(row[I.oc]); if(!oc) continue;
+      const o={
+        oc_numero:oc,
+        fecha: I.fecha>=0?(_syncFechaISO(row[I.fecha])||null):null,
+        proveedor_cod: I.prov>=0?_syncNorm(row[I.prov]):'',
+        cod_articulo: I.art>=0?_syncNorm(row[I.art]):'',
+        descripcion: I.desc>=0?_syncNorm(row[I.desc]):'',
+        grupo: I.grupo>=0?_syncNorm(row[I.grupo]):'',
+        costeo_tag: I.costeo>=0?_syncNorm(row[I.costeo]):'',
+        rubro: I.rubro>=0?_syncNorm(row[I.rubro]):'',
+        subrubro: I.subrubro>=0?_syncNorm(row[I.subrubro]):'',
+        cantidad_pedida: I.cantPed>=0?_syncNum(row[I.cantPed]):null,
+        cantidad_recibida: I.cantRec>=0?_syncNum(row[I.cantRec]):null,
+        cantidad_facturada: I.cantFac>=0?_syncNum(row[I.cantFac]):null,
+        total_ars: I.total>=0?_syncNum(row[I.total]):0,
+        estado_oc: I.estado>=0?_syncNorm(row[I.estado]):'',
+        moneda: I.moneda>=0?_syncNorm(row[I.moneda]):'',
+        comprador: I.comprador>=0?_syncNorm(row[I.comprador]):''
+      };
+      const imp=gpImputar(o, mapIdx);
+      o.seccion=imp.seccion; o.imputado_por=imp.imputado_por;
+      if(imp.nuevoMapeo){ const kk=imp.nuevoMapeo.tipo+'|'+imp.nuevoMapeo.clave; if(!nuevos[kk]){ nuevos[kk]=imp.nuevoMapeo; mapIdx[kk]=imp.nuevoMapeo.seccion; } }
+      total+=(+o.total_ars||0);
+      out.push(o);
+    }
+    if(!out.length) throw new Error('No encontré filas de datos.');
+    msg.textContent='Guardando '+out.length+' renglones…';
+    const pid=GP.actualId;
+    // 1) registro de importación
+    const impRec=await sbFetch('/compras_gp_importaciones',{method:'POST', body:JSON.stringify({proyecto_id:pid, archivo_nombre:file.name, filas:out.length, total_ars:total, importado_por:gpEmail()})});
+    const impId=impRec&&impRec[0]&&impRec[0].id;
+    // 2) reemplazar la foto de OC
+    await sbFetch('/compras_gp_oc?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
+    const payload=out.map(o=>Object.assign({proyecto_id:pid, importacion_id:impId}, o));
+    for(let k=0;k<payload.length;k+=500){ await sbFetch('/compras_gp_oc',{method:'POST', body:JSON.stringify(payload.slice(k,k+500)), prefer:'return=minimal'}); }
+    // 3) persistir mapeos auto-detectados nuevos (para recordar en próximas cargas)
+    const nuevosArr=Object.values(nuevos);
+    if(nuevosArr.length){ try{ await sbFetch('/compras_gp_mapeo',{method:'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=minimal'}, body:JSON.stringify(nuevosArr.map(m=>({proyecto_id:pid, tipo:m.tipo, clave:m.clave, seccion:m.seccion})))}); }catch(_){ } }
+    const sinClas=out.filter(o=>o.seccion==='Sin clasificar').length;
+    closeModal(); toast('Informe importado: '+out.length+' renglones'+(sinClas?' · '+sinClas+' sin clasificar':''));
+    renderProyectos();
+  }catch(e){ setErr('Error: '+(e.message||e)); }
+}
+window.gpTangoAnalizar=gpTangoAnalizar;
+
+/* -------- Revisión de "Sin clasificar" -------- */
+function gpRevisarSinClasificar(){
+  const secs=(GP.presupuesto||[]).map(s=>s.seccion);
+  if(!secs.length){ alert('Primero cargá el costeo (presupuesto por sección) para poder asignar.'); return; }
+  const sc=(GP.oc||[]).filter(o=>o.seccion==='Sin clasificar');
+  if(!sc.length){ alert('No hay renglones sin clasificar. ¡Todo imputado!'); return; }
+  // Agrupar por (tipo,clave): subrubro si existe, si no rubro, si no grupo
+  const grupos={};
+  sc.forEach(o=>{
+    let tipo='subrubro', clave=o.subrubro;
+    if(!clave){ tipo='rubro'; clave=o.rubro; }
+    if(!clave){ tipo='grupo'; clave=o.grupo; }
+    if(!clave){ tipo='grupo'; clave='(sin dato)'; }
+    const k=tipo+'|'+clave;
+    if(!grupos[k]) grupos[k]={tipo, clave, monto:0, n:0};
+    grupos[k].monto+=(+o.total_ars||0); grupos[k].n++;
+  });
+  const arr=Object.values(grupos).sort((a,b)=>b.monto-a.monto);
+  GP._revGrupos=arr;   // los lee gpGuardarMapeo() (evita incrustar JSON en el onclick)
+  const secOpts=s=>'<option value="">— elegir sección —</option>'+secs.map(x=>'<option value="'+esc(x)+'"'+(s===x?' selected':'')+'>'+esc(x)+'</option>').join('');
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Asigná cada grupo a una sección del costeo. Se guarda como regla: en las próximas importaciones se imputa solo.</div>'
+    +'<div class="tbl-hscroll" style="max-height:52vh"><table class="grid" style="font-size:12px"><thead><tr><th>Campo</th><th>Valor de Tango</th><th style="text-align:right">Monto ($)</th><th style="text-align:right">Renglones</th><th>Sección</th></tr></thead><tbody>'
+    +arr.map((g,i)=>'<tr><td>'+esc(g.tipo)+'</td><td>'+esc(g.clave)+'</td><td style="text-align:right">'+fmtNum(g.monto,0)+'</td><td style="text-align:right">'+g.n+'</td>'
+        +'<td><select id="gpmap_'+i+'" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px;min-width:180px">'+secOpts('')+'</select></td></tr>').join('')
+    +'</tbody></table></div><div id="gpMapMsg" style="font-size:12px;color:var(--muted);margin-top:8px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarMapeo()">Guardar asignaciones</button>';
+  openModal('Revisar “Sin clasificar” ('+sc.length+')', body, foot, 'wide');
+}
+window.gpRevisarSinClasificar=gpRevisarSinClasificar;
+
+async function gpGuardarMapeo(){
+  const msg=document.getElementById('gpMapMsg'); const setErr=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  const pid=GP.actualId; const grupos=GP._revGrupos||[];
+  const asign=[];
+  grupos.forEach((g,i)=>{ const sel=document.getElementById('gpmap_'+i); const sec=sel?sel.value:''; if(sec) asign.push({tipo:g.tipo, clave:g.clave, seccion:sec}); });
+  if(!asign.length){ setErr('Elegí al menos una sección.'); return; }
+  msg.style.color='var(--muted)'; msg.textContent='Guardando…';
+  try{
+    for(const a of asign){
+      const campo=a.tipo; // subrubro | rubro | grupo
+      let filtro;
+      if(a.clave==='(sin dato)'){
+        // renglones sin ninguna clasificación (los 3 campos vacíos): no se puede guardar regla, se actualizan directo
+        filtro='&subrubro=eq.&rubro=eq.&grupo=eq.';
+      }else{
+        // regla de mapeo (upsert por unique(proyecto_id,tipo,clave)) para recordar en próximas cargas
+        await sbFetch('/compras_gp_mapeo',{method:'POST', headers:{'Prefer':'resolution=merge-duplicates,return=minimal'}, body:JSON.stringify({proyecto_id:pid, tipo:campo, clave:gpNorm(a.clave), seccion:a.seccion})});
+        filtro='&'+campo+'=eq.'+encodeURIComponent(a.clave);
+      }
+      await sbFetch('/compras_gp_oc?proyecto_id=eq.'+pid+'&seccion=eq.'+encodeURIComponent('Sin clasificar')+filtro,
+        {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({seccion:a.seccion, imputado_por:'manual'})});
+    }
+    closeModal(); toast('Asignaciones guardadas: '+asign.length); renderProyectos();
+  }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
+}
+window.gpGuardarMapeo=gpGuardarMapeo;
+
+/* -------- Tablero del proyecto -------- */
+function gpEstadoSeccion(comprado, presup, tol){
+  if(!(comprado>0)) return {txt:'Sin iniciar', cls:'b-gris'};
+  if(!(presup>0)) return {txt:'Sin presupuesto', cls:'b-ambar'};
+  if(comprado > presup*(1+(tol||0))) return {txt:'Sobrecosto', cls:'b-rojo'};
+  return {txt:'En presupuesto', cls:'b-verde'};
+}
+function gpAgregado(){
+  const p=GP.proyecto||{}; const tc=+p.tc_presupuesto||0; const tol=+p.tolerancia_desvio_pct||0;
+  const compBySec={}; let sinClasArs=0, sinClasN=0;
+  (GP.oc||[]).forEach(o=>{
+    const a=+o.total_ars||0;
+    if(o.seccion==='Sin clasificar' || !o.seccion){ sinClasArs+=a; sinClasN++; return; }
+    compBySec[o.seccion]=(compBySec[o.seccion]||0)+a;
+  });
+  const filas=(GP.presupuesto||[]).map(s=>{
+    const comp=compBySec[s.seccion]||0;
+    const presAr=+s.presupuesto_ars||0, presUs=+s.presupuesto_usd||0;
+    const compUs=tc>0?comp/tc:0;
+    const pend=Math.max(presAr-comp,0);
+    const desv=comp-presAr;
+    const avance=presAr>0?comp/presAr:(comp>0?1:0);
+    return {seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
+  });
+  const tot=filas.reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
+  return {filas, tot, sinClasArs, sinClasN, tc, tol};
+}
+
+function gpRenderTablero(){
+  const p=GP.proyecto; const ag=gpAgregado();
+  const puede=puedeCrearOG();
+  document.getElementById('topActions').innerHTML=''
+    +'<button class="btn ghost" onclick="gpVolver()">← Proyectos</button>'
+    +(puede?'<button class="btn ghost" onclick="gpActualizarCosteo()">Actualizar costeo</button>':'')
+    +(puede?'<button class="btn ghost" onclick="gpEditarProyecto()">Editar</button>':'')
+    +(puede?'<button class="btn" onclick="gpImportTango()">'+ICO.plus+'Importar Tango</button>':'');
+
+  if(!(GP.presupuesto||[]).length){
+    C().innerHTML='<div class="card" style="margin-bottom:14px"><div class="card-h"><h3 style="margin:0">'+esc(p.nombre)+'</h3></div>'
+      +'<div style="padding:16px">Este proyecto todavía no tiene presupuesto. '+(puede?'Usá <b>Actualizar costeo</b> para cargar el Excel del costeo.':'Falta cargar el costeo.')+'</div></div>';
+    return;
+  }
+
+  GP._filas=ag.filas;   // para filtrar el detalle por índice (evita meter el nombre en el onclick)
+  const avanceTot=ag.tot.presAr>0?ag.tot.comp/ag.tot.presAr:0;
+  const desvTone=ag.tot.desv>0?'bad':(ag.tot.desv<0?'ok':'');
+  const ultImp=(GP.imports||[])[0];
+  const kpis=''
+    +'<div class="kpi"><div class="kpi-label">Presupuesto total</div><div class="kpi-value">'+gpMoney(ag.tot.presAr)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.presUs)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">'+(ag.tot.desv>0?'sobrecosto':(ag.tot.desv<0?'ahorro':'—'))+'</div></div>';
+  const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
+
+  // Tabla por sección
+  const th='<th>Sección</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
+  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)+'</td>'
+    +'<td style="text-align:right">'+fmtNum(f.presAr,0)+'</td>'
+    +'<td style="text-align:right">'+fmtNum(f.comp,0)+'</td>'
+    +'<td style="text-align:right">'+fmtNum(f.pend,0)+'</td>'
+    +'<td style="text-align:right">'+gpPct(f.avance)+'</td>'
+    +'<td style="text-align:right;color:'+(f.desv>0?'#b0584f':(f.desv<0?'#4f8a53':'inherit'))+'">'+(f.desv>0?'+':'')+fmtNum(f.desv,0)+'</td>'
+    +'<td><span class="badge '+f.est.cls+'">'+f.est.txt+'</span></td></tr>').join('');
+  const trTot='<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td>TOTAL</td>'
+    +'<td style="text-align:right">'+fmtNum(ag.tot.presAr,0)+'</td><td style="text-align:right">'+fmtNum(ag.tot.comp,0)+'</td>'
+    +'<td style="text-align:right">'+fmtNum(ag.tot.pend,0)+'</td><td style="text-align:right">'+gpPct(avanceTot)+'</td>'
+    +'<td style="text-align:right;color:'+(ag.tot.desv>0?'#b0584f':(ag.tot.desv<0?'#4f8a53':'inherit'))+'">'+(ag.tot.desv>0?'+':'')+fmtNum(ag.tot.desv,0)+'</td><td></td></tr>';
+
+  // Detalle de OC (filtrable por sección)
+  const filtro=GP.filtroSeccion;
+  const detalle=(GP.oc||[]).filter(o=>!filtro || o.seccion===filtro);
+  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(o.oc_numero)+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
+
+  C().innerHTML=''
+    +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
+      +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
+    +'<div class="kpi-grid">'+kpis+sinClasKpi+'</div>'
+    +'<div class="frow c2" style="margin-top:14px">'
+      +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
+      +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
+    +'</div>'
+    +'<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar el detalle</span></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div></div>'
+    +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Detalle de OC importadas</h3>'
+      +'<span class="meta">'+detalle.length+' renglones'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
+      +(filtro?'<button class="btn ghost sm" style="margin-left:auto" onclick="gpQuitarFiltro()">Quitar filtro</button>':'')+'</div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OC</th><th>Fecha</th><th>Prov.</th><th>Descripción</th><th>Subrubro</th><th>Sección</th><th style="text-align:right">Total ($)</th><th>Estado</th></tr></thead><tbody>'
+      +(detRows||'<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--muted)">Sin OC importadas todavía. Usá “Importar Tango”.</td></tr>')+'</tbody></table></div>'
+      +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>';
+
+  gpDrawCharts(ag);
+}
+
+function gpDrawCharts(ag){
+  try{ Object.values(GP.charts).forEach(c=>{ try{ c.destroy(); }catch(_){ } }); GP.charts={}; }catch(_){ }
+  if(typeof Chart==='undefined') return;
+  const labels=ag.filas.map(f=>f.seccion);
+  const bar=document.getElementById('gpChartBar');
+  if(bar){
+    GP.charts.bar=new Chart(bar,{type:'bar',
+      data:{labels, datasets:[
+        {label:'Presupuesto', data:ag.filas.map(f=>Math.round(f.presAr)), backgroundColor:'#c9ced4'},
+        {label:'Comprado', data:ag.filas.map(f=>Math.round(f.comp)), backgroundColor:ag.filas.map(f=>f.desv>f.presAr*ag.tol?'#c25a4e':'#2f8f63')}
+      ]},
+      options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': $ '+(+c.raw).toLocaleString('es-AR')}}},
+        scales:{x:{ticks:{callback:v=>'$'+(v/1e6).toLocaleString('es-AR')+'M'}}}}});
+  }
+  const dona=document.getElementById('gpChartDona');
+  if(dona){
+    const comp=ag.filas.filter(f=>f.comp>0);
+    const pal=['#2f8f63','#3b7fb0','#cba13a','#b0584f','#7a6cc4','#4f8a8a','#c07b3a','#8a9bb0','#6b9a5a','#b06a8a','#5a7a9a','#9a8a4a'];
+    GP.charts.dona=new Chart(dona,{type:'doughnut',
+      data:{labels:comp.map(f=>f.seccion), datasets:[{data:comp.map(f=>Math.round(f.comp)), backgroundColor:comp.map((_,i)=>pal[i%pal.length])}]},
+      options:{responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{position:'right', labels:{boxWidth:12, font:{size:11}}}, tooltip:{callbacks:{label:c=>c.label+': $ '+(+c.raw).toLocaleString('es-AR')}}}}});
+  }
+}
+function gpFiltroSeccion(i){ const sec=((GP._filas||[])[i]||{}).seccion||''; GP.filtroSeccion=(GP.filtroSeccion===sec)?'':sec; gpRenderTablero(); }
+window.gpFiltroSeccion=gpFiltroSeccion;
+function gpQuitarFiltro(){ GP.filtroSeccion=''; gpRenderTablero(); }
+window.gpQuitarFiltro=gpQuitarFiltro;
 
 function openPanolEgresoForm(id){
   const cur = id!=null ? (DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)) : null;
