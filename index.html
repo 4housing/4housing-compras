@@ -8965,15 +8965,29 @@ function evalProvDetalleCrudoHtml(){
   const qHead=EVALPROV_TODAS.map(q=>'<th title="'+esc(q.cat+': '+q.texto)+'" style="background:'+_mixWhite(EVALPROV_CAT_COL[EVALPROV_CATS.indexOf(q.cat)],0.82)+';font-size:10.5px;white-space:nowrap">'+esc(q.key.toUpperCase())+'</th>').join('');
   const qCells=r=>EVALPROV_TODAS.map(q=>'<td style="text-align:center">'+(r[q.key]!=null?r[q.key]:'')+'</td>').join('');
   const limpiar=Object.keys(EPDET_COL_FILTRO).length?'<button class="btn ghost sm" onclick="epDetColFilterClearAll()">Limpiar filtros</button>':'';
-  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:11.5px;color:var(--muted)">'+rows.length+' de '+base.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.'+limpiar+'</div>'
+  const puedeEditar=canEvalProv();
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:11.5px;color:var(--muted)">'+rows.length+' de '+base.length+' evaluaciones · pasá el mouse sobre cada columna de pregunta para ver el texto completo.'
+    +'<button class="btn ghost sm" onclick="epDetExportExcel()">Exportar a Excel</button>'+limpiar+'</div>'
     +'<div class="dic-scroll"><table class="grid solp-full" style="font-size:11.5px"><thead><tr>'
     +epDetTh('Fecha','fecha')+epDetTh('Evaluador','evaluador')+epDetTh('Área','area_lbl')+epDetTh('Obra','obra')+epDetTh('Cód.','proveedor_cod')+epDetTh('Proveedor','prov_nom')+epDetTh('Rubro','rubro')
     +qHead
     +epDetTh('Comentarios','comentarios',{nofilter:true})
+    +(puedeEditar?'<th></th>':'')
     +'</tr></thead><tbody>'
-    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(r.evaluador_corto)+'</td><td>'+esc(r.area_lbl)+'</td>'+tdT(r.obra)+'<td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.prov_nom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+'</tr>').join('')
+    +rows.map(r=>'<tr><td>'+solpDMY(r.fecha)+'</td><td class="trunc" title="'+esc(r.evaluador||'')+'">'+esc(r.evaluador_corto)+'</td><td>'+esc(r.area_lbl)+'</td>'+tdT(r.obra)+'<td>'+esc(r.proveedor_cod||'—')+'</td>'+tdT(r.prov_nom)+tdT(r.rubro)+qCells(r)+tdT(r.comentarios)+(puedeEditar?'<td><button class="iconbtn" title="Editar" onclick="openEvalProvForm('+r.id+')">'+ICO.edit+'</button></td>':'')+'</tr>').join('')
     +'</tbody></table></div>';
 }
+function epDetExportExcel(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  const rows=epDetApplySort((EVALPROV._detBase||[]).filter(epDetRowPass).sort((a,b)=>b.fecha.localeCompare(a.fecha)));
+  if(!rows.length){ toast('No hay filas para exportar.'); return; }
+  const aoa=[['Fecha','Evaluador','Área','Obra','Código proveedor','Proveedor','Rubro',...EVALPROV_TODAS.map(q=>q.key.toUpperCase()),'Comentarios']];
+  rows.forEach(r=>aoa.push([solpDMY(r.fecha), r.evaluador||'', r.area_lbl, r.obra||'', r.proveedor_cod||'', r.prov_nom||'', r.rubro||'', ...EVALPROV_TODAS.map(q=>r[q.key]!=null?r[q.key]:''), r.comentarios||'']));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Detalle');
+  XLSX.writeFile(wb, 'EvalProveedores_detalle_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+window.epDetExportExcel=epDetExportExcel;
 
 function evalProvEvalsHtml(){
   const rows=EVALPROV.rows, nf=n=>n.toLocaleString('es-AR');
@@ -9137,10 +9151,14 @@ async function evalProvImportHistoricoAnalizar(){
       item.area = nProyectos>nCompras ? 'proyectos' : 'compras';
       const yaRow=existentesMap.get(_evalProvFingerprint(item));
       if(yaRow){
-        // La huella (proveedor/fecha/área/evaluador/respuestas) no incluye la Obra, así que una
-        // fila ya importada que se re-analiza con la Obra resuelta (o corregida en el Excel) no
-        // se detecta como distinta — sin este chequeo aparte, la corrección se perdía en silencio.
-        if(!yaRow.obra_cod && obraM) obraParaCompletar.push({id:yaRow.id, obra_cod:obraM.cod, obra_texto:obraTxt||yaRow.obra_texto||null, _obraNom:evalProvObraNom(obraM.cod)});
+        // La huella (proveedor/fecha/área/respuestas) no incluye Obra ni Evaluador, así que una
+        // fila ya importada que se re-analiza con la Obra resuelta o el evaluador mejor escrito
+        // no se detecta como distinta — sin este chequeo aparte, la corrección se perdía en silencio
+        // (quedaba la Obra vacía, o el nombre viejo de una tanda anterior, para siempre).
+        const patch={}; let motivo=[];
+        if(!yaRow.obra_cod && obraM){ patch.obra_cod=obraM.cod; patch.obra_texto=obraTxt||yaRow.obra_texto||null; motivo.push('Obra: '+evalProvObraNom(obraM.cod)); }
+        if(item.evaluador && item.evaluador!==yaRow.evaluador){ patch.evaluador=item.evaluador; motivo.push('Evaluador: '+yaRow.evaluador+' → '+item.evaluador); }
+        if(Object.keys(patch).length) obraParaCompletar.push({id:yaRow.id, ...patch, _motivo:motivo.join(' · ')});
         yaExisten.push(item);
       }
       else if(!provM) sinProv.push(item);
@@ -9161,9 +9179,9 @@ function renderEvalProvImportReport(){
     +'<span class="badge b-verde">Con proveedor: '+s.listos.length+'</span>'
     +'<span class="badge b-ambar">Sin matchear proveedor (se importan igual): '+s.sinProv.length+'</span>'
     +'<span class="badge b-gris">Ya estaban cargadas: '+s.yaExisten.length+'</span>'
-    +(s.obraParaCompletar.length?'<span class="badge b-ambar">Obra para completar (ya cargadas): '+s.obraParaCompletar.length+'</span>':'')
+    +(s.obraParaCompletar.length?'<span class="badge b-ambar">Para corregir (ya cargadas): '+s.obraParaCompletar.length+'</span>':'')
     +'</div>';
-  if(s.obraParaCompletar.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Ya cargadas, les falta la Obra</div>'+tabla(s.obraParaCompletar,[['Obra que se le va a completar',r=>r._obraNom]]);
+  if(s.obraParaCompletar.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Ya cargadas, se les completa Obra y/o se corrige el Evaluador</div>'+tabla(s.obraParaCompletar,[['Corrección',r=>r._motivo]]);
   if(s.sinProv.length) h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px;color:#9a7019">Sin matchear proveedor</div>'+tabla(s.sinProv,[['Proveedor (texto original)',r=>r.proveedor_texto],['Fecha',r=>solpDMY(r.fecha)],['Área',r=>r.area]]);
   h+='<div style="font-weight:700;font-size:12px;margin:8px 0 4px">Con proveedor matcheado</div>'+tabla(s.listos,[['Proveedor',r=>solpProvNom(r.proveedor_cod)],['Fecha',r=>solpDMY(r.fecha)],['Área',r=>r.area]]);
   box.innerHTML=h;
@@ -9179,14 +9197,14 @@ async function evalProvImportHistoricoAplicar(){
   if(!filas.length && !s.obraParaCompletar.length){ if(msg)msg.textContent='Nada para importar.'; return; }
   try{
     if(s.obraParaCompletar.length){
-      if(msg)msg.textContent='Completando Obra en '+s.obraParaCompletar.length+' ya cargadas…';
-      for(const r of s.obraParaCompletar){ await sbFetch('/compras_prov_evaluaciones?id=eq.'+r.id,{method:'PATCH', body:JSON.stringify({obra_cod:r.obra_cod, obra_texto:r.obra_texto}), prefer:'return=minimal'}); }
+      if(msg)msg.textContent='Corrigiendo '+s.obraParaCompletar.length+' ya cargadas…';
+      for(const r of s.obraParaCompletar){ const {id, _motivo, ...patch}=r; await sbFetch('/compras_prov_evaluaciones?id=eq.'+id,{method:'PATCH', body:JSON.stringify(patch), prefer:'return=minimal'}); }
     }
     if(filas.length){
       if(msg)msg.textContent='Importando '+filas.length+'…';
       for(let i=0;i<filas.length;i+=500){ await sbFetch('/compras_prov_evaluaciones',{method:'POST', body:JSON.stringify(filas.slice(i,i+500))}); }
     }
-    closeModal(); toast('Listo: '+filas.length+' importadas, '+s.obraParaCompletar.length+' con Obra completada'); await evalProvLoad(); renderEvalProv();
+    closeModal(); toast('Listo: '+filas.length+' importadas, '+s.obraParaCompletar.length+' corregidas'); await evalProvLoad(); renderEvalProv();
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
 }
 window.evalProvImportHistoricoAplicar=evalProvImportHistoricoAplicar;
