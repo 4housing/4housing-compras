@@ -2458,6 +2458,12 @@ function gpEsNA(v){ const k=gpNorm(v); return !k || k==='#NA' || k==='#N/A' || k
 // Limpia un campo de clasificación: devuelve '' si es un marcador "sin dato"
 function gpLimpiaClasif(v){ const s=_syncNorm(v); return gpEsNA(s)?'':s; }
 // Prefijo de familia del código de artículo Tango: GCHIE12009 -> GCHIE
+// N° de OC de Tango (" 0000100031125" = punto de venta 00001/00002 + 8 dígitos, o "00001-00031125"):
+// se muestra sin punto de venta ni ceros adelante -> "31125". Lo que no tenga ese formato queda tal cual.
+function gpNroOC(v){
+  const t=String(v==null?'':v).trim(); const m=t.match(/^(\d{5})-?(\d{8})$/);
+  return m ? (m[2].replace(/^0+/,'')||'0') : t;
+}
 function gpPrefijoArt(cod){ const m=String(cod||'').toUpperCase().match(/^([A-Z]{2,6})/); return m?m[1]:''; }
 function gpMoney(v){ return '$ '+fmtNum(v,0); }
 function gpUsd(v){ return 'US$ '+fmtNum(v,0); }
@@ -2761,7 +2767,7 @@ async function gpTangoAnalizar(){
     for(let r=1;r<rows.length;r++){
       const row=rows[r]; const oc=_syncNorm(row[I.oc]); if(!oc) continue;
       const o={
-        oc_numero:oc,
+        oc_numero:gpNroOC(oc),
         fecha: I.fecha>=0?(_syncFechaISO(row[I.fecha])||null):null,
         proveedor_cod: I.prov>=0?_syncNorm(row[I.prov]):'',
         cod_articulo: I.art>=0?_syncNorm(row[I.art]):'',
@@ -2940,7 +2946,7 @@ function gpRenderTablero(){
   // Detalle de OC (filtrable por sección)
   const filtro=GP.filtroSeccion;
   const detalle=(GP.oc||[]).filter(o=>!filtro || o.seccion===filtro);
-  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(o.oc_numero)+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
+  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(gpNroOC(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
 
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
