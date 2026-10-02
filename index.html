@@ -2029,13 +2029,13 @@ window.tcDiaAnterior=tcDiaAnterior;
      Mano de obra 35% · Artefactos de iluminación/cableado 7% · Máquinas y equipos importados 8% ·
      Hierros y aceros en formas básicas 20% · Equipo / amortización de equipo 15% · Gastos generales 15%. */
 const IDX_DEF={
-  ipc:{ nombre:'IPC (INDEC)', tabla:'idx_ipc', diaEsperado:10,
+  ipc:{ nombre:'IPC (INDEC)', tabla:'compras_idx_ipc', diaEsperado:10,
     fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-31',
     campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'} ] },
-  cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'idx_cac', diaEsperado:20,
+  cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'compras_idx_cac', diaEsperado:20,
     fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
     campos:[ {k:'construccion', label:'Costo Construcción'}, {k:'materiales', label:'Materiales'}, {k:'mano_obra', label:'Mano de obra'} ] },
-  poli:{ nombre:'Polinómica (IPIB · INDEC, fórmula propia)', tabla:'idx_poli', diaEsperado:29,
+  poli:{ nombre:'Polinómica (IPIB · INDEC, fórmula propia)', tabla:'compras_idx_poli', diaEsperado:29,
     fuenteUrl:'https://www.indec.gob.ar/indec/web/Institucional-Indec-Publicaciones-3',
     campos:[
       {k:'mo', label:'Mano de obra (Cuadro 5 inc. a)'},
@@ -2046,19 +2046,19 @@ const IDX_DEF={
       {k:'gastos', label:'Gastos Generales (Cuadro 5 inc. p)'},
     ],
     pesos:{mo:0.35, art_ilum:0.07, maq_imp:0.08, hierros:0.20, equipo:0.15, gastos:0.15} },
-  uva:{ nombre:'UVA (BCRA)', tabla:'idx_uva', diaEsperado:null,
+  uva:{ nombre:'UVA (BCRA)', tabla:'compras_idx_uva', diaEsperado:null,
     fuenteUrl:'https://www.bcra.gob.ar/principales-variables-datos/?serie=7913',
     campos:[ {k:'valor', label:'UVA'} ] },
-  facpce:{ nombre:'FACPCE (IPC Nac. empalme IPIM, ajuste por inflación / AXI)', tabla:'idx_facpce', diaEsperado:null,
+  facpce:{ nombre:'FACPCE (IPC Nac. empalme IPIM, ajuste por inflación / AXI)', tabla:'compras_idx_facpce', diaEsperado:null,
     fuenteUrl:'https://www.facpce.org.ar/indices-facpce/',
     campos:[ {k:'valor', label:'Índice FACPCE'} ] },
-  dolar_oficial:{ nombre:'Dólar Oficial (BNA)', tabla:'idx_dolar_oficial', diaEsperado:null,
+  dolar_oficial:{ nombre:'Dólar Oficial (BNA)', tabla:'compras_idx_dolar_oficial', diaEsperado:null,
     fuenteUrl:'https://www.bna.com.ar/Personas',
     campos:[ {k:'compra', label:'TC Vendedor'} ] },
-  dolar_blue:{ nombre:'Dólar Blue', tabla:'idx_dolar_blue', diaEsperado:null,
+  dolar_blue:{ nombre:'Dólar Blue', tabla:'compras_idx_dolar_blue', diaEsperado:null,
     fuenteUrl:'https://www.cotizacion-dolar.com.ar/dolar-blue-historico-2026.php',
     campos:[ {k:'compra', label:'TC Vendedor'} ] },
-  sueldos:{ nombre:'Sueldos (RIPTE)', tabla:'idx_sueldos', diaEsperado:null,
+  sueldos:{ nombre:'Sueldos (RIPTE)', tabla:'compras_idx_sueldos', diaEsperado:null,
     fuenteUrl:'http://estudiodelamo.com/indice-salarios-argentina/',
     campos:[ {k:'ars', label:'Sueldos $ (RIPTE)'}, {k:'pct', label:'Sueldos % (índice)'} ] },
 };
@@ -2108,15 +2108,16 @@ function idxUpsert(ns, periodo, fields){
   if(i>=0) arr[i]=row; else arr.push(row);
   arr.sort((a,b)=>a.periodo-b.periodo);
   if(!DEMO_MODE){
-    try{ sbFetch('/'+IDX_DEF[ns].tabla,{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'}); }
-    catch(e){ /* si la tabla no existe todavía, queda solo en memoria */ }
+    // sbFetch es async: sin .catch un error (tabla inexistente, RLS) se perdía en silencio y el dato quedaba solo en memoria
+    sbFetch('/'+IDX_DEF[ns].tabla,{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'})
+      .catch(e=>{ console.error('idxUpsert', ns, e); toast('No se pudo guardar el índice en la base: '+e.message); });
   }
 }
 async function idxDelete(ns, periodo){
   DIC['idx_'+ns]=(DIC['idx_'+ns]||[]).filter(r=>+r.periodo!==+periodo);
   if(!DEMO_MODE){
     try{ await sbFetch('/'+IDX_DEF[ns].tabla+'?periodo=eq.'+periodo,{method:'DELETE',prefer:'return=minimal'}); }
-    catch(e){}
+    catch(e){ console.error('idxDelete', ns, e); toast('No se pudo eliminar el período en la base: '+e.message); }
   }
 }
 
@@ -11136,7 +11137,7 @@ async function reloadDB(){
       ...Object.keys(IDX_DEF).map(ns=>(async()=>{ try{
         const rows = await sbFetchAll('/'+IDX_DEF[ns].tabla+'?select=*&order=periodo.asc');
         if(rows) DIC['idx_'+ns] = rows.map(r=>({...r, periodo:+r.periodo}));
-      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })()),
+      }catch(e){ console.warn('Índices: no se pudo leer '+IDX_DEF[ns].tabla, e); } })()),
       // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
       (async()=>{ try{
         const cu=await sbFetchAll('/compras_cuentas_contables?select=cod,descripcion,clase,tipo,saldo,usa_aux,habil,confidencial&order=cod.asc');
