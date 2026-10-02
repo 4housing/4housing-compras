@@ -61,6 +61,16 @@ pañol, herramientas, mantenimiento, stock). Parte del portal unificado 4housing
 12. **Diagnosticar con evidencia** (`grep`/`diff`), no adivinar. Reportar resultados
     con fidelidad: si algo falla o se saltó, decirlo con la salida real.
 
+## Tablas — siempre así (pedido de Mica)
+
+Toda tabla nueva (o que se toque) en cualquier app del portal lleva:
+- **Columnas redimensionables a mano.** En Compras sale solo con `class="grid"` (colResize + MutationObserver;
+  el ancho queda guardado por usuario en `compras_ui_prefs`).
+- **Botón "Auto-ajustar columnas"** (`tblAutofit('#idTabla')`): vuelve al ancho natural.
+- **Filtros tipo Excel por columna** (`xlfRegister` + `xlfTh`, con rango de fechas `'__fecha__'` donde haya fecha)
+  y "Limpiar filtros" (`xlfClearAllBtn`).
+- **Títulos centrados en alto y ancho** (en `.grid` ya lo hace el CSS de `table.grid th`).
+
 ## Cómo entregar
 
 - HTML/JS: archivo completo actualizado, validado con `node --check`.
