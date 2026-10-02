@@ -70,6 +70,9 @@ Toda tabla nueva (o que se toque) en cualquier app del portal lleva:
 - **Filtros tipo Excel por columna** (`xlfRegister` + `xlfTh`, con rango de fechas `'__fecha__'` donde haya fecha)
   y "Limpiar filtros" (`xlfClearAllBtn`).
 - **Títulos centrados en alto y ancho** (en `.grid` ya lo hace el CSS de `table.grid th`).
+- **Ordenar por columna**: clic en el título (1º ascendente, 2º descendente; ▲/▼ en el título). En Solicitudes de pago:
+  `_spTh` + `_spOrdenar` (el ▾ del filtro y el borde de ajuste no ordenan).
+- **Comentarios/historial**: siempre con usuario, fecha y hora (`_spCuando`).
 
 ## Cómo entregar
 

@@ -4370,22 +4370,26 @@ function solicitudesPagoView(){
       if(col==='comp') return s.comprador||'(sin comprador)';
       if(col==='mon') return s.moneda==='USD'?'Dólares':'Pesos';
       if(col==='estado') return s.estado||'Pendiente';
-      if(col==='pago') return s.estado==='Pagada'?'Pagada':(s.fecha_pago_estimada?'Con fecha estimada':'Sin fecha');
+      if(col==='pago') return s.estado==='Pagada'?'Pagada':(s.salio_informe_en?'Fuera del informe':(s.fecha_pago_estimada?'Con fecha estimada':'Sin fecha'));
       return '';
     } });
-  const shown = porEstado.filter(s=>xlfPass('sps',s));
+  const ult=s=>{ const h=s.historial||[]; return h.length?h[h.length-1]:null; };
+  const shown = _spOrdenar('sps', porEstado.filter(s=>xlfPass('sps',s)).sort((a,b)=>(b.id||0)-(a.id||0)), {
+    fac:s=>s.nro_factura, prov:s=>s.proveedor_cod, oc:s=>nroOCTango(s.oc_numero), proy:s=>s.proyecto_cod, comp:s=>s.comprador,
+    mon:s=>+s.monto||0, estado:s=>s.estado||'Pendiente', pago:s=>s.fecha_pago||s.fecha_pago_estimada||'', ult:s=>{ const u=ult(s); return u?String(u.fecha||''):''; },
+    creado:s=>String(s.creado_en||'') });
   const chip=(v,label)=>'<button class="mtab'+(filtro===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setSolPagoFiltro(\''+v+'\')">'+label+'</button>';
   const filtros='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+chip('todas','Todas ('+list.length+')')
     +chip('Pendiente','Pendiente ('+list.filter(s=>(s.estado||'Pendiente')==='Pendiente').length+')')
     +chip('En gestión','En gestión ('+list.filter(s=>s.estado==='En gestión').length+')')
-    +chip('Pagada','Pagada ('+list.filter(s=>s.estado==='Pagada').length+')')+'</div>';
+    +chip('Pagada','Pagada ('+list.filter(s=>s.estado==='Pagada').length+')')
+    +chip('Cancelada','Cancelada ('+list.filter(s=>s.estado==='Cancelada').length+')')+'</div>';
   // Ya no hay alta manual: el pago se pide tildando en Pendientes de facturar (FAC adjunta) o en Pagos a realizar.
-  const header='<div class="card-h"><h3>Pagos solicitados</h3><span class="meta">Pedidos de pago a Finanzas, con fecha y responsable. Se piden tildando en Pendientes de facturar o en Pagos a realizar.</span></div>';
+  const header='<div class="card-h"><h3>Pagos solicitados</h3><span class="meta">Pedidos de pago a Finanzas, con fecha y responsable. Se piden tildando en Pendientes de facturar o en Pagos a realizar. El estado (En gestión / Pagada) lo informa Administración; acá se comenta o se cancela el pedido.</span></div>';
   if(!shown.length) return '<div class="card">'+header+filtros+(xlfHasAny('sps')?_spTools('spsTabla','sps','Buscar factura, proveedor, OC, proyecto o comprador…'):'')+'<div class="empty" style="padding:20px">No hay solicitudes'+(xlfHasAny('sps')?' que coincidan con los filtros':(filtro!=='todas'?' en este estado':''))+'.</div></div>';
-  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
-  const rows=shown.slice().sort((a,b)=>(b.id||0)-(a.id||0)).map(s=>{
-    const hist=(s.historial||[]);
-    const ultimo=hist.length?hist[hist.length-1]:null;
+  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde','Cancelada':'b-rojo'};
+  const rows=shown.map(s=>{
+    const ultimo=ult(s);
     const estColor=ESTADO_CLR[s.estado||'Pendiente']||'b-gris';
     return '<tr data-q="'+esc(_syncFold([s.nro_factura,s.proveedor_cod,s.proveedor,nroOCTango(s.oc_numero),s.proyecto_cod,s.comprador,s.remito_numero].join(' ')))+'">'
       +'<td><strong>'+esc(s.nro_factura||'—')+'</strong>'+(s.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoSolicitud('+s.id+')">'+ICO.pdf+'</button>':'')+'</td>'
@@ -4395,14 +4399,20 @@ function solicitudesPagoView(){
       +'<td style="font-size:11px">'+esc(s.comprador||'')+'</td>'
       +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
       +'<td><span class="badge '+estColor+'">'+esc(s.estado||'Pendiente')+'</span>'+(s.leido_en?'<div style="font-size:10px;color:var(--muted)" title="'+esc('Leída por '+(s.leido_por||'')+' el '+fmtDate(String(s.leido_en).slice(0,10)))+'">✓ leída por Adm.</div>':'')+'</td>'
-      +'<td style="font-size:11px;white-space:nowrap">'+(s.estado==='Pagada'&&s.fecha_pago?'Pagada '+fmtDate(s.fecha_pago):(s.fecha_pago_estimada?'Estimada '+fmtDate(s.fecha_pago_estimada):'—'))+'</td>'
-      +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(ultimo?esc(ultimo.texto||'')+'<div style="font-size:10px">'+esc(ultimo.autor||'')+' · '+fmtDate((ultimo.fecha||'').slice(0,10))+'</div>':'—')+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+_spPagoTxt(s)+'</td>'
+      +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(ultimo?esc(ultimo.texto||'')+'<div style="font-size:10px">'+_spCuando(ultimo)+'</div>':'—')+'</td>'
       +'<td><button class="btn ghost sm" onclick="openSolicitudPagoDetalle('+s.id+')">Abrir</button></td></tr>';
   }).join('');
   return '<div class="card">'+header+filtros
     +_spTools('spsTabla','sps','Buscar factura, proveedor, OC, proyecto o comprador…')
-    +'<table class="grid" id="spsTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('sps','Factura','fac')+xlfTh('sps','Proveedor','prov')+xlfTh('sps','OC','oc')+xlfTh('sps','Proyecto','proy')+xlfTh('sps','Comprador','comp')
-    +xlfTh('sps','Monto','mon')+xlfTh('sps','Estado','estado')+xlfTh('sps','Pago','pago')+'<th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +'<table class="grid" id="spsTabla" style="font-size:12.5px"><thead><tr>'+_spTh('sps','Factura','fac','fac')+_spTh('sps','Proveedor','prov','prov')+_spTh('sps','OC','oc','oc')+_spTh('sps','Proyecto','proy','proy')+_spTh('sps','Comprador','comp','comp')
+    +_spTh('sps','Monto','mon','mon')+_spTh('sps','Estado','estado','estado')+_spTh('sps','Pago','pago','pago')+_spTh('sps','Último comentario',null,'ult')+'<th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+// Columna "Pago": pagada / fuera del informe / fecha estimada
+function _spPagoTxt(s){
+  if(s.estado==='Pagada') return 'Pagada'+(s.fecha_pago?' '+fmtDate(s.fecha_pago):'');
+  return (s.fecha_pago_estimada?'Estimada '+fmtDate(s.fecha_pago_estimada):'—')
+    +(s.salio_informe_en?'<div style="color:#b3853a" title="Ya no figura en Pagos a realizar: se estima pagada, anulada u otro motivo">⚠ fuera del informe '+fmtDate(s.salio_informe_en)+'</div>':'');
 }
 window.solicitudesPagoView=solicitudesPagoView;
 
@@ -4522,9 +4532,9 @@ window.guardarSolicitudPago=guardarSolicitudPago;
 function openSolicitudPagoDetalle(id){
   const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
   const hist=(s.historial||[]);
-  const histHtml=hist.length? hist.slice().reverse().map(h=>'<div style="border-bottom:1px solid var(--line);padding:8px 0"><div style="font-size:12.5px">'+esc(h.texto||'')+'</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+esc(h.autor||'')+' · '+(h.fecha?new Date(h.fecha).toLocaleString('es-AR'):'')+(h.estado_nuevo?' · pasó a "'+esc(h.estado_nuevo)+'"':'')+'</div></div>').join('') : '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">Sin comentarios todavía.</div>';
-  const estados=['Pendiente','En gestión','Pagada'];
-  const estadoBtns = canPago() ? '<div style="display:flex;gap:6px;margin:10px 0">'+estados.map(e=>'<button class="btn '+((s.estado||'Pendiente')===e?'':'ghost')+' sm" onclick="cambiarEstadoSolicitud('+s.id+',\''+e+'\')">'+e+'</button>').join('')+'</div>' : '';
+  const histHtml=hist.length? hist.slice().reverse().map(h=>'<div style="border-bottom:1px solid var(--line);padding:8px 0"><div style="font-size:12.5px">'+esc(h.texto||'')+'</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+_spCuando(h)+(h.estado_nuevo?' · pasó a "'+esc(h.estado_nuevo)+'"':'')+'</div></div>').join('') : '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">Sin comentarios todavía.</div>';
+  // El estado (En gestión / Pagada) lo informa Administración desde su app; Compras comenta o cancela el pedido.
+  const puedeCancelar=puedeCrearSolicitudPago() && !['Pagada','Cancelada'].includes(s.estado||'Pendiente');
   const body='<div style="font-size:12.5px;line-height:1.7">'
     +'<strong>Proveedor:</strong> '+esc(s.proveedor_cod||'')+' — '+esc(s.proveedor||'')+'<br>'
     +'<strong>Factura:</strong> '+esc(s.nro_factura||'—')+(s.adjunto_path?' · <a href="#" onclick="verAdjuntoSolicitud('+s.id+');return false">ver adjunto</a>':'')+'<br>'
@@ -4534,28 +4544,43 @@ function openSolicitudPagoDetalle(id){
     +'<strong>Estado:</strong> '+esc(s.estado||'Pendiente')
     +(s.leido_en?'<br><strong>Leída por Administración:</strong> '+esc(s.leido_por||'')+' · '+fmtDate(String(s.leido_en).slice(0,10)):'')
     +(s.fecha_pago_estimada?'<br><strong>Fecha estimada de pago:</strong> '+fmtDate(s.fecha_pago_estimada):'')
-    +(s.fecha_pago?'<br><strong>Pagada (detectado en Pagos a realizar):</strong> '+fmtDate(s.fecha_pago):'')
-    +'</div>'+estadoBtns
+    +(s.fecha_pago?'<br><strong>Pagada el:</strong> '+fmtDate(s.fecha_pago):'')
+    +(s.salio_informe_en?'<br><strong style="color:#b3853a">⚠ Fuera de Pagos a realizar desde el reporte del '+fmtDate(s.salio_informe_en)+'</strong> <span style="color:var(--muted)">(se estima pagada, anulada u otro motivo)</span>':'')
+    +'</div>'
     +'<div style="font-weight:700;font-size:12.5px;margin-top:12px;margin-bottom:4px">Historial</div>'
     +'<div style="max-height:220px;overflow:auto">'+histHtml+'</div>'
     +(puedeCrearSolicitudPago()?'<div class="field" style="margin-top:10px"><label>Agregar comentario</label><textarea id="sp_nuevoComentario" rows="2" placeholder="Ej: se carga esta semana, se paga el viernes…"></textarea></div>':'');
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
-    +(puedeCrearSolicitudPago()?'<button class="btn ghost" onclick="openSolicitudPagoForm('+s.id+')">Editar</button><button class="btn" onclick="agregarComentarioSolicitud('+s.id+')">Comentar</button>':'')
+    +(puedeCancelar?'<button class="btn ghost" style="color:#b3261e" onclick="openCancelarSolicitud('+s.id+')">Cancelar pedido</button>':'')
+    +(puedeCrearSolicitudPago()?'<button class="btn" onclick="agregarComentarioSolicitud('+s.id+')">Comentar</button>':'')
     +(ROLE.admin?'<button class="btn ghost" style="color:#b3261e" onclick="askDelSolicitud('+s.id+')">Eliminar</button>':'');
   openModal('Solicitud de pago', body, foot, 'wide');
 }
 window.openSolicitudPagoDetalle=openSolicitudPagoDetalle;
 
-async function cambiarEstadoSolicitud(id, nuevo){
+// Compras cancela el pedido de pago (con motivo). No quiere decir que no se haya pagado; esa factura se puede volver a pedir.
+function openCancelarSolicitud(id){
   const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  const ahora=new Date().toISOString();
-  const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:'Cambió el estado a "'+nuevo+'"', estado_nuevo:nuevo});
-  const patch={estado:nuevo, historial:hist, actualizado_en:ahora};
-  if(DEMO_MODE){ Object.assign(s,patch); }
-  else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
-  toast('Estado actualizado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
+  openModal('Cancelar pedido de pago',
+    '<p style="margin:0 0 10px;font-size:13px;line-height:1.5">Se cancela el pedido de pago de la factura <strong>'+esc(s.nro_factura||'')+'</strong> ('+esc(s.proveedor_cod||'')+'). Queda registrado en el historial y Administración lo ve. Cancelar el pedido no quiere decir que no se haya pagado.</p>'
+    +'<div class="field"><label>Motivo *</label><textarea id="sp_motivoCancel" rows="2" placeholder="Ej: el proveedor va a refacturar…"></textarea></div><div id="spCancelMsg" style="font-size:12px;color:#b3261e;min-height:16px"></div>',
+    '<button class="btn ghost" onclick="openSolicitudPagoDetalle('+s.id+')">Volver</button><button class="btn danger" onclick="cancelarSolicitud('+s.id+')">Cancelar pedido</button>');
 }
-window.cambiarEstadoSolicitud=cambiarEstadoSolicitud;
+window.openCancelarSolicitud=openCancelarSolicitud;
+async function cancelarSolicitud(id){
+  const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const motivo=((document.getElementById('sp_motivoCancel')||{}).value||'').trim();
+  if(!motivo){ document.getElementById('spCancelMsg').textContent='Contá el motivo.'; return; }
+  const ahora=new Date().toISOString();
+  const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', texto:'Canceló el pedido de pago. Motivo: '+motivo, estado_nuevo:'Cancelada'});
+  const patch={estado:'Cancelada', historial:hist, actualizado_en:ahora};
+  try{
+    if(DEMO_MODE){ Object.assign(s,patch); }
+    else{ await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)}); await reloadDB(); }
+    toast('Pedido de pago cancelado'); openSolicitudPagoDetalle(id); renderSolicitudesPago();
+  }catch(e){ document.getElementById('spCancelMsg').textContent='Error: '+(e.message||e); }
+}
+window.cancelarSolicitud=cancelarSolicitud;
 
 async function agregarComentarioSolicitud(id){
   const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s) return;
@@ -4620,7 +4645,7 @@ function _spMeta(inf){ return ((DIC.informes_meta)||[]).find(m=>m.informe===inf)
 function _spMetaTxt(inf){
   const m=_spMeta(inf); if(!m) return 'todavía no se cargó';
   const t=m.importado_en?new Date(m.importado_en):null;
-  return 'reporte del '+fmtDate(m.fecha_reporte)+' · subido el '+(t?fmtDate(m.importado_en.slice(0,10))+' '+t.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}):'—')+(m.importado_por?' por '+m.importado_por:'');
+  return 'reporte del '+fmtDate(m.fecha_reporte)+' · subido el '+(t?t.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+t.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}):'—')+(m.importado_por?' por '+m.importado_por:'');
 }
 // Franja con la constancia de los 3 informes (arriba de todas las pestañas)
 function _spMetaBar(){
@@ -4630,6 +4655,37 @@ function _spMetaBar(){
 function _spUltimaImport(inf){ return 'Última actualización: '+_spMetaTxt(inf)+'.'; }
 // Filtro de texto sobre las filas de una tabla (sin re-renderizar, así no se pierde el foco).
 const SP_Q={};   // texto buscado por tabla (sobrevive al re-render de los filtros de columna)
+// Orden por columna: clic en el título (no en ▾ ni en el borde de ajuste). 1er clic ascendente, 2do descendente.
+const SP_SORT={};
+function spSort(ev, ns, k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  const cur=SP_SORT[ns]; SP_SORT[ns]={k, dir:(cur&&cur.k===k&&cur.dir===1)?-1:1};
+  renderSolicitudesPago();
+}
+window.spSort=spSort;
+function _spFlecha(ns,k){ const c=SP_SORT[ns]; return c&&c.k===k?(c.dir===1?' ▲':' ▼'):''; }
+// <th> ordenable; con filtro tipo Excel si col != null
+function _spTh(ns, label, col, k){
+  const on='onclick="spSort(event,\''+ns+'\',\''+k+'\')"';
+  if(col==null) return '<th style="cursor:pointer" title="Ordenar" '+on+'>'+esc(label)+_spFlecha(ns,k)+'</th>';
+  return xlfTh(ns,label,col).replace('<th style="white-space:nowrap">'+esc(label), '<th style="white-space:nowrap;cursor:pointer" title="Ordenar" '+on+'>'+esc(label)+_spFlecha(ns,k));
+}
+function _spOrdenar(ns, rows, claves){
+  const c=SP_SORT[ns]; const fn=c&&claves[c.k]; if(!fn) return rows;
+  return rows.slice().sort((a,b)=>{
+    const x=fn(a), y=fn(b);
+    if(x==null||x==='') return 1; if(y==null||y==='') return -1;   // vacíos siempre al final
+    const r=(typeof x==='number'&&typeof y==='number')?x-y:String(x).localeCompare(String(y),'es',{numeric:true});
+    return r*c.dir;
+  });
+}
+// Quién y cuándo, para cada comentario: "usuario · 02/10/2026 11:26"
+function _spCuando(h){
+  const d=h&&h.fecha?new Date(h.fecha):null;
+  return esc((h&&h.autor)||'')+' · '+(d&&!isNaN(d)?d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit',hour12:false}):'');
+}
+// Pedido vigente (las canceladas no cuentan: esa factura se puede volver a pedir)
+function _spActiva(s){ return s && s.estado!=='Cancelada'; }
 function spFiltrar(inp, tblId){
   SP_Q[tblId]=inp.value;
   const q=_syncFold(inp.value);
@@ -4669,15 +4725,16 @@ function pendFacturarView(){
       if(col==='comp') return o.comprador||'(sin comprador)';
       if(col==='aux') return o.clasif_desc||o.clasif_cod||'(sin auxiliar)';
       if(col==='estado') return o.estado||'(sin estado)';
-      if(col==='fac'){ const ss=solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[]; return !ss.length?'Sin FAC':(ss.some(x=>x.estado===SOLPAGO_FAC_CARGADA)?'FAC cargada (sin pedir pago)':'Pago pedido'); }
+      if(col==='fac'){ const ss=(solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[]).filter(_spActiva); return !ss.length?'Sin FAC':(ss.some(x=>x.estado===SOLPAGO_FAC_CARGADA)?'FAC cargada (sin pedir pago)':'Pago pedido'); }
       return '';
     } });
-  SPF_GRUPOS=todos.filter(o=>xlfPass('spf',o));
+  SPF_GRUPOS=_spOrdenar('spf', todos.filter(o=>xlfPass('spf',o)), { oc:o=>+o.oc_numero||o.oc_numero, prov:o=>o.proveedor_cod, ing:o=>o.fecha_ingreso, comp:o=>o.comprador,
+    aux:o=>o.clasif_desc||o.clasif_cod, pend:o=>o.pend, estado:o=>o.estado });
   const pedirBtn=puede?'<button class="btn sm" style="margin-left:auto" onclick="spPedirPagoSel()">Pedir pago de las tildadas (<span id="spSelCount">0</span>)</button>':'';
   const header='<div class="card-h"><h3>Pendientes de facturar</h3><span class="meta">OCs de Tango con saldo sin facturar. Adjuntá la FAC de cada OC; después tildá las que correspondan y pedí el pago. '+esc(_spUltimaImport('pend_facturar'))+'</span>'+pedirBtn+'</div>';
   if(!todos.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas carga el reporte "Pendientes de facturar" desde su app.</div></div>';
   if(!SPF_GRUPOS.length) return '<div class="card">'+header+_spTools('spfTabla','spf','Buscar OC, proveedor, comprador, auxiliar o FAC…')+'<div class="empty" style="padding:20px">Ninguna OC coincide con los filtros.</div></div>';
-  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
+  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde','Cancelada':'b-rojo'};
   const filas=SPF_GRUPOS.map((o,k)=>{
     const sols=solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[];
     const mon=_spfMoneda(o.moneda);
@@ -4703,8 +4760,8 @@ function pendFacturarView(){
   }).join('');
   return '<div class="card">'+header
     +_spTools('spfTabla','spf','Buscar OC, proveedor, comprador, auxiliar o FAC…')
-    +'<table class="grid" id="spfTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('spf','OC','oc')+xlfTh('spf','Proveedor','prov')+xlfTh('spf','Ingreso','__fecha__')+xlfTh('spf','Comprador','comp')+xlfTh('spf','Auxiliar','aux')
-    +'<th>Pendiente s/imp.</th>'+xlfTh('spf','Estado OC','estado')+xlfTh('spf','FAC','fac')+'<th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
+    +'<table class="grid" id="spfTabla" style="font-size:12.5px"><thead><tr>'+_spTh('spf','OC','oc','oc')+_spTh('spf','Proveedor','prov','prov')+_spTh('spf','Ingreso','__fecha__','ing')+_spTh('spf','Comprador','comp','comp')+_spTh('spf','Auxiliar','aux','aux')
+    +_spTh('spf','Pendiente s/imp.',null,'pend')+_spTh('spf','Estado OC','estado','estado')+xlfTh('spf','FAC','fac')+'<th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
 }
 window.pendFacturarView=pendFacturarView;
 function spSelCount(){ const n=document.querySelectorAll('.spsel:checked').length; const el=document.getElementById('spSelCount'); if(el) el.textContent=n; }
@@ -4754,7 +4811,7 @@ async function guardarFacCargada(k){
   if(!nro) return err('Ingresá el N° de factura.');
   if(netoRaw==='') return err('Ingresá el neto de la FAC sin IVA.');
   if(!f) return err('Adjuntá el PDF de la factura.');
-  const dup=(mem.solicitudes_pago||[]).find(s=>_spKey(s.proveedor_cod,s.nro_factura)===_spKey(o.proveedor_cod,nro));
+  const dup=(mem.solicitudes_pago||[]).find(s=>_spActiva(s) && _spKey(s.proveedor_cod,s.nro_factura)===_spKey(o.proveedor_cod,nro));
   if(dup) return err('Esa factura ya está cargada para '+o.proveedor_cod+' (estado: '+(dup.estado||'Pendiente')+').');
   const neto=+netoRaw||0; const mon=_spfMoneda(o.moneda);
   // Remito: si el Informe OC tiene un único remito de esta OC todavía sin factura, se toma ese.
@@ -4813,7 +4870,7 @@ function pagosRealizarView(){
   if(!rows.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas carga el reporte "Pagos a realizar" desde su app.</div></div>';
   // Solicitud ya existente para cada factura (misma clave que compras_clave_fac en SQL)
   const solPorFac={};
-  (mem.solicitudes_pago||[]).forEach(s=>{ solPorFac[_spClaveFac(s.proveedor_cod,s.nro_factura)]=s; });
+  (mem.solicitudes_pago||[]).filter(_spActiva).forEach(s=>{ solPorFac[_spClaveFac(s.proveedor_cod,s.nro_factura)]=s; });
   const solDe=r=>solPorFac[_spClaveFac(r.proveedor_cod,r.comprobante_numero)]||null;
   const idx={};
   (DIC.oc_informe||[]).forEach(r=>{
@@ -4838,7 +4895,8 @@ function pagosRealizarView(){
       if(col==='sol'){ const s=solDe(r); return s?(s.estado||'Pendiente'):'Sin pedir'; }
       return '';
     } });
-  const visibles=rows.filter(r=>xlfPass('spr',r));
+  const visibles=_spOrdenar('spr', rows.filter(r=>xlfPass('spr',r)), { sol:r=>{ const s=solDe(r); return s?(s.estado||'Pendiente'):'~'; }, fe:r=>r.fecha_emision, fc:r=>r.fecha_contable,
+    tipo:r=>r.tipo_comprobante, prov:r=>r.proveedor_cod, nro:r=>r.comprobante_numero, tot:r=>+r.total_pend_cte||0, aux:r=>join(r,'aux'), oc:r=>join(r,'oc'), rem:r=>join(r,'rem') });
   const ESTADO_CLR={'FAC cargada':'b-gris','Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
   let total=0, sinMatch=0;
   rows.forEach(r=>{ if(!idx[_spKey(r.proveedor_cod, r.comprobante_numero)]) sinMatch++; });
@@ -4863,8 +4921,8 @@ function pagosRealizarView(){
     : (sinMatch?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+sinMatch+' de '+rows.length+' facturas no aparecen en el Informe OC (por ejemplo, facturas sin OC, o un Informe OC desactualizado): quedan con "—".</div>':'');
   return '<div class="card">'+header+(aviso?'<div style="padding:10px 14px 0">'+aviso+'</div>':'')
     +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC o remito…')
-    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('spr','Pago','sol')+xlfTh('spr','Fecha de emisión','__fecha__')+xlfTh('spr','Fecha contable','fc')+xlfTh('spr','Tipo de comprobante','tipo')+xlfTh('spr','Cód. proveedor','prov')
-    +xlfTh('spr','Nro. Comprobante','nro')+'<th>Total Pendiente (CTE)</th>'+xlfTh('spr','Auxiliar','aux')+xlfTh('spr','Orden de compra','oc')+xlfTh('spr','Remito','rem')+'</tr></thead>'
+    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+_spTh('spr','Pago','sol','sol')+_spTh('spr','Fecha de emisión','__fecha__','fe')+_spTh('spr','Fecha contable','fc','fc')+_spTh('spr','Tipo de comprobante','tipo','tipo')+_spTh('spr','Cód. proveedor','prov','prov')
+    +_spTh('spr','Nro. Comprobante','nro','nro')+_spTh('spr','Total Pendiente (CTE)',null,'tot')+_spTh('spr','Auxiliar','aux','aux')+_spTh('spr','Orden de compra','oc','oc')+_spTh('spr','Remito','rem','rem')+'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
     +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="3"></td></tr></tfoot></table></div>';
 }
@@ -4895,7 +4953,7 @@ async function sprPedirPago(){
   const info={};
   (DIC.oc_informe||[]).forEach(r=>{ if(!r.comprobante_numero) return; const k=_spClaveFac(r.proveedor_cod,r.comprobante_numero);
     const o=(info[k]=info[k]||{aux:new Set(),oc:new Set(),rem:new Set(),comp:''}); if(r.clasif_cod) o.aux.add(_syncNorm(r.clasif_cod)); if(r.oc_numero) o.oc.add(nroOCTango(r.oc_numero)); if(r.remito_numero) o.rem.add(_syncNorm(r.remito_numero)); if(r.comprador&&!o.comp) o.comp=r.comprador; });
-  const filas=sel.filter(r=>!(mem.solicitudes_pago||[]).some(s=>_spClaveFac(s.proveedor_cod,s.nro_factura)===_spClaveFac(r.proveedor_cod,r.comprobante_numero))).map(r=>{
+  const filas=sel.filter(r=>!(mem.solicitudes_pago||[]).some(s=>_spActiva(s) && _spClaveFac(s.proveedor_cod,s.nro_factura)===_spClaveFac(r.proveedor_cod,r.comprobante_numero))).map(r=>{
     const m=info[_spClaveFac(r.proveedor_cod,r.comprobante_numero)];
     const hist=[{fecha:ahora, autor, texto:'Pidió el pago desde Pagos a realizar.'+(com?' '+com:''), estado_nuevo:'Pendiente'}];
     return { proveedor_cod:r.proveedor_cod, proveedor:_spProvNombre(r.proveedor_cod), nro_factura:r.comprobante_numero, monto:+r.total_pend_cte||0, moneda:'ARS',
