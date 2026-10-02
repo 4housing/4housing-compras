@@ -2038,8 +2038,8 @@ window.tcDiaAnterior=tcDiaAnterior;
 const IDX_DEF={
   ipc:{ nombre:'IPC (INDEC)', tabla:'compras_idx_ipc', diaEsperado:10,
     fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-31',
-    fuenteLabel:'Fuente IPC', fuentesExtra:[ {label:'Fuente IPIM', url:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32'} ],   // para la columna "IPC Nac. empalme IPIM"
-    campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'} ] },
+    fuenteLabel:'Fuente IPC', fuentesExtra:[ {label:'Fuente IPIM', url:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32'} ],   // para la columna "IPIM Nacional" (columna ipim, sql/2026-10_indices_ipim.sql)
+    campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'}, {k:'ipim', label:'IPIM Nacional'} ] },
   cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'compras_idx_cac', diaEsperado:20,
     fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
     campos:[ {k:'construccion', label:'Costo Construcción'}, {k:'materiales', label:'Materiales'}, {k:'mano_obra', label:'Mano de obra'} ] },
@@ -2133,15 +2133,17 @@ async function idxDelete(ns, periodo){
 let IDX_TAB='ipc';
 function setIdxTab(t){ IDX_TAB=idxDefNs().includes(t)?t:'ipc'; renderIndices(); }
 window.setIdxTab=setIdxTab;
-// Evolución comparada: 9 series candidatas (una por índice/campo), indexadas a 0% en el período
+// Evolución comparada: 10 series candidatas (una por índice/campo), indexadas a 0% en el período
 // base — así se pueden comparar aunque estén en escalas absolutas distintas. Paleta categórica
 // validada (orden fijo, 8 tonos con separación garantizada); Sueldos $ reutiliza el tono de CAC
-// Costo Construcción con trazo punteado (encoding secundario) en vez de sumar un tono sin validar.
+// Costo Construcción con trazo punteado (encoding secundario) en vez de sumar un tono sin validar;
+// IPIM Nacional hace lo mismo con el tono de IPC Nacional.
 // El usuario elige cuáles mostrar (checkboxes); arrancan todas tildadas. Sueldos además solo se
 // lista/dibuja para quien tiene permiso "confidencial" (idxEvolAllVisible, más abajo) — para el
 // resto ni el checkbox ni la serie existen, aunque sigan en IDX_EVOL_SEL.
 const IDX_EVOL_ALL=[
   {key:'ipc_nacional', ns:'ipc', campo:'nacional', label:'IPC Nacional', short:'IPC', color:'#2a78d6'},
+  {key:'ipc_ipim', ns:'ipc', campo:'ipim', label:'IPIM Nacional', short:'IPIM', color:'#2a78d6', dash:'5,3'},
   {key:'uva_valor', ns:'uva', campo:'valor', label:'UVA', short:'UVA', color:'#008300'},
   {key:'cac_construccion', ns:'cac', campo:'construccion', label:'CAC Costo Construcción', short:'CAC Constr.', color:'#eb6834'},
   {key:'cac_materiales', ns:'cac', campo:'materiales', label:'CAC Materiales', short:'CAC Mat.', color:'#eda100'},
