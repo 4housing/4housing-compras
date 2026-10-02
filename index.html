@@ -4316,12 +4316,23 @@ function ocInformeSugerirOCs(proveedorCod){
 }
 
 let SOLPAGO_FILTRO='todas', SOLPAGO_SUGERIDAS=[];
-function setSolPagoFiltro(v){ SOLPAGO_FILTRO=v; renderTesoreria(); }
+function setSolPagoFiltro(v){ SOLPAGO_FILTRO=v; renderSolicitudesPago(); }
 window.setSolPagoFiltro=setSolPagoFiltro;
-function renderSolicitudesPago(){ C().innerHTML=solicitudesPagoView(); }
+// Pestañas del apartado: Pendientes de facturar (cargar la FAC de cada OC) → Pagos solicitados
+// (el circuito de siempre) → Pagos a realizar (reporte de Tango cruzado con el Informe OC).
+let SOLPAGO_TAB='solicitudes';
+function setSolPagoTab(t){ SOLPAGO_TAB=t; renderSolicitudesPago(); }
+window.setSolPagoTab=setSolPagoTab;
+function renderSolicitudesPago(){
+  const tab=(id,lbl)=>'<button class="mtab'+(SOLPAGO_TAB===id?' active':'')+'" onclick="setSolPagoTab(\''+id+'\')">'+lbl+'</button>';
+  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+tab('pendfac','Pendientes de facturar')+tab('solicitudes','Pagos solicitados')+tab('pagos','Pagos a realizar')+'</div>';
+  const inner = SOLPAGO_TAB==='pendfac' ? pendFacturarView() : SOLPAGO_TAB==='pagos' ? pagosRealizarView() : solicitudesPagoView();
+  C().innerHTML=tabs+inner;
+}
 window.renderSolicitudesPago=renderSolicitudesPago;
 function solicitudesPagoView(){
-  const list=(mem.solicitudes_pago||[]).slice();
+  // Las "FAC cargada" todavía no son pedidos de pago: viven en Pendientes de facturar hasta que alguien pide el pago.
+  const list=(mem.solicitudes_pago||[]).filter(s=>s.estado!==SOLPAGO_FAC_CARGADA);
   const filtro=SOLPAGO_FILTRO;
   const shown = filtro==='todas' ? list : list.filter(s=>(s.estado||'Pendiente')===filtro);
   const chip=(v,label)=>'<button class="mtab'+(filtro===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setSolPagoFiltro(\''+v+'\')">'+label+'</button>';
@@ -4345,12 +4356,13 @@ function solicitudesPagoView(){
       +'<td>'+esc(s.proyecto_cod||'—')+'</td>'
       +'<td style="font-size:11px">'+esc(s.comprador||'')+'</td>'
       +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
-      +'<td><span class="badge '+estColor+'">'+esc(s.estado||'Pendiente')+'</span></td>'
+      +'<td><span class="badge '+estColor+'">'+esc(s.estado||'Pendiente')+'</span>'+(s.leido_en?'<div style="font-size:10px;color:var(--muted)" title="'+esc('Leída por '+(s.leido_por||'')+' el '+fmtDate(String(s.leido_en).slice(0,10)))+'">✓ leída por Adm.</div>':'')+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+(s.estado==='Pagada'&&s.fecha_pago?'Pagada '+fmtDate(s.fecha_pago):(s.fecha_pago_estimada?'Estimada '+fmtDate(s.fecha_pago_estimada):'—'))+'</td>'
       +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(ultimo?esc(ultimo.texto||'')+'<div style="font-size:10px">'+esc(ultimo.autor||'')+' · '+fmtDate((ultimo.fecha||'').slice(0,10))+'</div>':'—')+'</td>'
       +'<td><button class="btn ghost sm" onclick="openSolicitudPagoDetalle('+s.id+')">Abrir</button></td></tr>';
   }).join('');
   return '<div class="card">'+header+filtros
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Factura</th><th>Proveedor</th><th>OC</th><th>Proyecto</th><th>Comprador</th><th style="text-align:right">Monto</th><th>Estado</th><th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Factura</th><th>Proveedor</th><th>OC</th><th>Proyecto</th><th>Comprador</th><th style="text-align:right">Monto</th><th>Estado</th><th>Pago</th><th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 window.solicitudesPagoView=solicitudesPagoView;
 
@@ -4453,6 +4465,7 @@ async function guardarSolicitudPago(id){
     if(id==null){
       const hist=[]; if(comentario) hist.push({fecha:ahora, autor, texto:comentario});
       row.estado='Pendiente'; row.historial=hist; row.creado_en=ahora; row.creado_por=autor;
+      if(_spEnPagosRealizar(row.proveedor_cod, row.nro_factura)) row.pagos_realizar_visto_en=ahora;   // ver guardarFacCargada
       if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
       else{ await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
     } else {
@@ -4479,6 +4492,9 @@ function openSolicitudPagoDetalle(id){
     +'<strong>Proyecto:</strong> '+esc(s.proyecto_cod||'—')+' &nbsp; <strong>Comprador:</strong> '+esc(s.comprador||'—')+'<br>'
     +'<strong>Monto:</strong> '+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'<br>'
     +'<strong>Estado:</strong> '+esc(s.estado||'Pendiente')
+    +(s.leido_en?'<br><strong>Leída por Administración:</strong> '+esc(s.leido_por||'')+' · '+fmtDate(String(s.leido_en).slice(0,10)):'')
+    +(s.fecha_pago_estimada?'<br><strong>Fecha estimada de pago:</strong> '+fmtDate(s.fecha_pago_estimada):'')
+    +(s.fecha_pago?'<br><strong>Pagada (detectado en Pagos a realizar):</strong> '+fmtDate(s.fecha_pago):'')
     +'</div>'+estadoBtns
     +'<div style="font-weight:700;font-size:12.5px;margin-top:12px;margin-bottom:4px">Historial</div>'
     +'<div style="max-height:220px;overflow:auto">'+histHtml+'</div>'
@@ -4539,6 +4555,294 @@ async function confirmDelSolicitud(id){
   closeModal(); toast('Solicitud eliminada'); renderSolicitudesPago();
 }
 window.confirmDelSolicitud=confirmDelSolicitud;
+
+/* ===== Solicitudes de pago · Pendientes de facturar y Pagos a realizar =====
+   Dos fotos de reportes de Tango (Mis Consultas → Reportes Diarios) que se importan a mano; cada
+   importación reemplaza la anterior y queda guardada para todos (DIC.pend_facturar / DIC.pagos_realizar).
+   - Pendientes de facturar: una fila por OC; ahí se adjunta la FAC (queda como solicitud en estado
+     "FAC cargada") y, tildando, se pide el pago → pasa a "Pendiente" en Pagos solicitados.
+   - Pagos a realizar: el reporte tal cual + Auxiliar / OC / Remito buscados en el Informe OC
+     por proveedor + N° de comprobante. */
+const SOLPAGO_FAC_CARGADA='FAC cargada';
+let SPF_GRUPOS=[];
+function _spKey(prov,nro){ return String(prov==null?'':prov).trim().toUpperCase()+'|'+String(nro==null?'':nro).trim().toUpperCase(); }
+// Misma clave que public.compras_clave_fac() en SQL: proveedor + N° de comprobante sin espacios/guiones, en mayúsculas.
+function _spClaveFac(prov,nro){ return String(prov==null?'':prov).replace(/\s/g,'').toUpperCase()+'|'+String(nro==null?'':nro).replace(/[^A-Za-z0-9]/g,'').toUpperCase(); }
+function _spEnPagosRealizar(prov,nro){ const k=_spClaveFac(prov,nro); return (DIC.pagos_realizar||[]).some(r=>_spClaveFac(r.proveedor_cod,r.comprobante_numero)===k); }
+function _spMoney(v,mon){ return (mon==='USD'?'US$ ':'$ ')+fmtNum(v,2); }
+function _spProvNombre(cod){
+  const c=String(cod||'').trim().toUpperCase();
+  const p=((typeof DIC!=='undefined'&&DIC.proveedores)||[]).find(x=>String(x.codigo||'').trim().toUpperCase()===c);
+  return p?(p.razon||p.comercial||''):'';
+}
+function _spUltimaImport(rows){
+  const f=(rows||[]).map(r=>r.importado_en||'').filter(Boolean).sort().pop();
+  return f?('Última importación: '+fmtDate(f.slice(0,10))):'Todavía no se importó.';
+}
+// Filtro de texto sobre las filas de una tabla (sin re-renderizar, así no se pierde el foco).
+function spFiltrar(inp, tblId){
+  const q=_syncFold(inp.value);
+  document.querySelectorAll('#'+tblId+' tbody tr').forEach(tr=>{ tr.style.display=(!q||(tr.dataset.q||'').includes(q))?'':'none'; });
+}
+window.spFiltrar=spFiltrar;
+
+// --- Importación (la misma pantalla para los dos reportes) ---
+// Pagos a realizar NO se importa desde acá: lo sube Administración y Finanzas desde su app
+// (función compras_pagos_realizar_importar, que además marca Pagadas las FAC que salieron del informe).
+const SP_REPORTES={
+  pendfac:{ titulo:'Pendientes de facturar', tabla:'compras_pend_facturar', dic:'pend_facturar',
+    test:h=>_syncIdx(h,'Nro. Orden de Compra')>=0 && _syncIdx(h,'Pendiente de facturar sin impuestos')>=0 }
+};
+function openImportReporteSP(tipo){
+  const R=SP_REPORTES[tipo]; if(!R) return;
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "'+esc(R.titulo)+'" (Mis Consultas → Reportes Diarios). Reemplaza todo lo importado antes: es una foto del momento y la ven todos.</div>'
+    +'<div class="field"><label>'+esc(R.titulo)+' (.xlsx) *</label><input id="sprep_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div id="sprepMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="importarReporteSP(\''+tipo+'\')">Importar</button>';
+  openModal('Importar '+R.titulo+' de Tango', body, foot);
+}
+window.openImportReporteSP=openImportReporteSP;
+async function importarReporteSP(tipo){
+  const R=SP_REPORTES[tipo]; if(!R) return;
+  const f=(document.getElementById('sprep_file').files||[])[0];
+  const msg=document.getElementById('sprepMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    // raw:true → números y fechas (serie de Excel) sin el formato de texto de la celda
+    let rows=null;
+    for(const name of wb.SheetNames){
+      const rr=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:''});
+      if(rr.length && R.test(rr[0].map(h=>_syncNorm(h)))){ rows=rr; break; }
+    }
+    if(!rows) throw new Error('No encontré una hoja con las columnas del reporte "'+R.titulo+'".');
+    const H=rows[0].map(h=>_syncNorm(h));
+    const col=(...c)=>_syncIdx(H,...c);
+    const txt=(row,i)=>i>=0?_syncNorm(row[i]):'';
+    const num=(row,i)=>(i>=0&&row[i]!=='')?_syncNum(row[i]):null;
+    const fec=(row,i)=>i>=0?(_syncFechaISO(row[i])||null):null;
+    const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+    const ahora=new Date().toISOString();
+    const out=[];
+    if(tipo==='pendfac'){
+      const ix={ tal:col('Talonario oc'), oc:col('Nro. Orden de Compra'), prov:col('Cód. proveedor','Cod. proveedor'), fecha:col('Fecha de ingreso'),
+        comp:col('Nombre del comprador'), clasif:col('Cód. clasificación (Comprobante)','Cod. clasificacion (Comprobante)'),
+        clasifDesc:col('Descripción Clasificación (Comprobante)','Descripcion Clasificacion (Comprobante)'),
+        art:col('Cód. Artículo','Cod. Articulo'), desc:col('Descripción','Descripcion'), cantPed:col('Cantidad pedida'),
+        cantPend:col('Cantidad Pendiente de Facturar'), totPed:col('Total pedido sin impuestos'), pend:col('Pendiente de facturar sin impuestos'),
+        estado:col('Estado'), estadoRen:col('Estado del renglón','Estado del renglon'), costeo:col('COSTEO (Adic.)'), estructura:col('ESTRUCTURA (Adic.)'),
+        ley:[1,2,3,4,5].map(n=>col('Leyenda'+n)), cond:col('Condición de compra','Condicion de compra'), mon:col('Moneda') };
+      for(let r=1;r<rows.length;r++){
+        const row=rows[r]; const oc=txt(row,ix.oc); if(!oc) continue;   // la última fila de Tango es el total
+        out.push({ talonario: ix.tal>=0&&row[ix.tal]!==''?Math.round(_syncNum(row[ix.tal])):null, oc_numero:nroOCTango(oc),
+          proveedor_cod:txt(row,ix.prov), fecha_ingreso:fec(row,ix.fecha), comprador:txt(row,ix.comp),
+          clasif_cod:txt(row,ix.clasif), clasif_desc:txt(row,ix.clasifDesc), cod_articulo:txt(row,ix.art), descripcion:txt(row,ix.desc),
+          cantidad_pedida:num(row,ix.cantPed), cantidad_pend_facturar:num(row,ix.cantPend),
+          total_pedido_sin_imp:num(row,ix.totPed), pend_facturar_sin_imp:num(row,ix.pend),
+          estado:txt(row,ix.estado), estado_renglon:txt(row,ix.estadoRen), costeo:txt(row,ix.costeo), estructura:txt(row,ix.estructura),
+          leyendas:ix.ley.map(i=>txt(row,i)).filter(Boolean).join(' · '), condicion_compra:txt(row,ix.cond), moneda:txt(row,ix.mon),
+          importado_en:ahora, importado_por:autor });
+      }
+    }
+    if(!out.length) throw new Error('No encontré filas de datos.');
+    if(!DEMO_MODE){
+      msg.textContent='Guardando '+out.length+' filas…';
+      await sbFetch('/'+R.tabla+'?id=gt.0',{method:'DELETE',prefer:'return=minimal'});
+      for(let k=0;k<out.length;k+=500){ await sbFetch('/'+R.tabla,{method:'POST',prefer:'return=minimal',body:JSON.stringify(out.slice(k,k+500))}); }
+    }
+    DIC[R.dic]=out;
+    closeModal(); toast(R.titulo+' actualizado: '+out.length+' filas'); renderSolicitudesPago();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.importarReporteSP=importarReporteSP;
+
+// --- Pendientes de facturar: una fila por OC, con las FAC ya cargadas para esa OC ---
+function _spfAgrupar(){
+  const g={};
+  (DIC.pend_facturar||[]).forEach(r=>{
+    const k=_spKey(r.proveedor_cod, nroOCTango(r.oc_numero));
+    const o=(g[k]=g[k]||{ oc_numero:nroOCTango(r.oc_numero), proveedor_cod:r.proveedor_cod, fecha_ingreso:r.fecha_ingreso, comprador:r.comprador,
+      clasif_cod:r.clasif_cod, clasif_desc:r.clasif_desc, estado:r.estado, condicion_compra:r.condicion_compra, moneda:r.moneda, pend:0, total:0, renglones:[] });
+    o.pend+=(+r.pend_facturar_sin_imp||0); o.total+=(+r.total_pedido_sin_imp||0); o.renglones.push(r);
+  });
+  return Object.values(g).sort((a,b)=>String(b.fecha_ingreso||'').localeCompare(String(a.fecha_ingreso||'')));
+}
+function _spfMoneda(m){ return /extranj/i.test(m||'')?'USD':'ARS'; }
+function _spfDifiere(s){ return s.neto_oc!=null && s.neto_oc!=='' && Math.abs((+s.monto||0)-(+s.neto_oc||0))>1; }
+function pendFacturarView(){
+  SPF_GRUPOS=_spfAgrupar();
+  const puede=puedeCrearSolicitudPago();
+  const solsPorOC={};
+  (mem.solicitudes_pago||[]).forEach(s=>{ const k=_spKey(s.proveedor_cod, nroOCTango(s.oc_numero)); (solsPorOC[k]=solsPorOC[k]||[]).push(s); });
+  const importBtn='<button class="btn ghost sm" style="margin-left:auto" onclick="openImportReporteSP(\'pendfac\')">Importar Pendientes de facturar</button>';
+  const pedirBtn=puede?'<button class="btn sm" style="margin-left:8px" onclick="spPedirPagoSel()">Pedir pago de las tildadas (<span id="spSelCount">0</span>)</button>':'';
+  const header='<div class="card-h"><h3>Pendientes de facturar</h3><span class="meta">OCs de Tango con saldo sin facturar. Adjuntá la FAC de cada OC; después tildá las que correspondan y pedí el pago. '+esc(_spUltimaImport(DIC.pend_facturar))+'</span>'+importBtn+pedirBtn+'</div>';
+  if(!SPF_GRUPOS.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">No hay datos. Importá el reporte "Pendientes de facturar" de Tango.</div></div>';
+  const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
+  const filas=SPF_GRUPOS.map((o,k)=>{
+    const sols=solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[];
+    const mon=_spfMoneda(o.moneda);
+    const facs=sols.map(s=>{
+      const warn=_spfDifiere(s)?' <span title="El neto de la FAC no coincide con lo pendiente de facturar de la OC" style="color:#b3261e">⚠</span>':'';
+      const link='<a href="#" onclick="openSolicitudPagoDetalle('+s.id+');return false">'+esc(s.nro_factura||'s/n')+'</a>';
+      if(s.estado===SOLPAGO_FAC_CARGADA){
+        return '<div style="white-space:nowrap">'+(puede?'<input type="checkbox" class="spsel" value="'+s.id+'" onchange="spSelCount()" style="vertical-align:middle"> ':'')+link+warn+' <span class="badge b-gris">FAC cargada</span></div>';
+      }
+      return '<div style="white-space:nowrap">'+link+warn+' <span class="badge '+(ESTADO_CLR[s.estado]||'b-gris')+'">'+esc(s.estado||'Pendiente')+'</span></div>';
+    }).join('');
+    const q=_syncFold([o.oc_numero,o.proveedor_cod,_spProvNombre(o.proveedor_cod),o.comprador,o.clasif_cod,o.clasif_desc,sols.map(s=>s.nro_factura).join(' ')].join(' '));
+    return '<tr data-q="'+esc(q)+'">'
+      +'<td><strong>'+esc(o.oc_numero)+'</strong><div style="font-size:10.5px;color:var(--muted)">'+o.renglones.length+' renglón'+(o.renglones.length===1?'':'es')+'</div></td>'
+      +'<td style="font-size:11px"><strong>'+esc(o.proveedor_cod||'')+'</strong> '+esc(_spProvNombre(o.proveedor_cod))+'</td>'
+      +'<td>'+fmtDate(o.fecha_ingreso)+'</td>'
+      +'<td style="font-size:11px">'+esc(o.comprador||'')+'</td>'
+      +'<td style="font-size:11px">'+esc(o.clasif_desc||o.clasif_cod||'—')+'</td>'
+      +'<td style="text-align:right;white-space:nowrap">'+_spMoney(o.pend,mon)+'<div style="font-size:10.5px;color:var(--muted)">de '+_spMoney(o.total,mon)+'</div></td>'
+      +'<td style="font-size:11px">'+esc(o.estado||'')+'</td>'
+      +'<td style="font-size:11.5px">'+(facs||'<span style="color:var(--muted)">—</span>')+'</td>'
+      +'<td>'+(puede?'<button class="btn ghost sm" onclick="openAdjuntarFac('+k+')">Adjuntar FAC</button>':'')+'</td></tr>';
+  }).join('');
+  return '<div class="card">'+header
+    +'<div style="padding:10px 14px 0"><input type="search" placeholder="Buscar OC, proveedor, comprador, auxiliar o FAC…" oninput="spFiltrar(this,\'spfTabla\')" style="width:100%;max-width:420px;margin-bottom:10px"></div>'
+    +'<table class="grid" id="spfTabla" style="font-size:12.5px"><thead><tr><th>OC</th><th>Proveedor</th><th>Ingreso</th><th>Comprador</th><th>Auxiliar</th><th style="text-align:right">Pendiente s/imp.</th><th>Estado OC</th><th>FAC</th><th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
+}
+window.pendFacturarView=pendFacturarView;
+function spSelCount(){ const n=document.querySelectorAll('.spsel:checked').length; const el=document.getElementById('spSelCount'); if(el) el.textContent=n; }
+window.spSelCount=spSelCount;
+
+function openAdjuntarFac(k){
+  const o=SPF_GRUPOS[k]; if(!o) return;
+  if(!puedeCrearSolicitudPago()){ toast('No tenés permiso para cargar solicitudes de pago.'); return; }
+  const mon=_spfMoneda(o.moneda);
+  const body='<div style="font-size:12.5px;line-height:1.7;margin-bottom:10px">'
+    +'<strong>OC:</strong> '+esc(o.oc_numero)+' &nbsp; <strong>Proveedor:</strong> '+esc(o.proveedor_cod||'')+' '+esc(_spProvNombre(o.proveedor_cod))+'<br>'
+    +'<strong>Auxiliar:</strong> '+esc(o.clasif_desc||o.clasif_cod||'—')+' &nbsp; <strong>Comprador:</strong> '+esc(o.comprador||'—')+'<br>'
+    +'<strong>Pendiente de facturar (sin impuestos):</strong> '+_spMoney(o.pend,mon)+'</div>'
+    +'<div class="frow c2"><div class="field"><label>N° de factura *</label><input id="spf_nro" type="text" placeholder="Ej. A0000700005352" onblur="spfNroMsg('+k+')"><div id="spfNro" style="font-size:11px;margin-top:3px"></div></div>'
+    +'<div class="field"><label>Neto de la FAC sin IVA ('+(mon==='USD'?'US$':'$')+') *</label><input id="spf_neto" type="number" step="0.01" oninput="spfDifMsg('+k+')"></div></div>'
+    +'<div class="field"><label>Factura (PDF) *</label><input id="spf_file" type="file" accept="application/pdf,image/*"></div>'
+    +'<div id="spfDif" style="font-size:12px;margin-top:4px;min-height:16px"></div>'
+    +'<div id="spfMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarFacCargada('+k+')">Guardar FAC</button>';
+  openModal('Adjuntar FAC a la OC '+o.oc_numero, body, foot, 'wide');
+}
+window.openAdjuntarFac=openAdjuntarFac;
+function spfDifMsg(k){
+  const o=SPF_GRUPOS[k]; const el=document.getElementById('spfDif'); if(!o||!el) return;
+  const v=document.getElementById('spf_neto').value; if(v===''){ el.textContent=''; return; }
+  const dif=(+v||0)-o.pend; const mon=_spfMoneda(o.moneda);
+  if(Math.abs(dif)>1){ el.style.color='#b3261e'; el.textContent='⚠ No coincide con lo pendiente de la OC: diferencia '+(dif>0?'+':'−')+_spMoney(Math.abs(dif),mon)+'. Se puede guardar igual; queda marcado.'; }
+  else{ el.style.color='#4f8a53'; el.textContent='✓ Coincide con lo pendiente de facturar de la OC.'; }
+}
+window.spfDifMsg=spfDifMsg;
+// El N° tiene que estar escrito igual que en Tango para que Administración la encuentre en Pagos a realizar.
+function spfNroMsg(k){
+  const o=SPF_GRUPOS[k]; const el=document.getElementById('spfNro'); if(!o||!el) return;
+  const nro=(document.getElementById('spf_nro').value||'').trim(); if(!nro||!(DIC.pagos_realizar||[]).length){ el.textContent=''; return; }
+  if(_spEnPagosRealizar(o.proveedor_cod,nro)){ el.style.color='#4f8a53'; el.textContent='✓ Figura en Pagos a realizar.'; }
+  else{ el.style.color='var(--muted)'; el.textContent='Todavía no figura en Pagos a realizar (o el N° está escrito distinto que en Tango, ej. A0000700005352).'; }
+}
+window.spfNroMsg=spfNroMsg;
+async function guardarFacCargada(k){
+  const o=SPF_GRUPOS[k]; if(!o) return;
+  if(!puedeCrearSolicitudPago()) return;
+  const msg=document.getElementById('spfMsg');
+  const err=t=>{ msg.style.color='#b3261e'; msg.textContent=t; };
+  const nro=(document.getElementById('spf_nro').value||'').trim();
+  const netoRaw=document.getElementById('spf_neto').value;
+  const f=(document.getElementById('spf_file').files||[])[0];
+  if(!nro) return err('Ingresá el N° de factura.');
+  if(netoRaw==='') return err('Ingresá el neto de la FAC sin IVA.');
+  if(!f) return err('Adjuntá el PDF de la factura.');
+  const dup=(mem.solicitudes_pago||[]).find(s=>_spKey(s.proveedor_cod,s.nro_factura)===_spKey(o.proveedor_cod,nro));
+  if(dup) return err('Esa factura ya está cargada para '+o.proveedor_cod+' (estado: '+(dup.estado||'Pendiente')+').');
+  const neto=+netoRaw||0; const mon=_spfMoneda(o.moneda);
+  // Remito: si el Informe OC tiene un único remito de esta OC todavía sin factura, se toma ese.
+  const rems=[...new Set((DIC.oc_informe||[]).filter(r=>nroOCTango(r.oc_numero)===o.oc_numero && String(r.proveedor_cod||'').toUpperCase()===String(o.proveedor_cod||'').toUpperCase() && r.remito_numero && !r.comprobante_numero).map(r=>_syncNorm(r.remito_numero)))];
+  const ahora=new Date().toISOString();
+  const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  const hist=[{fecha:ahora, autor, texto:'FAC cargada desde Pendientes de facturar (neto sin IVA '+_spMoney(neto,mon)+').', estado_nuevo:SOLPAGO_FAC_CARGADA}];
+  if(Math.abs(neto-o.pend)>1) hist.push({fecha:ahora, autor, texto:'⚠ El neto de la FAC ('+_spMoney(neto,mon)+') no coincide con lo pendiente de facturar de la OC ('+_spMoney(o.pend,mon)+').'});
+  const row={ proveedor_cod:o.proveedor_cod, proveedor:_spProvNombre(o.proveedor_cod), comprador:o.comprador||'', oc_numero:o.oc_numero,
+    remito_numero:rems.length===1?rems[0]:'', proyecto_cod:o.clasif_cod||'', nro_factura:nro, monto:neto, moneda:mon, neto_oc:o.pend,
+    estado:SOLPAGO_FAC_CARGADA, historial:hist, creado_en:ahora, creado_por:autor };
+  // Si la FAC ya figura en Pagos a realizar, queda marcada como vista: así, cuando salga del informe, pasa a Pagada.
+  if(_spEnPagosRealizar(o.proveedor_cod, nro)) row.pagos_realizar_visto_en=ahora;
+  try{
+    msg.style.color='var(--muted)'; msg.textContent='Subiendo la factura…';
+    const path='nueva-'+Date.now()+'/'+Date.now()+'_'+f.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    if(!DEMO_MODE) await sbStorageUpload('facturas', path, f);
+    row.adjunto_path=path; row.adjunto_nombre=f.name;
+    if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
+    else{ await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
+    closeModal(); toast('FAC cargada en la OC '+o.oc_numero); renderSolicitudesPago();
+  }catch(e){ err('Error: '+(e.message||e)); }
+}
+window.guardarFacCargada=guardarFacCargada;
+async function spPedirPagoSel(){
+  if(!puedeCrearSolicitudPago()) return;
+  const ids=[...document.querySelectorAll('.spsel:checked')].map(c=>c.value);
+  if(!ids.length){ toast('Tildá al menos una FAC cargada.'); return; }
+  const ahora=new Date().toISOString();
+  const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  let ok=0;
+  try{
+    for(const id of ids){
+      const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id));
+      if(!s || s.estado!==SOLPAGO_FAC_CARGADA) continue;
+      const hist=(s.historial||[]).slice(); hist.push({fecha:ahora, autor, texto:'Pidió el pago.', estado_nuevo:'Pendiente'});
+      const patch={estado:'Pendiente', historial:hist, actualizado_en:ahora};
+      if(DEMO_MODE) Object.assign(s,patch);
+      else await sbFetch('/compras_solicitudes_pago?id=eq.'+id,{method:'PATCH',body:JSON.stringify(patch)});
+      ok++;
+    }
+  }catch(e){ toast('Error pidiendo el pago ('+ok+' de '+ids.length+' hechas): '+(e.message||e)); }
+  if(!DEMO_MODE) await reloadDB();
+  if(ok) toast('Pago pedido: '+ok+' FAC pasaron a Pagos solicitados');
+  renderSolicitudesPago();
+}
+window.spPedirPagoSel=spPedirPagoSel;
+
+// --- Pagos a realizar: reporte de Tango + Auxiliar / OC / Remito del Informe OC ---
+function pagosRealizarView(){
+  const rows=(DIC.pagos_realizar||[]).slice().sort((a,b)=>String(a.fecha_emision||'').localeCompare(String(b.fecha_emision||'')));
+  const importBtn='<button class="btn ghost sm" style="margin-left:auto" onclick="openImportOCInforme()">Importar Informe OC</button>';
+  const header='<div class="card-h"><h3>Pagos a realizar</h3><span class="meta">Reporte de Tango (lo importa Administración y Finanzas desde su app) con el Auxiliar, la OC y el Remito de cada factura, buscados en el Informe OC por proveedor + N° de comprobante. '+esc(_spUltimaImport(DIC.pagos_realizar))+'</span>'+importBtn+'</div>';
+  if(!rows.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas importa el reporte "Pagos a realizar" desde su app.</div></div>';
+  const idx={};
+  (DIC.oc_informe||[]).forEach(r=>{
+    if(!r.comprobante_numero) return;
+    const k=_spKey(r.proveedor_cod, r.comprobante_numero);
+    const o=(idx[k]=idx[k]||{aux:new Set(), oc:new Set(), rem:new Set()});
+    if(r.clasif_cod) o.aux.add(_syncNorm(r.clasif_cod));
+    if(r.oc_numero) o.oc.add(nroOCTango(r.oc_numero));
+    if(r.remito_numero) o.rem.add(_syncNorm(r.remito_numero));
+  });
+  const lista=set=>set&&set.size?[...set].map(esc).join('<br>'):'<span style="color:var(--muted)">—</span>';
+  let total=0, sinMatch=0;
+  const filas=rows.map(r=>{
+    const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)];
+    if(!m) sinMatch++;
+    total+=(+r.total_pend_cte||0);
+    const q=_syncFold([r.proveedor_cod,_spProvNombre(r.proveedor_cod),r.comprobante_numero,r.tipo_comprobante,m?[...m.aux,...m.oc,...m.rem].join(' '):''].join(' '));
+    return '<tr data-q="'+esc(q)+'">'
+      +'<td>'+fmtDate(r.fecha_emision)+'</td><td>'+fmtDate(r.fecha_contable)+'</td><td>'+esc(r.tipo_comprobante||'')+'</td>'
+      +'<td title="'+esc(_spProvNombre(r.proveedor_cod))+'"><strong>'+esc(r.proveedor_cod||'')+'</strong></td>'
+      +'<td>'+esc(r.comprobante_numero||'')+'</td>'
+      +'<td style="text-align:right;white-space:nowrap">'+fmtNum(r.total_pend_cte,2)+'</td>'
+      +'<td style="font-size:11px">'+lista(m&&m.aux)+'</td><td style="font-size:11px">'+lista(m&&m.oc)+'</td><td style="font-size:11px">'+lista(m&&m.rem)+'</td></tr>';
+  }).join('');
+  const aviso=!(DIC.oc_informe||[]).length
+    ? '<div style="font-size:12px;color:#b3261e;margin-bottom:8px">No hay Informe OC importado: no se pueden completar Auxiliar / OC / Remito.</div>'
+    : (sinMatch?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+sinMatch+' de '+rows.length+' facturas no aparecen en el Informe OC (por ejemplo, facturas sin OC, o un Informe OC desactualizado): quedan con "—".</div>':'');
+  return '<div class="card">'+header+'<div style="padding:10px 14px 0">'+aviso
+    +'<input type="search" placeholder="Buscar proveedor, comprobante, auxiliar, OC o remito…" oninput="spFiltrar(this,\'sprTabla\')" style="width:100%;max-width:420px;margin-bottom:10px"></div>'
+    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr><th>Fecha de emisión</th><th>Fecha contable</th><th>Tipo de comprobante</th><th>Cód. proveedor</th><th>Nro. Comprobante</th><th style="text-align:right">Total Pendiente (CTE)</th><th>Auxiliar</th><th>Orden de compra</th><th>Remito</th></tr></thead>'
+    +'<tbody>'+filas+'</tbody>'
+    +'<tfoot><tr><td colspan="5" style="text-align:right;font-weight:700">Total ('+rows.length+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="3"></td></tr></tfoot></table></div>';
+}
+window.pagosRealizarView=pagosRealizarView;
 
 /* ===== Filtro tipo Excel genérico (reutilizable por namespace) =====
    Se usa en Proyectado / Pagos pendientes / Arqueo de caja: mismo look & feel
@@ -10505,6 +10809,15 @@ async function reloadDB(){
       // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
       (async()=>{ try{ mem.solicitudes_pago = await sbFetchAll('/compras_solicitudes_pago?select=*&order=id.desc'); }
       catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; } })(),
+      // Reportes de Tango de Solicitudes de pago (foto importada a mano): Pendientes de facturar y Pagos a realizar
+      (async()=>{ try{
+        const pf = await sbFetchAll('/compras_pend_facturar?select=*&order=id.asc');
+        if(pf) DIC.pend_facturar = pf;
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const pr = await sbFetchAll('/compras_pagos_realizar?select=*&order=id.asc');
+        if(pr) DIC.pagos_realizar = pr;
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Motivos de cierre de saldo: lista editable propia de la app (no viene de Tango)
       (async()=>{ try{
         const mot = await sbFetchAll('/compras_motivos_cierre?select=id,descripcion,activo&order=id.asc');
