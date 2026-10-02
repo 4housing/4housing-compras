@@ -4381,7 +4381,8 @@ function solicitudesPagoView(){
   const list=(mem.solicitudes_pago||[]).filter(s=>s.estado!==SOLPAGO_FAC_CARGADA);
   const filtro=SOLPAGO_FILTRO;
   const porEstado = filtro==='todas' ? list : list.filter(s=>(s.estado||'Pendiente')===filtro);
-  xlfRegister('sps', { rows:()=>porEstado, onChange:renderSolicitudesPago, dateVal:s=>String(s.creado_en||'').slice(0,10),
+  // Rango de fechas (▾ de "Fecha de pago"): la real si está Pagada, si no la estimada → pagos comprometidos para/hasta una fecha.
+  xlfRegister('sps', { rows:()=>porEstado, onChange:renderSolicitudesPago, dateVal:_spFechaPago,
     val:(s,col)=>{
       if(col==='fac') return s.nro_factura||'(sin N°)';
       if(col==='prov') return s.proveedor_cod||'(sin proveedor)';
@@ -4394,9 +4395,11 @@ function solicitudesPagoView(){
       return '';
     } });
   const ult=s=>{ const h=s.historial||[]; return h.length?h[h.length-1]:null; };
-  const shown = _spOrdenar('sps', porEstado.filter(s=>xlfPass('sps',s)).sort((a,b)=>(b.id||0)-(a.id||0)), {
+  // Con un rango de fechas activo, las solicitudes sin fecha de pago quedan afuera (xlfPass solo no las saca con "hasta")
+  const conRango=xlfActive('sps','__fecha__');
+  const shown = _spOrdenar('sps', porEstado.filter(s=>xlfPass('sps',s) && (!conRango || !!_spFechaPago(s))).sort((a,b)=>(b.id||0)-(a.id||0)), {
     fac:s=>s.nro_factura, prov:s=>s.proveedor_cod, oc:s=>nroOCTango(s.oc_numero), proy:s=>s.proyecto_cod, comp:s=>s.comprador,
-    mon:s=>+s.monto||0, estado:s=>s.estado||'Pendiente', pago:s=>s.fecha_pago||s.fecha_pago_estimada||'', ult:s=>{ const u=ult(s); return u?String(u.fecha||''):''; },
+    mon:s=>+s.monto||0, estado:s=>s.estado||'Pendiente', pago:s=>s.fecha_pago||s.fecha_pago_estimada||'', fpago:_spFechaPago, ult:s=>{ const u=ult(s); return u?String(u.fecha||''):''; },
     creado:s=>String(s.creado_en||'') });
   const chip=(v,label)=>'<button class="mtab'+(filtro===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setSolPagoFiltro(\''+v+'\')">'+label+'</button>';
   const filtros='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+chip('todas','Todas ('+list.length+')')
@@ -4420,14 +4423,20 @@ function solicitudesPagoView(){
       +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
       +'<td><span class="badge '+estColor+'">'+esc(s.estado||'Pendiente')+'</span>'+(s.leido_en?'<div style="font-size:10px;color:var(--muted)" title="'+esc('Leída por '+(s.leido_por||'')+' el '+fmtDate(String(s.leido_en).slice(0,10)))+'">✓ leída por Adm.</div>':'')+'</td>'
       +'<td style="font-size:11px;white-space:nowrap">'+_spPagoTxt(s)+'</td>'
+      +'<td style="white-space:nowrap">'+(_spFechaPago(s)?fmtDate(_spFechaPago(s))+'<div style="font-size:10px;color:var(--muted)">'+(s.fecha_pago?'pagada':'estimada')+'</div>':'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(ultimo?esc(ultimo.texto||'')+'<div style="font-size:10px">'+_spCuando(ultimo)+'</div>':'—')+'</td>'
       +'<td><button class="btn ghost sm" onclick="openSolicitudPagoDetalle('+s.id+')">Abrir</button></td></tr>';
   }).join('');
+  // Total de lo que se ve (estado + filtros de columna), por moneda
+  const tot={ARS:0,USD:0}; shown.forEach(s=>{ tot[s.moneda==='USD'?'USD':'ARS']+=(+s.monto||0); });
+  const pie='<tfoot><tr><td colspan="5" style="text-align:right"><strong>Total ('+shown.length+(shown.length!==porEstado.length?' de '+porEstado.length:'')+')</strong></td>'
+    +'<td style="text-align:right;white-space:nowrap"><strong>'+_spMoney(tot.ARS,'ARS')+'</strong>'+(tot.USD?'<div><strong>'+_spMoney(tot.USD,'USD')+'</strong></div>':'')+'</td><td colspan="5"></td></tr></tfoot>';
   return '<div class="card">'+header+filtros
     +_spTools('spsTabla','sps','Buscar factura, proveedor, OC, proyecto o comprador…')
     +'<table class="grid" id="spsTabla" style="font-size:12.5px"><thead><tr>'+_spTh('sps','Factura','fac','fac')+_spTh('sps','Proveedor','prov','prov')+_spTh('sps','OC','oc','oc')+_spTh('sps','Proyecto','proy','proy')+_spTh('sps','Comprador','comp','comp')
-    +_spTh('sps','Monto','mon','mon')+_spTh('sps','Estado','estado','estado')+_spTh('sps','Pago','pago','pago')+_spTh('sps','Último comentario',null,'ult')+'<th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +_spTh('sps','Monto','mon','mon')+_spTh('sps','Estado','estado','estado')+_spTh('sps','Pago','pago','pago')+_spTh('sps','Fecha de pago','__fecha__','fpago')+_spTh('sps','Último comentario',null,'ult')+'<th></th></tr></thead><tbody>'+rows+'</tbody>'+pie+'</table></div>';
 }
+function _spFechaPago(s){ return s.fecha_pago||s.fecha_pago_estimada||''; }
 // Columna "Pago": pagada / fuera del informe / fecha estimada
 function _spPagoTxt(s){
   if(s.estado==='Pagada') return 'Pagada'+(s.fecha_pago?' '+fmtDate(s.fecha_pago):'');
