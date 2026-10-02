@@ -9183,7 +9183,7 @@ const SOLP_ESTADO_BADGE = {
   'RECHAZADA':'b-rojo', 'PENDIENTE CERTIFICADO':'b-rojo', 'PENDIENTE PROY Y DISEÑO':'b-rojo',
   'PENDIENTE DE PAGO':'b-rojo', 'PENDIENTE FACTURA ML':'b-rojo', 'PENDIENTE GERENCIA':'b-rojo',
 };
-function solpEstadoBadge(e){ return e?'<span class="badge '+(SOLP_ESTADO_BADGE[e]||'b-gris')+'">'+esc(e)+'</span>':'—'; }
+function solpEstadoBadge(e){ return e?'<span class="badge '+(SOLP_ESTADO_BADGE[e]||'b-gris')+'" style="white-space:nowrap;font-size:10px;padding:2px 8px" title="'+esc(e)+'">'+esc(e)+'</span>':'—'; }
 // Catálogo fijo de Forma de Pago (campo opcional, se carga a mano con las que correspondan).
 const SOLP_COND_PAGO = ['01 - CONTADO','02 - TARJETA DE CREDITO','03 - CHEQUE','04 - TRANSFERENCIA','05 - CON ANTICIPO','06 - VER OBSERVACIONES'];
 // Orden fijo de compradores para la matriz Obra × comprador (pedido de Micaela, no alfabético ni por
@@ -9890,7 +9890,7 @@ async function renderSolp(){
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
       + DET_COLS.map(c=>solpTh(c[0],c[1])).join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
     + (detOrd.length? detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
-        return '<tr>'+td(r[0],'trunc')+td(r[1])+'<td>'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+'<td class="trunc" title="'+esc(x.proveedor||'')+'">'+esc(x.proveedor_cod||'—')+'</td>'+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
+        return '<tr>'+td(r[0],'trunc')+td(r[1])+'<td style="white-space:nowrap">'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+'<td class="trunc" title="'+esc(x.proveedor||'')+'">'+esc(x.proveedor_cod||'—')+'</td>'+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[15],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
