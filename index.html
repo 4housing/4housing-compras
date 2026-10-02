@@ -1026,7 +1026,7 @@ function setHeader(view){
     document.getElementById('topActions').innerHTML=(canEditOG()?'<button class="btn" onclick="openSolpForm()">'+ICO.plus+'Nueva SOLP</button>':'');
   }else if(view==='evalprov'){
     document.getElementById('topActions').innerHTML=(canEvalProv()?'<button class="btn" onclick="openEvalProvForm()">'+ICO.plus+'Nueva evaluación</button>':'');
-  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'||view==='proyectos'){
+  }else if(view==='indices'||view==='precios'||view==='panol'||view==='tesoreria'||view==='solicitudes'||view==='proyectos'||view==='deposito'){
     document.getElementById('topActions').innerHTML='';   // 'proyectos' arma sus acciones dentro de renderProyectos (dependen del proyecto elegido)
   }else{
     document.getElementById('topActions').innerHTML=
@@ -1075,6 +1075,13 @@ async function render(view){
   if(view==='indices'){ return renderIndices(); }
   if(view==='precios'){ return renderActualizacionPrecios(); }
   if(view==='panol'){ return renderPanol(); }
+  // Depósito todavía no tiene tabla en wcpk (Data.list caía a los 3 artículos de ejemplo del seed):
+  // queda como "en construcción" hasta definir de qué se alimenta. El SCHEMAS se deja como estaba.
+  if(view==='deposito'){
+    C().innerHTML='<div class="card"><div class="empty"><div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:6px">Depósito · En construcción</div>'
+      +'Esta sección todavía no está habilitada. Por ahora no muestra ni guarda datos.</div></div>';
+    return;
+  }
   C().innerHTML='<div class="empty">Cargando…</div>';
   let rows=[];
   try{ rows=await Data.list(view); }
