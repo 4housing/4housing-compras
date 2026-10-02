@@ -2709,6 +2709,16 @@ async function gpEliminarRubro(id){
   }catch(e){ alert('No se pudo eliminar: '+(e.message||e)); }
 }
 window.gpEliminarRubro=gpEliminarRubro;
+async function gpSetAmbito(id, val){
+  if(!esDireccion()){ toast('Solo dirección puede cambiar el ámbito.'); return; }
+  if(!['compras','mod','externo'].includes(val)) return;
+  try{
+    await sbFetch('/compras_gp_presupuesto?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({ambito:val})});
+    const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(s) s.ambito=val;   // refresco local y re-render
+    gpRenderTablero();
+  }catch(e){ toast('No se pudo cambiar el ámbito: '+(e.message||e)); }
+}
+window.gpSetAmbito=gpSetAmbito;
 
 /* -------- Imputación Tango -> sección -------- */
 // Devuelve {seccion, imputado_por, nuevoMapeo?} para un renglón de OC.
@@ -2972,10 +2982,12 @@ function gpAgregado(){
     const pend=Math.max(presAr-comp,0);
     const desv=comp-presAr;
     const avance=presAr>0?comp/presAr:(comp>0?1:0);
-    return {id:s.id, origen:s.origen||'costeo', seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
+    return {id:s.id, origen:s.origen||'costeo', ambito:s.ambito||'compras', seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
   });
-  const tot=filas.reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
-  return {filas, tot, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
+  // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD y externo se netean)
+  const tot=filas.filter(f=>f.ambito==='compras').reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
+  const totFuera=filas.filter(f=>f.ambito!=='compras').reduce((a,f)=>({mod:a.mod+(f.ambito==='mod'?f.presAr:0), ext:a.ext+(f.ambito==='externo'?f.presAr:0), compMod:a.compMod+(f.ambito==='mod'?f.comp:0), compExt:a.compExt+(f.ambito==='externo'?f.comp:0)}),{mod:0,ext:0,compMod:0,compExt:0});
+  return {filas, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
 }
 
 function gpRenderTablero(){
@@ -3008,16 +3020,22 @@ function gpRenderTablero(){
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
 
   // Tabla por sección
-  const th='<th>Sección</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
-  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)
+  const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
+  const ambLbl={compras:'Compras', mod:'MOD', externo:'Externo'};
+  const ambCell=f=> dir
+    ? '<select onclick="event.stopPropagation()" onchange="event.stopPropagation();gpSetAmbito('+f.id+',this.value)" style="border:1px solid var(--line-strong);border-radius:6px;padding:2px 4px;font-size:10.5px;background:#fff">'
+        +['compras','mod','externo'].map(v=>'<option value="'+v+'"'+(f.ambito===v?' selected':'')+'>'+ambLbl[v]+'</option>').join('')+'</select>'
+    : '<span class="badge '+(f.ambito==='mod'?'b-azul':(f.ambito==='externo'?'b-gris':'b-verde'))+'" style="font-size:9.5px">'+(ambLbl[f.ambito]||'Compras')+'</span>';
+  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer'+(f.ambito!=='compras'?';opacity:.55':'')+'" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)
     +(f.origen==='manual'?' <span class="badge b-azul" style="font-size:9.5px">manual</span>'+(dir?' <a href="#" title="Eliminar rubro" onclick="event.stopPropagation();gpEliminarRubro('+f.id+');return false" style="color:#b0584f;text-decoration:none">✕</a>':''):'')+'</td>'
+    +'<td>'+ambCell(f)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.presAr,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.comp,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.pend,0)+'</td>'
     +'<td style="text-align:right">'+gpPct(f.avance)+'</td>'
     +'<td style="text-align:right;color:'+(f.desv>0?'#b0584f':(f.desv<0?'#4f8a53':'inherit'))+'">'+(f.desv>0?'+':'')+fmtNum(f.desv,0)+'</td>'
     +'<td><span class="badge '+f.est.cls+'">'+f.est.txt+'</span></td></tr>').join('');
-  const trTot='<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td>TOTAL</td>'
+  const trTot='<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td>TOTAL Compras</td><td></td>'
     +'<td style="text-align:right">'+fmtNum(ag.tot.presAr,0)+'</td><td style="text-align:right">'+fmtNum(ag.tot.comp,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(ag.tot.pend,0)+'</td><td style="text-align:right">'+gpPct(avanceTot)+'</td>'
     +'<td style="text-align:right;color:'+(ag.tot.desv>0?'#b0584f':(ag.tot.desv<0?'#4f8a53':'inherit'))+'">'+(ag.tot.desv>0?'+':'')+fmtNum(ag.tot.desv,0)+'</td><td></td></tr>';
@@ -3051,8 +3069,9 @@ function gpRenderTablero(){
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
     +'</div>'
-    +'<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar el detalle</span></div>'
-      +'<div class="tbl-hscroll tbl-compact"><table class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div></div>'
+    +'<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar · el TOTAL y los indicadores cuentan solo el ámbito Compras</span></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div>'
+      +(((ag.totFuera.mod+ag.totFuera.ext)>1)?('<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Fuera del alcance de Compras (referencia, neteado): MOD $'+fmtNum(ag.totFuera.mod,0)+' · Externo $'+fmtNum(ag.totFuera.ext,0)+'</div>'):'')+'</div>'
     +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Detalle de OC importadas</h3>'
       +'<span class="meta">'+detalle.length+' renglones'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
       +(filtro?'<button class="btn ghost sm" style="margin-left:auto" onclick="gpQuitarFiltro()">Quitar filtro</button>':'')+'</div>'
@@ -3066,13 +3085,14 @@ function gpRenderTablero(){
 function gpDrawCharts(ag){
   try{ Object.values(GP.charts).forEach(c=>{ try{ c.destroy(); }catch(_){ } }); GP.charts={}; }catch(_){ }
   if(typeof Chart==='undefined') return;
-  const labels=ag.filas.map(f=>f.seccion);
+  const cfilas=ag.filas.filter(f=>f.ambito==='compras');   // los gráficos muestran solo el alcance de Compras
+  const labels=cfilas.map(f=>f.seccion);
   const bar=document.getElementById('gpChartBar');
   if(bar){
     GP.charts.bar=new Chart(bar,{type:'bar',
       data:{labels, datasets:[
-        {label:'Presupuesto', data:ag.filas.map(f=>Math.round(f.presAr)), backgroundColor:'#c9ced4'},
-        {label:'Comprado', data:ag.filas.map(f=>Math.round(f.comp)), backgroundColor:ag.filas.map(f=>f.desv>f.presAr*ag.tol?'#c25a4e':'#2f8f63')}
+        {label:'Presupuesto', data:cfilas.map(f=>Math.round(f.presAr)), backgroundColor:'#c9ced4'},
+        {label:'Comprado', data:cfilas.map(f=>Math.round(f.comp)), backgroundColor:cfilas.map(f=>f.desv>f.presAr*ag.tol?'#c25a4e':'#2f8f63')}
       ]},
       options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
         plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>c.dataset.label+': $ '+(+c.raw).toLocaleString('es-AR')}}},
@@ -3080,7 +3100,7 @@ function gpDrawCharts(ag){
   }
   const dona=document.getElementById('gpChartDona');
   if(dona){
-    const comp=ag.filas.filter(f=>f.comp>0);
+    const comp=cfilas.filter(f=>f.comp>0);
     const pal=['#2f8f63','#3b7fb0','#cba13a','#b0584f','#7a6cc4','#4f8a8a','#c07b3a','#8a9bb0','#6b9a5a','#b06a8a','#5a7a9a','#9a8a4a'];
     GP.charts.dona=new Chart(dona,{type:'doughnut',
       data:{labels:comp.map(f=>f.seccion), datasets:[{data:comp.map(f=>Math.round(f.comp)), backgroundColor:comp.map((_,i)=>pal[i%pal.length])}]},
