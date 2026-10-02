@@ -2038,6 +2038,7 @@ window.tcDiaAnterior=tcDiaAnterior;
 const IDX_DEF={
   ipc:{ nombre:'IPC (INDEC)', tabla:'compras_idx_ipc', diaEsperado:10,
     fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-31',
+    fuenteLabel:'Fuente IPC', fuentesExtra:[ {label:'Fuente IPIM', url:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32'} ],   // para la columna "IPC Nac. empalme IPIM"
     campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'} ] },
   cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'compras_idx_cac', diaEsperado:20,
     fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
@@ -2289,7 +2290,7 @@ function idxTabBody(ns){
       +'<button class="iconbtn del" title="Eliminar" onclick="askIdxDelete(\''+ns+'\','+r.periodo+')">'+ICO.del+'</button></div></td></tr>';
   }).join('') || '<tr><td colspan="'+(2+def.campos.length)+'" style="text-align:center;padding:20px;color:var(--muted)">Sin períodos cargados todavía.</td></tr>';
   return '<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">'+esc(def.nombre)+'</h3><span class="meta">'+rows.length+' períodos cargados</span>'
-    +'<span style="margin-left:auto;display:flex;align-items:center;gap:10px"><a href="'+esc(def.fuenteUrl)+'" target="_blank" rel="noopener" style="font-size:12px">Fuente ↗</a><button class="btn sm" onclick="openIdxRow(\''+ns+'\')">'+ICO.plus+'Cargar período</button></span></div>'
+    +'<span style="margin-left:auto;display:flex;align-items:center;gap:10px"><a href="'+esc(def.fuenteUrl)+'" target="_blank" rel="noopener" style="font-size:12px">'+esc(def.fuenteLabel||'Fuente')+' ↗</a>'+(def.fuentesExtra||[]).map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener" style="font-size:12px">'+esc(f.label)+' ↗</a>').join('')+'<button class="btn sm" onclick="openIdxRow(\''+ns+'\')">'+ICO.plus+'Cargar período</button></span></div>'
     +(def.diaEsperado||def.pesos ? '<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">'+(def.diaEsperado?'Se publica aprox. el día '+def.diaEsperado+' del mes siguiente al período.':'Sin día de publicación fijo (cotización diaria): se carga el valor de cierre del período.')+(def.pesos?' El "Índice ponderado" lo calcula la app con los pesos de la fórmula (no se carga a mano).':'')+'</div>' : '')+avisoFaltante
     +'<div class="tbl-hscroll tbl-compact" style="max-height:70vh"><table class="grid"><thead><tr><th>Período</th>'+cols+'<th style="width:80px"></th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div></div>';
 }
