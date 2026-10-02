@@ -128,7 +128,7 @@ table.grid{width:100%;border-collapse:collapse;}
 /* text-align:center !important: muchas columnas (montos, TC, etc.) traen su <th> con style="text-align:right"
    inline para alinear con la celda numérica de abajo — eso le gana a cualquier regla sin !important. Los
    títulos de encabezado van siempre centrados (el alineado izq/der queda solo para el contenido de las filas). */
-table.grid th{text-align:center!important;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;position:sticky;top:0;z-index:3;box-shadow:0 1px 0 var(--line);}
+table.grid th{text-align:center!important;vertical-align:middle!important;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;position:sticky;top:0;z-index:3;box-shadow:0 1px 0 var(--line);}
 table.grid td{padding:12px 16px;border-bottom:1px solid var(--line);font-size:10.5px;vertical-align:middle;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr:hover{background:#fbfaf3;}
@@ -4328,13 +4328,27 @@ function renderSolicitudesPago(){
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'+tab('pendfac','Pendientes de facturar')+tab('solicitudes','Pagos solicitados')+tab('pagos','Pagos a realizar')+'</div>';
   const inner = SOLPAGO_TAB==='pendfac' ? pendFacturarView() : SOLPAGO_TAB==='pagos' ? pagosRealizarView() : solicitudesPagoView();
   C().innerHTML=tabs+inner;
+  Object.keys(SP_Q).forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
 }
 window.renderSolicitudesPago=renderSolicitudesPago;
 function solicitudesPagoView(){
   // Las "FAC cargada" todavía no son pedidos de pago: viven en Pendientes de facturar hasta que alguien pide el pago.
   const list=(mem.solicitudes_pago||[]).filter(s=>s.estado!==SOLPAGO_FAC_CARGADA);
   const filtro=SOLPAGO_FILTRO;
-  const shown = filtro==='todas' ? list : list.filter(s=>(s.estado||'Pendiente')===filtro);
+  const porEstado = filtro==='todas' ? list : list.filter(s=>(s.estado||'Pendiente')===filtro);
+  xlfRegister('sps', { rows:()=>porEstado, onChange:renderSolicitudesPago, dateVal:s=>String(s.creado_en||'').slice(0,10),
+    val:(s,col)=>{
+      if(col==='fac') return s.nro_factura||'(sin N°)';
+      if(col==='prov') return s.proveedor_cod||'(sin proveedor)';
+      if(col==='oc') return nroOCTango(s.oc_numero)||'(sin OC)';
+      if(col==='proy') return s.proyecto_cod||'(sin proyecto)';
+      if(col==='comp') return s.comprador||'(sin comprador)';
+      if(col==='mon') return s.moneda==='USD'?'Dólares':'Pesos';
+      if(col==='estado') return s.estado||'Pendiente';
+      if(col==='pago') return s.estado==='Pagada'?'Pagada':(s.fecha_pago_estimada?'Con fecha estimada':'Sin fecha');
+      return '';
+    } });
+  const shown = porEstado.filter(s=>xlfPass('sps',s));
   const chip=(v,label)=>'<button class="mtab'+(filtro===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setSolPagoFiltro(\''+v+'\')">'+label+'</button>';
   const filtros='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+chip('todas','Todas ('+list.length+')')
     +chip('Pendiente','Pendiente ('+list.filter(s=>(s.estado||'Pendiente')==='Pendiente').length+')')
@@ -4343,13 +4357,13 @@ function solicitudesPagoView(){
   const nuevaBtn = puedeCrearSolicitudPago() ? '<button class="btn sm" onclick="openSolicitudPagoForm()">'+ICO.plus+'Nueva solicitud</button>' : '';
   const importBtn = '<button class="btn ghost sm" style="margin-left:8px" onclick="openImportOCInforme()">Importar Informe OC de Tango</button>';
   const header='<div class="card-h"><h3>Solicitudes de pago</h3><span class="meta">Pedidos de Compras a Finanzas para cargar y pagar una factura — reemplaza el mail; queda todo con fecha y responsable.</span>'+nuevaBtn+importBtn+'</div>';
-  if(!shown.length) return '<div class="card">'+header+filtros+'<div class="empty" style="padding:20px">No hay solicitudes'+(filtro!=='todas'?' en este estado':'')+'.</div></div>';
+  if(!shown.length) return '<div class="card">'+header+filtros+(xlfHasAny('sps')?_spTools('spsTabla','sps','Buscar factura, proveedor, OC, proyecto o comprador…'):'')+'<div class="empty" style="padding:20px">No hay solicitudes'+(xlfHasAny('sps')?' que coincidan con los filtros':(filtro!=='todas'?' en este estado':''))+'.</div></div>';
   const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
   const rows=shown.slice().sort((a,b)=>(b.id||0)-(a.id||0)).map(s=>{
     const hist=(s.historial||[]);
     const ultimo=hist.length?hist[hist.length-1]:null;
     const estColor=ESTADO_CLR[s.estado||'Pendiente']||'b-gris';
-    return '<tr>'
+    return '<tr data-q="'+esc(_syncFold([s.nro_factura,s.proveedor_cod,s.proveedor,nroOCTango(s.oc_numero),s.proyecto_cod,s.comprador,s.remito_numero].join(' ')))+'">'
       +'<td><strong>'+esc(s.nro_factura||'—')+'</strong>'+(s.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoSolicitud('+s.id+')">'+ICO.pdf+'</button>':'')+'</td>'
       +'<td style="font-size:11px">'+esc(s.proveedor_cod||'')+' '+esc(s.proveedor||'')+'</td>'
       +'<td>'+esc(nroOCTango(s.oc_numero)||'—')+'</td>'
@@ -4362,7 +4376,9 @@ function solicitudesPagoView(){
       +'<td><button class="btn ghost sm" onclick="openSolicitudPagoDetalle('+s.id+')">Abrir</button></td></tr>';
   }).join('');
   return '<div class="card">'+header+filtros
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Factura</th><th>Proveedor</th><th>OC</th><th>Proyecto</th><th>Comprador</th><th style="text-align:right">Monto</th><th>Estado</th><th>Pago</th><th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +_spTools('spsTabla','sps','Buscar factura, proveedor, OC, proyecto o comprador…')
+    +'<table class="grid" id="spsTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('sps','Factura','fac')+xlfTh('sps','Proveedor','prov')+xlfTh('sps','OC','oc')+xlfTh('sps','Proyecto','proy')+xlfTh('sps','Comprador','comp')
+    +xlfTh('sps','Monto','mon')+xlfTh('sps','Estado','estado')+xlfTh('sps','Pago','pago')+'<th>Último comentario</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 window.solicitudesPagoView=solicitudesPagoView;
 
@@ -4580,11 +4596,19 @@ function _spUltimaImport(rows){
   return f?('Última importación: '+fmtDate(f.slice(0,10))):'Todavía no se importó.';
 }
 // Filtro de texto sobre las filas de una tabla (sin re-renderizar, así no se pierde el foco).
+const SP_Q={};   // texto buscado por tabla (sobrevive al re-render de los filtros de columna)
 function spFiltrar(inp, tblId){
+  SP_Q[tblId]=inp.value;
   const q=_syncFold(inp.value);
   document.querySelectorAll('#'+tblId+' tbody tr').forEach(tr=>{ tr.style.display=(!q||(tr.dataset.q||'').includes(q))?'':'none'; });
 }
 window.spFiltrar=spFiltrar;
+function _spTools(tblId, ns, placeholder){
+  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px">'
+    +'<input type="search" data-sptbl="'+tblId+'" placeholder="'+esc(placeholder)+'" oninput="spFiltrar(this,\''+tblId+'\')" style="flex:1;min-width:220px;max-width:420px">'
+    +xlfClearAllBtn(ns)
+    +'<button class="btn ghost sm" style="'+(xlfHasAny(ns)?'':'margin-left:auto')+'" onclick="tblAutofit(\'#'+tblId+'\')">Auto-ajustar columnas</button></div>';
+}
 
 // --- Importación (la misma pantalla para los dos reportes) ---
 // Pagos a realizar NO se importa desde acá: lo sube Administración y Finanzas desde su app
@@ -4671,14 +4695,26 @@ function _spfAgrupar(){
 function _spfMoneda(m){ return /extranj/i.test(m||'')?'USD':'ARS'; }
 function _spfDifiere(s){ return s.neto_oc!=null && s.neto_oc!=='' && Math.abs((+s.monto||0)-(+s.neto_oc||0))>1; }
 function pendFacturarView(){
-  SPF_GRUPOS=_spfAgrupar();
+  const todos=_spfAgrupar();
   const puede=puedeCrearSolicitudPago();
   const solsPorOC={};
   (mem.solicitudes_pago||[]).forEach(s=>{ const k=_spKey(s.proveedor_cod, nroOCTango(s.oc_numero)); (solsPorOC[k]=solsPorOC[k]||[]).push(s); });
+  xlfRegister('spf', { rows:()=>todos, onChange:renderSolicitudesPago, dateVal:o=>o.fecha_ingreso||'',
+    val:(o,col)=>{
+      if(col==='oc') return o.oc_numero||'';
+      if(col==='prov') return o.proveedor_cod||'(sin proveedor)';
+      if(col==='comp') return o.comprador||'(sin comprador)';
+      if(col==='aux') return o.clasif_desc||o.clasif_cod||'(sin auxiliar)';
+      if(col==='estado') return o.estado||'(sin estado)';
+      if(col==='fac'){ const ss=solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[]; return !ss.length?'Sin FAC':(ss.some(x=>x.estado===SOLPAGO_FAC_CARGADA)?'FAC cargada (sin pedir pago)':'Pago pedido'); }
+      return '';
+    } });
+  SPF_GRUPOS=todos.filter(o=>xlfPass('spf',o));
   const importBtn='<button class="btn ghost sm" style="margin-left:auto" onclick="openImportReporteSP(\'pendfac\')">Importar Pendientes de facturar</button>';
   const pedirBtn=puede?'<button class="btn sm" style="margin-left:8px" onclick="spPedirPagoSel()">Pedir pago de las tildadas (<span id="spSelCount">0</span>)</button>':'';
   const header='<div class="card-h"><h3>Pendientes de facturar</h3><span class="meta">OCs de Tango con saldo sin facturar. Adjuntá la FAC de cada OC; después tildá las que correspondan y pedí el pago. '+esc(_spUltimaImport(DIC.pend_facturar))+'</span>'+importBtn+pedirBtn+'</div>';
-  if(!SPF_GRUPOS.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">No hay datos. Importá el reporte "Pendientes de facturar" de Tango.</div></div>';
+  if(!todos.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">No hay datos. Importá el reporte "Pendientes de facturar" de Tango.</div></div>';
+  if(!SPF_GRUPOS.length) return '<div class="card">'+header+_spTools('spfTabla','spf','Buscar OC, proveedor, comprador, auxiliar o FAC…')+'<div class="empty" style="padding:20px">Ninguna OC coincide con los filtros.</div></div>';
   const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
   const filas=SPF_GRUPOS.map((o,k)=>{
     const sols=solsPorOC[_spKey(o.proveedor_cod,o.oc_numero)]||[];
@@ -4704,8 +4740,9 @@ function pendFacturarView(){
       +'<td>'+(puede?'<button class="btn ghost sm" onclick="openAdjuntarFac('+k+')">Adjuntar FAC</button>':'')+'</td></tr>';
   }).join('');
   return '<div class="card">'+header
-    +'<div style="padding:10px 14px 0"><input type="search" placeholder="Buscar OC, proveedor, comprador, auxiliar o FAC…" oninput="spFiltrar(this,\'spfTabla\')" style="width:100%;max-width:420px;margin-bottom:10px"></div>'
-    +'<table class="grid" id="spfTabla" style="font-size:12.5px"><thead><tr><th>OC</th><th>Proveedor</th><th>Ingreso</th><th>Comprador</th><th>Auxiliar</th><th style="text-align:right">Pendiente s/imp.</th><th>Estado OC</th><th>FAC</th><th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
+    +_spTools('spfTabla','spf','Buscar OC, proveedor, comprador, auxiliar o FAC…')
+    +'<table class="grid" id="spfTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('spf','OC','oc')+xlfTh('spf','Proveedor','prov')+xlfTh('spf','Ingreso','__fecha__')+xlfTh('spf','Comprador','comp')+xlfTh('spf','Auxiliar','aux')
+    +'<th>Pendiente s/imp.</th>'+xlfTh('spf','Estado OC','estado')+xlfTh('spf','FAC','fac')+'<th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
 }
 window.pendFacturarView=pendFacturarView;
 function spSelCount(){ const n=document.querySelectorAll('.spsel:checked').length; const el=document.getElementById('spSelCount'); if(el) el.textContent=n; }
@@ -4820,10 +4857,23 @@ function pagosRealizarView(){
     if(r.remito_numero) o.rem.add(_syncNorm(r.remito_numero));
   });
   const lista=set=>set&&set.size?[...set].map(esc).join('<br>'):'<span style="color:var(--muted)">—</span>';
+  const join=(r,k)=>{ const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)]; return m&&m[k].size?[...m[k]].join(' / '):'(sin dato)'; };
+  xlfRegister('spr', { rows:()=>rows, onChange:renderSolicitudesPago, dateVal:r=>r.fecha_emision||'',
+    val:(r,col)=>{
+      if(col==='fc') return r.fecha_contable?String(r.fecha_contable).slice(0,7):'(sin fecha)';
+      if(col==='tipo') return r.tipo_comprobante||'(sin tipo)';
+      if(col==='prov') return r.proveedor_cod||'(sin proveedor)';
+      if(col==='nro') return r.comprobante_numero||'';
+      if(col==='aux') return join(r,'aux');
+      if(col==='oc') return join(r,'oc');
+      if(col==='rem') return join(r,'rem');
+      return '';
+    } });
+  const visibles=rows.filter(r=>xlfPass('spr',r));
   let total=0, sinMatch=0;
-  const filas=rows.map(r=>{
+  rows.forEach(r=>{ if(!idx[_spKey(r.proveedor_cod, r.comprobante_numero)]) sinMatch++; });
+  const filas=visibles.map(r=>{
     const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)];
-    if(!m) sinMatch++;
     total+=(+r.total_pend_cte||0);
     const q=_syncFold([r.proveedor_cod,_spProvNombre(r.proveedor_cod),r.comprobante_numero,r.tipo_comprobante,m?[...m.aux,...m.oc,...m.rem].join(' '):''].join(' '));
     return '<tr data-q="'+esc(q)+'">'
@@ -4836,11 +4886,12 @@ function pagosRealizarView(){
   const aviso=!(DIC.oc_informe||[]).length
     ? '<div style="font-size:12px;color:#b3261e;margin-bottom:8px">No hay Informe OC importado: no se pueden completar Auxiliar / OC / Remito.</div>'
     : (sinMatch?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+sinMatch+' de '+rows.length+' facturas no aparecen en el Informe OC (por ejemplo, facturas sin OC, o un Informe OC desactualizado): quedan con "—".</div>':'');
-  return '<div class="card">'+header+'<div style="padding:10px 14px 0">'+aviso
-    +'<input type="search" placeholder="Buscar proveedor, comprobante, auxiliar, OC o remito…" oninput="spFiltrar(this,\'sprTabla\')" style="width:100%;max-width:420px;margin-bottom:10px"></div>'
-    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr><th>Fecha de emisión</th><th>Fecha contable</th><th>Tipo de comprobante</th><th>Cód. proveedor</th><th>Nro. Comprobante</th><th style="text-align:right">Total Pendiente (CTE)</th><th>Auxiliar</th><th>Orden de compra</th><th>Remito</th></tr></thead>'
+  return '<div class="card">'+header+(aviso?'<div style="padding:10px 14px 0">'+aviso+'</div>':'')
+    +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC o remito…')
+    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+xlfTh('spr','Fecha de emisión','__fecha__')+xlfTh('spr','Fecha contable','fc')+xlfTh('spr','Tipo de comprobante','tipo')+xlfTh('spr','Cód. proveedor','prov')
+    +xlfTh('spr','Nro. Comprobante','nro')+'<th>Total Pendiente (CTE)</th>'+xlfTh('spr','Auxiliar','aux')+xlfTh('spr','Orden de compra','oc')+xlfTh('spr','Remito','rem')+'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
-    +'<tfoot><tr><td colspan="5" style="text-align:right;font-weight:700">Total ('+rows.length+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="3"></td></tr></tfoot></table></div>';
+    +'<tfoot><tr><td colspan="5" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="3"></td></tr></tfoot></table></div>';
 }
 window.pagosRealizarView=pagosRealizarView;
 
