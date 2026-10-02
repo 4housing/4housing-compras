@@ -2249,7 +2249,7 @@ function idxDolarTabBody(ns){
     +'<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">'
     +(vista==='mensual'
       ? 'Se calcula solo: TC vendedor del último día con cotización de cada mes (registro diario '+(ns==='dolar_blue'?'del Diccionario':'del USD Oficial')+'). El mes en curso entra cuando termina. Para exportar un rango: filtrá Período (▾) con Desde/Hasta y tocá Exportar Excel.'
-      : 'Cotización '+(ns==='dolar_blue'?'blue':'oficial')+' día a día. Se guarda sola cada día que alguien abre la app (dolarapi). Para exportar un rango: filtrá Fecha (▾) con Desde/Hasta y tocá Exportar Excel.')
+      : 'Cotización '+(ns==='dolar_blue'?'blue':'oficial')+' día a día. Se guarda sola cada día que alguien abre la app (dolarapi), y una vez por día se completan solos los días que falten (ArgentinaDatos). Para exportar un rango: filtrá Fecha (▾) con Desde/Hasta y tocá Exportar Excel.')
     +'</div><div class="tbl-hscroll tbl-compact" style="max-height:70vh;margin-top:8px">'+tabla+'</div></div>';
 }
 // Exporta lo que se ve (con filtros y orden aplicados) de la vista actual.
@@ -2271,15 +2271,13 @@ function idxDolExport(ns){
 }
 window.idxDolExport=idxDolExport;
 /* Completar días faltantes desde ArgentinaDatos (histórico; dolarapi solo da el día).
-   Solo AGREGA fechas que no están (no pisa lo registrado), desde 2020-01-01, y pide confirmación mostrando
-   cuántos días va a agregar: el blue diario también lo usan las OG viejas sin TC guardado (tcDiaAnterior). */
-async function idxDolCompletar(ns){
+   Solo AGREGA fechas que no están (no pisa lo registrado), desde 2020-01-01. */
+// Trae el histórico y devuelve solo las fechas que faltan (desde 2020-01-01). Lanza error si la API falla.
+async function idxDolFaltantes(ns){
   const cfg=IDX_DOLAR_DIARIO[ns];
-  toast('Consultando ArgentinaDatos…');
-  let data;
-  try{ const r=await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/'+cfg.casa,{cache:'no-store'}); data=await r.json(); }
-  catch(e){ toast('No se pudo consultar ArgentinaDatos: '+e.message); return; }
-  if(!Array.isArray(data)){ toast('ArgentinaDatos respondió en un formato inesperado; no se cargó nada.'); return; }
+  const r=await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/'+cfg.casa,{cache:'no-store'});
+  const data=await r.json();
+  if(!Array.isArray(data)) throw new Error('formato inesperado');
   const tiene=new Set((DIC[cfg.dic]||[]).map(r=>String(r.fecha)));
   const nuevos=[];
   data.forEach(x=>{
@@ -2288,23 +2286,48 @@ async function idxDolCompletar(ns){
     const c=+x.compra, v=+x.venta; if(!(c>0) && !(v>0)) return;
     tiene.add(f); nuevos.push({fecha:f, compra:c>0?c:v, venta:v>0?v:null, fuente:'argentinadatos'});
   });
+  return nuevos.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+}
+async function idxDolGuardar(ns, nuevos){
+  const cfg=IDX_DOLAR_DIARIO[ns];
+  if(!DEMO_MODE){ for(let i=0;i<nuevos.length;i+=500){ await sbFetch('/'+cfg.tabla,{method:'POST', body:JSON.stringify(nuevos.slice(i,i+500)), prefer:'resolution=ignore-duplicates,return=minimal'}); } }
+  DIC[cfg.dic]=(DIC[cfg.dic]||[]).concat(nuevos).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+}
+/* Automático (pedido de Micaela: no cargar el dólar a mano): una vez por día y por navegador, al terminar
+   de cargar los datos, completa en silencio los días faltantes de Oficial y Blue. Diagnóstico 02/10/2026:
+   0 OG sin TC guardado (tc_pesos), así que completar días no cambia el TC de ninguna OG. */
+async function idxDolAutoCompletar(){
+  if(DEMO_MODE) return;
+  const hoy=new Date().toISOString().slice(0,10);
+  try{ if(localStorage.getItem('idxDolSync')===hoy) return; }catch(e){}
+  let total=0, ok=true;
+  for(const ns of Object.keys(IDX_DOLAR_DIARIO)){
+    try{ const nuevos=await idxDolFaltantes(ns); if(nuevos.length){ await idxDolGuardar(ns, nuevos); total+=nuevos.length; } }
+    catch(e){ ok=false; console.warn('Dólar: no se pudieron completar días de '+ns, e); }
+  }
+  if(ok){ try{ localStorage.setItem('idxDolSync', hoy); }catch(e){} }
+  if(total){ idxDolarRecalc(); if(typeof current!=='undefined' && current==='indices') renderIndices(); }
+}
+window.idxDolAutoCompletar=idxDolAutoCompletar;
+// Manual (botón de la vista Diario): mismo proceso, con confirmación mostrando cuántos días agrega.
+async function idxDolCompletar(ns){
+  toast('Consultando ArgentinaDatos…');
+  let nuevos;
+  try{ nuevos=await idxDolFaltantes(ns); }
+  catch(e){ toast('No se pudo consultar ArgentinaDatos: '+e.message); return; }
   if(!nuevos.length){ toast('No faltan días: el registro está completo.'); return; }
-  nuevos.sort((a,b)=>a.fecha.localeCompare(b.fecha));
   window._idxDolPend={ns, nuevos};
   openModal('Completar días faltantes · '+esc(IDX_DEF[ns].nombre),
     '<p style="margin:0 0 8px;font-size:14px">Se van a <strong>agregar '+nuevos.length+' días</strong> que faltan en el registro (del '+fmtDate(nuevos[0].fecha)+' al '+fmtDate(nuevos[nuevos.length-1].fecha)+'), con fuente "argentinadatos". No se modifica ningún día ya registrado.</p>'
-    +(ns==='dolar_blue'?'<p style="margin:0;font-size:12.5px;color:#8a6d1e">Ojo: las OG viejas que no tienen TC guardado toman la cotización blue del día anterior a su fecha; si ese día estaba vacío, ahora van a tomar el valor nuevo.</p>'
-      :'<p style="margin:0;font-size:12.5px;color:#8a6d1e">Ojo: el USD Oficial diario también lo usan EERR y Administración y Finanzas.</p>'),
+    +(ns==='dolar_oficial'?'<p style="margin:0;font-size:12.5px;color:#8a6d1e">El USD Oficial diario también lo usan EERR y Administración y Finanzas.</p>':''),
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="idxDolCompletarOk()">Agregar '+nuevos.length+' días</button>');
 }
 window.idxDolCompletar=idxDolCompletar;
 async function idxDolCompletarOk(){
   const p=window._idxDolPend; if(!p) return; window._idxDolPend=null;
-  const cfg=IDX_DOLAR_DIARIO[p.ns];
   closeModal(); toast('Guardando '+p.nuevos.length+' días…');
   try{
-    if(!DEMO_MODE){ for(let i=0;i<p.nuevos.length;i+=500){ await sbFetch('/'+cfg.tabla,{method:'POST', body:JSON.stringify(p.nuevos.slice(i,i+500)), prefer:'resolution=ignore-duplicates,return=minimal'}); } }
-    DIC[cfg.dic]=(DIC[cfg.dic]||[]).concat(p.nuevos).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+    await idxDolGuardar(p.ns, p.nuevos);
     idxDolarRecalc(); toast('Listo: '+p.nuevos.length+' días agregados'); renderIndices();
   }catch(e){ console.error('idxDolCompletarOk', e); toast('No se pudieron guardar: '+e.message); }
 }
@@ -11383,6 +11406,7 @@ async function reloadDB(){
       }catch(e){ /* si la vista no existe o no se puede leer, queda vacío */ } })(),
     ]);
     idxDolarRecalc();
+    idxDolAutoCompletar();   // sin await: no demora la carga de la app
   }catch(e){ toast('No se pudieron cargar los datos desde la nube.'); }
 }
 window.reloadDB=reloadDB;
