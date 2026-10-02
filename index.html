@@ -2082,9 +2082,38 @@ const IDX_DEF={
 // más abajo) — hoy Micaela y Pablo Spinetto, vía el flag ve_confidencial de usuarios_autorizados.
 function idxDefNs(){ return Object.keys(IDX_DEF).filter(ns=>ns!=='sueldos'||(typeof canSeeConfid==='function'&&canSeeConfid())); }
 // Polinómica es la única con un "índice" calculado (ponderación de sus 6 campos); IPC/CAC son series paralelas, cada campo es su propio valor.
+// Fórmula polinómica (igual a la columna K de la planilla de Micaela): la variación entre dos períodos es el
+// promedio ponderado de la variación de CADA componente: Σ peso_i × (valor_i hasta ÷ valor_i desde).
+// Antes se hacía (Σ peso×valor hasta) ÷ (Σ peso×valor desde), que le daba más peso a los componentes con
+// número absoluto más alto en la base (ej. Mano de obra quedaba en ~28% en vez de 35%).
+function idxPoliRatio(ns, row0, row1){
+  const def=IDX_DEF[ns]; if(!def.pesos||!row0||!row1) return null;
+  let acc=0;
+  for(const c of def.campos){
+    const a=+row0[c.k], b=+row1[c.k];
+    if(!(a>0) || !(b>0)) return null;   // falta un componente en alguno de los dos períodos: no se puede calcular
+    acc+=(def.pesos[c.k]||0)*(b/a);
+  }
+  return acc;
+}
+// Período de referencia del índice mostrado (base = 100): el primero con los 6 componentes cargados.
+function idxPoliRefRow(ns){
+  return (DIC['idx_'+ns]||[]).slice().sort((a,b)=>a.periodo-b.periodo)
+    .find(r=>IDX_DEF[ns].campos.every(c=>+r[c.k]>0)) || null;
+}
+// Índice ponderado de un período, base período de referencia = 100.
 function idxCalculado(ns, row){
   const def=IDX_DEF[ns]; if(!def.pesos) return null;
-  return def.campos.reduce((a,c)=>a+(+row[c.k]||0)*(def.pesos[c.k]||0), 0);
+  const ratio=idxPoliRatio(ns, idxPoliRefRow(ns), row);
+  return ratio==null ? null : ratio*100;
+}
+// Cociente valor(hasta) / valor(desde) de una serie. Para Polinómica usa la fórmula polinómica con
+// base en "desde" (no el cociente de dos índices), así coincide con la cuenta hecha desde ese mes.
+function idxRatio(ns, campo, desde, hasta){
+  const arr=DIC['idx_'+ns]||[];
+  if(campo==='indice') return idxPoliRatio(ns, arr.find(r=>+r.periodo===+desde), arr.find(r=>+r.periodo===+hasta));
+  const v0=idxSerieValor(ns,campo,desde), v1=idxSerieValor(ns,campo,hasta);
+  return (v0&&v1!=null) ? v1/v0 : null;
 }
 function idxSerieOpts(){
   const opts=[];
@@ -2191,7 +2220,7 @@ function idxEvolCalcular(baseP, series){
       if(primerDisponible!=null){ effBase=primerDisponible; base=idxSerieValor(s.ns,s.campo,effBase); }
     }
     const periodos=arr.filter(p=>p>=effBase);
-    const values=periodos.map(p=>{ const v=idxSerieValor(s.ns,s.campo,p); return { periodo:p, pct:(base&&v!=null)?(v/base-1)*100:null }; });
+    const values=periodos.map(p=>{ const r=base?idxRatio(s.ns,s.campo,effBase,p):null; return { periodo:p, pct:r!=null?(r-1)*100:null }; });
     return {...s, values, effBase};
   });
 }
@@ -2289,10 +2318,12 @@ function idxTabBody(ns){
   // Con fórmula (Polinómica): el índice ponderado va primero (es "la respuesta"), y cada componente
   // muestra su peso en el propio encabezado — son 6 magnitudes de naturaleza distinta (mano de obra,
   // metal, importados…) que solo cobran sentido puestas en relación a cuánto pesan en la fórmula.
-  const indiceTh = def.pesos ? '<th style="text-align:right;background:#eef2e6">Índice ponderado</th>' : '';
+  const refRow = def.pesos ? idxPoliRefRow(ns) : null;
+  const indiceTh = def.pesos ? '<th style="text-align:right;background:#eef2e6">Índice ponderado'+(refRow?' <span style="color:var(--muted);font-weight:400">(base '+idxPeriodoFmt(refRow.periodo)+' = 100)</span>':'')+'</th>' : '';
   const cols = indiceTh + def.campos.map(c=>'<th style="text-align:right">'+esc(c.label)+(def.pesos&&def.pesos[c.k]!=null?' <span style="color:var(--muted);font-weight:400">('+(def.pesos[c.k]*100).toFixed(0)+'%)</span>':'')+'</th>').join('');
   const rowsHtml = rows.map(r=>{
-    const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+fmtNum(idxCalculado(ns,r),2)+'</strong></td>' : '';
+    const iv = def.pesos ? idxCalculado(ns,r) : null;
+    const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+(iv!=null?fmtNum(iv,2):'—')+'</strong></td>' : '';
     const tds = indiceTd + def.campos.map(c=>'<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(r[c.k]!=null&&r[c.k]!==''?fmtNum(r[c.k],2):'—')+'</td>').join('');
     return '<tr><td>'+idxPeriodoFmt(r.periodo)+'</td>'+tds
       +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openIdxRow(\''+ns+'\','+r.periodo+')">'+ICO.edit+'</button>'
@@ -2370,10 +2401,13 @@ function prCalc(){
   if(!desde||!hasta){ res.innerHTML='Cargá al menos 2 períodos de este índice en la solapa "Índices" para poder calcular.'; return; }
   const vDesde=idxSerieValor(ns,campo,desde), vHasta=idxSerieValor(ns,campo,hasta);
   if(vDesde==null||vHasta==null||!vDesde){ res.innerHTML='Faltan datos de ese índice para alguno de los dos períodos elegidos.'; return; }
-  const variacion=(vHasta/vDesde-1)*100;
+  const ratio=idxRatio(ns,campo,desde,hasta);
+  if(ratio==null){ res.innerHTML='Faltan datos de ese índice para alguno de los dos períodos elegidos.'; return; }
+  const variacion=(ratio-1)*100;
   const def=IDX_DEF[ns]; const label=def.nombre+(campo!=='indice'?(' · '+def.campos.find(c=>c.k===campo).label):'');
   let txt='<strong>'+esc(label)+'</strong><br>De '+idxPeriodoFmt(desde)+' ('+fmtNum(vDesde,2)+') a '+idxPeriodoFmt(hasta)+' ('+fmtNum(vHasta,2)+')'
     +' → <strong style="color:'+(variacion>=0?'var(--olive-deep)':'#b4554e')+'">'+(variacion>=0?'+':'')+variacion.toFixed(2)+'%</strong>';
+  if(campo==='indice') txt+='<br><span style="font-size:12px">Fórmula polinómica: promedio ponderado de la variación de cada componente entre esos dos períodos (los valores entre paréntesis son el índice base '+idxPeriodoFmt((idxPoliRefRow(ns)||{}).periodo||desde)+' = 100).</span>';
   const precio=+(document.getElementById('pr_precio').value||0);
   if(precio>0) txt+='<br>Precio actualizado: <strong>'+(precio*(1+variacion/100)).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong>';
   res.innerHTML=txt;
