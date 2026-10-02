@@ -2165,6 +2165,174 @@ async function idxDelete(ns, periodo){
   }
 }
 
+/* ===== Dólar Oficial / Blue en Índices: salen del registro diario =====
+   Pedido de Micaela: el mensual NO se carga a mano. Es el TC VENDEDOR del último día con dato de cada mes,
+   tomado del registro diario (Oficial: compras_usd_diario_oficial · Blue: compras_usd_diario, el mismo del
+   Diccionario). Lo cargado a mano en compras_idx_dolar_* queda como respaldo: solo se usa en meses sin
+   ningún dato diario. El mes en curso no entra hasta que termina (no hay "último día" todavía).
+   DIC['idx_dolar_*'] se recalcula acá, así gráfico / tabla comparada / Actualización de precios lo usan igual. */
+const IDX_DOLAR_DIARIO={ dolar_oficial:{dic:'usd_diario_oficial', tabla:'compras_usd_diario_oficial', casa:'oficial'},
+                         dolar_blue:{dic:'usd_diario', tabla:'compras_usd_diario', casa:'blue'} };
+function idxEsDolar(ns){ return !!IDX_DOLAR_DIARIO[ns]; }
+function idxDolarRecalc(){
+  const hoy=new Date(), perActual=hoy.getFullYear()*100+(hoy.getMonth()+1);
+  Object.keys(IDX_DOLAR_DIARIO).forEach(ns=>{
+    const ult={};
+    (DIC[IDX_DOLAR_DIARIO[ns].dic]||[]).forEach(r=>{
+      const f=String(r.fecha||''); const per=+f.slice(0,7).replace('-','');
+      if(!per || per>=perActual) return;
+      const v=r.venta!=null&&r.venta!==''?+r.venta:(r.compra!=null&&r.compra!==''?+r.compra:null);
+      if(v==null||!(v>0)) return;
+      if(!ult[per] || f>ult[per].fecha) ult[per]={fecha:f, v, sinVenta:!(r.venta!=null&&r.venta!=='')};
+    });
+    const out=Object.keys(ult).map(per=>({periodo:+per, compra:ult[per].v, _src:'diario', _fecha:ult[per].fecha, _sinVenta:ult[per].sinVenta}));
+    (DIC['idx_'+ns+'_manual']||[]).forEach(m=>{ if(!ult[m.periodo] && m.compra!=null) out.push({...m, periodo:+m.periodo, _src:'manual'}); });
+    out.sort((a,b)=>a.periodo-b.periodo);
+    DIC['idx_'+ns]=out;
+  });
+}
+window.idxDolarRecalc=idxDolarRecalc;
+let IDX_DOL_VISTA='mensual';
+function setIdxDolVista(v){ IDX_DOL_VISTA=v; renderIndices(); }
+window.setIdxDolVista=setIdxDolVista;
+function idxDolSort(ev, ns, k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  const cur=SP_SORT[ns]; SP_SORT[ns]={k, dir:(cur&&cur.k===k&&cur.dir===1)?-1:1};
+  renderIndices();
+}
+window.idxDolSort=idxDolSort;
+function _idxDolTh(xns, label, col, k){ return _spTh(xns,label,col,k).split("spSort(event,").join("idxDolSort(event,"); }
+function idxDolMensRows(ns){ return (DIC['idx_'+ns]||[]).map(r=>({...r, _fechaISO:String(r.periodo).slice(0,4)+'-'+String(r.periodo).slice(4,6)+'-01'})); }
+function idxDolDiaRows(ns){ return (DIC[IDX_DOLAR_DIARIO[ns].dic]||[]).slice(); }
+function idxDolRegistrar(ns){
+  const xm='idxdolm_'+ns, xd='idxdold_'+ns;
+  xlfRegister(xm,{ rows:()=>idxDolMensRows(ns), dateVal:r=>r._fechaISO, onChange:renderIndices,
+    val:(r,col)=>col==='origen'?(r._src==='diario'?'Registro diario':'Carga manual'):'' });
+  xlfRegister(xd,{ rows:()=>idxDolDiaRows(ns), dateVal:r=>r.fecha, onChange:renderIndices,
+    val:(r,col)=>col==='fuente'?(r.fuente||'(sin fuente)'):'' });
+  return {xm, xd};
+}
+function idxDolarTabBody(ns){
+  const def=IDX_DEF[ns], cfg=IDX_DOLAR_DIARIO[ns], {xm,xd}=idxDolRegistrar(ns);
+  const mens=idxDolMensRows(ns), dia=idxDolDiaRows(ns);
+  const vista=IDX_DOL_VISTA==='diario'?'diario':'mensual';
+  const btnV=(v,l)=>'<button class="btn sm'+(vista===v?'':' ghost')+'" onclick="setIdxDolVista(\''+v+'\')">'+l+'</button>';
+  let tabla, n, tot, idTabla;
+  if(vista==='mensual'){
+    let rows=mens.filter(r=>xlfPass(xm,r)); n=rows.length; tot=mens.length; idTabla='idxDolTbl_'+ns;
+    if(!SP_SORT[xm]) SP_SORT[xm]={k:'periodo',dir:-1};
+    rows=_spOrdenar(xm, rows, {periodo:r=>r.periodo, tc:r=>+r.compra, dia:r=>r._fecha||'', origen:r=>r._src});
+    tabla='<table class="grid" id="'+idTabla+'"><thead><tr>'+_idxDolTh(xm,'Período','__fecha__','periodo')+_idxDolTh(xm,'TC vendedor',null,'tc')
+      +_idxDolTh(xm,'Día tomado',null,'dia')+_idxDolTh(xm,'Origen','origen','origen')+'</tr></thead><tbody>'
+      +(rows.map(r=>'<tr><td>'+idxPeriodoFmt(r.periodo)+'</td><td style="text-align:right">'+fmtNum(r.compra,2)+'</td><td>'+(r._fecha?fmtDate(r._fecha)+(r._sinVenta?' <span title="Ese día no tiene vendedor registrado: se usa el comprador" style="color:#8a6d1e">(comprador)</span>':''):'—')+'</td>'
+        +'<td>'+(r._src==='diario'?'Registro diario':'<span style="color:#8a6d1e">Carga manual (sin datos diarios)</span>')+'</td></tr>').join('')
+        ||'<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Sin datos.</td></tr>')+'</tbody></table>';
+  }else{
+    let rows=dia.filter(r=>xlfPass(xd,r)); n=rows.length; tot=dia.length; idTabla='idxDolDiaTbl_'+ns;
+    if(!SP_SORT[xd]) SP_SORT[xd]={k:'fecha',dir:-1};
+    rows=_spOrdenar(xd, rows, {fecha:r=>r.fecha||'', compra:r=>r.compra!=null?+r.compra:null, venta:r=>r.venta!=null?+r.venta:null, prom:r=>usdProm(r), fuente:r=>r.fuente||''});
+    tabla='<table class="grid" id="'+idTabla+'"><thead><tr>'+_idxDolTh(xd,'Fecha','__fecha__','fecha')+_idxDolTh(xd,'Comprador',null,'compra')
+      +_idxDolTh(xd,'Vendedor',null,'venta')+_idxDolTh(xd,'Promedio',null,'prom')+_idxDolTh(xd,'Fuente','fuente','fuente')+'</tr></thead><tbody>'
+      +(rows.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td style="text-align:right">'+(r.compra!=null?'$ '+fmtNum(r.compra,2):'—')+'</td><td style="text-align:right">'+(r.venta!=null?'$ '+fmtNum(r.venta,2):'—')+'</td>'
+        +'<td style="text-align:right"><strong>'+(usdProm(r)!=null?'$ '+fmtNum(usdProm(r),2):'—')+'</strong></td><td>'+esc(r.fuente||'')+'</td></tr>').join('')
+        ||'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">Sin cotizaciones registradas.</td></tr>')+'</tbody></table>';
+  }
+  const xns = vista==='mensual'?xm:xd;
+  return '<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">'+esc(def.nombre)+'</h3>'
+    +'<span class="meta">'+n+' de '+tot+(vista==='mensual'?' meses':' días')+'</span>'
+    +'<span style="display:flex;gap:6px">'+btnV('mensual','Mensual')+btnV('diario','Diario')+'</span>'
+    +'<span style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+xlfClearAllBtn(xns).replace('margin-left:auto','')
+    +'<button class="btn ghost sm" onclick="tblAutofit(\'#'+idTabla+'\')">Auto-ajustar columnas</button>'
+    +'<button class="btn ghost sm" onclick="idxDolExport(\''+ns+'\')">Exportar Excel</button>'
+    +(vista==='diario'?'<button class="btn ghost sm" onclick="idxDolCompletar(\''+ns+'\')">Completar días faltantes</button>':'')
+    +'<a href="'+esc(def.fuenteUrl)+'" target="_blank" rel="noopener" style="font-size:12px">Fuente ↗</a></span></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);padding:8px 16px 0">'
+    +(vista==='mensual'
+      ? 'Se calcula solo: TC vendedor del último día con cotización de cada mes (registro diario '+(ns==='dolar_blue'?'del Diccionario':'del USD Oficial')+'). El mes en curso entra cuando termina. Para exportar un rango: filtrá Período (▾) con Desde/Hasta y tocá Exportar Excel.'
+      : 'Cotización '+(ns==='dolar_blue'?'blue':'oficial')+' día a día. Se guarda sola cada día que alguien abre la app (dolarapi), y una vez por día se completan solos los días que falten (ArgentinaDatos). Para exportar un rango: filtrá Fecha (▾) con Desde/Hasta y tocá Exportar Excel.')
+    +'</div><div class="tbl-hscroll tbl-compact" style="max-height:70vh;margin-top:8px">'+tabla+'</div></div>';
+}
+// Exporta lo que se ve (con filtros y orden aplicados) de la vista actual.
+function idxDolExport(ns){
+  const {xm,xd}=idxDolRegistrar(ns), def=IDX_DEF[ns], hoy=new Date().toISOString().slice(0,10);
+  let aoa, hoja;
+  if(IDX_DOL_VISTA==='diario'){
+    let rows=idxDolDiaRows(ns).filter(r=>xlfPass(xd,r));
+    rows=_spOrdenar(xd, rows, {fecha:r=>r.fecha||'', compra:r=>r.compra!=null?+r.compra:null, venta:r=>r.venta!=null?+r.venta:null, prom:r=>usdProm(r), fuente:r=>r.fuente||''});
+    aoa=[['Fecha','Comprador','Vendedor','Promedio','Fuente'], ...rows.map(r=>[r.fecha, r.compra, r.venta, usdProm(r), r.fuente||''])]; hoja='Diario';
+  }else{
+    let rows=idxDolMensRows(ns).filter(r=>xlfPass(xm,r));
+    rows=_spOrdenar(xm, rows, {periodo:r=>r.periodo, tc:r=>+r.compra, dia:r=>r._fecha||'', origen:r=>r._src});
+    aoa=[['Período','TC vendedor','Día tomado','Origen'], ...rows.map(r=>[idxPeriodoFmt(r.periodo), +r.compra, r._fecha||'', r._src==='diario'?'Registro diario':'Carga manual'])]; hoja='Mensual';
+  }
+  if(aoa.length<2){ toast('No hay filas para exportar con esos filtros'); return; }
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), hoja);
+  XLSX.writeFile(wb, (ns==='dolar_blue'?'Dolar_Blue_':'Dolar_Oficial_')+hoja+'_'+hoy+'.xlsx');
+}
+window.idxDolExport=idxDolExport;
+/* Completar días faltantes desde ArgentinaDatos (histórico; dolarapi solo da el día).
+   Solo AGREGA fechas que no están (no pisa lo registrado), desde 2020-01-01. */
+// Trae el histórico y devuelve solo las fechas que faltan (desde 2020-01-01). Lanza error si la API falla.
+async function idxDolFaltantes(ns){
+  const cfg=IDX_DOLAR_DIARIO[ns];
+  const r=await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/'+cfg.casa,{cache:'no-store'});
+  const data=await r.json();
+  if(!Array.isArray(data)) throw new Error('formato inesperado');
+  const tiene=new Set((DIC[cfg.dic]||[]).map(r=>String(r.fecha)));
+  const nuevos=[];
+  data.forEach(x=>{
+    const f=String(x&&x.fecha||'').slice(0,10).replace(/\//g,'-');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(f) || f<'2020-01-01' || tiene.has(f)) return;
+    const c=+x.compra, v=+x.venta; if(!(c>0) && !(v>0)) return;
+    tiene.add(f); nuevos.push({fecha:f, compra:c>0?c:v, venta:v>0?v:null, fuente:'argentinadatos'});
+  });
+  return nuevos.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+}
+async function idxDolGuardar(ns, nuevos){
+  const cfg=IDX_DOLAR_DIARIO[ns];
+  if(!DEMO_MODE){ for(let i=0;i<nuevos.length;i+=500){ await sbFetch('/'+cfg.tabla,{method:'POST', body:JSON.stringify(nuevos.slice(i,i+500)), prefer:'resolution=ignore-duplicates,return=minimal'}); } }
+  DIC[cfg.dic]=(DIC[cfg.dic]||[]).concat(nuevos).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+}
+/* Automático (pedido de Micaela: no cargar el dólar a mano): una vez por día y por navegador, al terminar
+   de cargar los datos, completa en silencio los días faltantes de Oficial y Blue. Diagnóstico 02/10/2026:
+   0 OG sin TC guardado (tc_pesos), así que completar días no cambia el TC de ninguna OG. */
+async function idxDolAutoCompletar(){
+  if(DEMO_MODE) return;
+  const hoy=new Date().toISOString().slice(0,10);
+  try{ if(localStorage.getItem('idxDolSync')===hoy) return; }catch(e){}
+  let total=0, ok=true;
+  for(const ns of Object.keys(IDX_DOLAR_DIARIO)){
+    try{ const nuevos=await idxDolFaltantes(ns); if(nuevos.length){ await idxDolGuardar(ns, nuevos); total+=nuevos.length; } }
+    catch(e){ ok=false; console.warn('Dólar: no se pudieron completar días de '+ns, e); }
+  }
+  if(ok){ try{ localStorage.setItem('idxDolSync', hoy); }catch(e){} }
+  if(total){ idxDolarRecalc(); if(typeof current!=='undefined' && current==='indices') renderIndices(); }
+}
+window.idxDolAutoCompletar=idxDolAutoCompletar;
+// Manual (botón de la vista Diario): mismo proceso, con confirmación mostrando cuántos días agrega.
+async function idxDolCompletar(ns){
+  toast('Consultando ArgentinaDatos…');
+  let nuevos;
+  try{ nuevos=await idxDolFaltantes(ns); }
+  catch(e){ toast('No se pudo consultar ArgentinaDatos: '+e.message); return; }
+  if(!nuevos.length){ toast('No faltan días: el registro está completo.'); return; }
+  window._idxDolPend={ns, nuevos};
+  openModal('Completar días faltantes · '+esc(IDX_DEF[ns].nombre),
+    '<p style="margin:0 0 8px;font-size:14px">Se van a <strong>agregar '+nuevos.length+' días</strong> que faltan en el registro (del '+fmtDate(nuevos[0].fecha)+' al '+fmtDate(nuevos[nuevos.length-1].fecha)+'), con fuente "argentinadatos". No se modifica ningún día ya registrado.</p>'
+    +(ns==='dolar_oficial'?'<p style="margin:0;font-size:12.5px;color:#8a6d1e">El USD Oficial diario también lo usan EERR y Administración y Finanzas.</p>':''),
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="idxDolCompletarOk()">Agregar '+nuevos.length+' días</button>');
+}
+window.idxDolCompletar=idxDolCompletar;
+async function idxDolCompletarOk(){
+  const p=window._idxDolPend; if(!p) return; window._idxDolPend=null;
+  closeModal(); toast('Guardando '+p.nuevos.length+' días…');
+  try{
+    await idxDolGuardar(p.ns, p.nuevos);
+    idxDolarRecalc(); toast('Listo: '+p.nuevos.length+' días agregados'); renderIndices();
+  }catch(e){ console.error('idxDolCompletarOk', e); toast('No se pudieron guardar: '+e.message); }
+}
+window.idxDolCompletarOk=idxDolCompletarOk;
+
 /* ===== Vista "Índices" ===== */
 let IDX_TAB='ipc';
 function setIdxTab(t){ IDX_TAB=idxDefNs().includes(t)?t:'ipc'; renderIndices(); }
@@ -2307,7 +2475,7 @@ function renderIndices(){
   const faltantes=idxDefNs().map(ns=>({ns, per:idxFaltante(ns)})).filter(x=>x.per!=null);
   const banner = faltantes.length ? '<div class="card" style="padding:12px 16px;margin-bottom:14px;background:#fdf3d9;border:1px solid #e0c46c;font-size:13px"><strong>Hay índices para actualizar:</strong> '
     +faltantes.map(f=>esc(IDX_DEF[f.ns].nombre.split(' (')[0].split(' ·')[0])+' de '+idxPeriodoFmt(f.per)).join(' · ')+'</div>' : '';
-  C().innerHTML = banner + idxEvolucionHtml() + tabs + idxTabBody(IDX_TAB);
+  C().innerHTML = banner + idxEvolucionHtml() + tabs + (idxEsDolar(IDX_TAB) ? idxDolarTabBody(IDX_TAB) : idxTabBody(IDX_TAB));
 }
 window.renderIndices=renderIndices;
 function idxTabBody(ns){
@@ -11186,10 +11354,16 @@ async function reloadDB(){
         const ud = await sbFetchAll('/compras_usd_diario?select=fecha,compra,venta,fuente&order=fecha.asc');
         if(ud) DIC.usd_diario = ud.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // USD Oficial día a día (lo usan EERR / Adm. y Finanzas; acá alimenta Índices → Dólar Oficial)
+      (async()=>{ try{
+        const uo = await sbFetchAll('/compras_usd_diario_oficial?select=fecha,compra,venta,fuente&order=fecha.asc');
+        if(uo) DIC.usd_diario_oficial = uo.map(r=>({fecha:r.fecha, compra:+r.compra||0, venta:r.venta!=null?+r.venta:null, fuente:r.fuente||''}));
+      }catch(e){ console.warn('No se pudo leer compras_usd_diario_oficial', e); } })(),
       // Índices mes a mes (IPC / CAC / Polinómica): carga manual propia de la app
       ...Object.keys(IDX_DEF).map(ns=>(async()=>{ try{
         const rows = await sbFetchAll('/'+IDX_DEF[ns].tabla+'?select=*&order=periodo.asc');
         if(rows) DIC['idx_'+ns] = rows.map(r=>({...r, periodo:+r.periodo}));
+        if(rows && idxEsDolar(ns)) DIC['idx_'+ns+'_manual'] = DIC['idx_'+ns].slice();   // respaldo: el mensual se recalcula del diario
       }catch(e){ console.warn('Índices: no se pudo leer '+IDX_DEF[ns].tabla, e); } })()),
       // Contabilidad (cuentas + auxiliares): RLS en Supabase oculta lo confidencial a quien no tiene permiso
       (async()=>{ try{
@@ -11231,6 +11405,8 @@ async function reloadDB(){
         if(us) USUARIOS=us;
       }catch(e){ /* si la vista no existe o no se puede leer, queda vacío */ } })(),
     ]);
+    idxDolarRecalc();
+    idxDolAutoCompletar();   // sin await: no demora la carga de la app
   }catch(e){ toast('No se pudieron cargar los datos desde la nube.'); }
 }
 window.reloadDB=reloadDB;
