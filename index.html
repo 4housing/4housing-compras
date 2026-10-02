@@ -2447,7 +2447,9 @@ window.renderPanol=renderPanol;
    Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
    Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
    ================================================================ */
-const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], charts:{}, filtroSeccion:'' };
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], charts:{}, filtroSeccion:'' };
+// Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
+function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
 // Normaliza para comparar (sin acentos, mayúsculas, espacios colapsados)
 function gpNorm(s){ return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim(); }
@@ -2476,14 +2478,15 @@ async function gpLoadLista(){
 }
 async function gpLoadProyecto(id){
   GP.proyecto=(GP.proyectos||[]).find(p=>String(p.id)===String(id))||null;
-  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; return; }
-  const [pres, oc, map, imp] = await Promise.all([
+  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; return; }
+  const [pres, oc, map, imp, rep] = await Promise.all([
     sbFetch('/compras_gp_presupuesto?select=*&proyecto_id=eq.'+id+'&order=orden.asc'),
     sbFetchAll('/compras_gp_oc?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_mapeo?select=*&proyecto_id=eq.'+id),
-    sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc')
+    sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc'),
+    sbFetch('/compras_gp_reparto?select=*&proyecto_id=eq.'+id)
   ]);
-  GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[];
+  GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[]; GP.reparto=rep||[];
 }
 
 async function renderProyectos(){
@@ -2873,6 +2876,65 @@ async function gpGuardarMapeo(){
 }
 window.gpGuardarMapeo=gpGuardarMapeo;
 
+/* -------- Reparto de un renglón entre varias secciones (responsable/dirección) -------- */
+// Fragmento de filtro PostgREST para la firma (va entre comillas por si trae caracteres reservados)
+function gpFirmaEq(firma){ return '&firma=eq.'+encodeURIComponent('"'+String(firma).replace(/"/g,'""')+'"'); }
+function gpRepartir(i){
+  if(!(puedeCrearOG()||esDireccion())){ toast('No tenés permiso para repartir.'); return; }
+  const secs=(GP.presupuesto||[]).map(s=>s.seccion);
+  if(!secs.length){ alert('Primero hay que cargar el costeo (secciones) para poder repartir.'); return; }
+  const o=(GP._detRows||[])[i]; if(!o) return;
+  const firma=gpFirma(o);
+  const total=(GP.oc||[]).filter(x=>gpFirma(x)===firma).reduce((a,x)=>a+(+x.total_ars||0),0);
+  GP._repFirma=firma; GP._repTotal=total;
+  const existing=(GP.reparto||[]).filter(r=>r.firma===firma).map(r=>({seccion:r.seccion, monto:+r.monto||0}));
+  const nRows=Math.max(existing.length+2, 5); GP._repN=nRows;
+  const secOpts=sel=>'<option value="">— sección —</option>'+secs.map(x=>'<option value="'+esc(x)+'"'+(sel===x?' selected':'')+'>'+esc(x)+'</option>').join('');
+  let filas='';
+  for(let k=0;k<nRows;k++){ const e=existing[k]||{seccion:'',monto:''};
+    filas+='<tr><td><select id="rep_sec_'+k+'" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px;min-width:180px">'+secOpts(e.seccion)+'</select></td>'
+      +'<td><input id="rep_mon_'+k+'" type="number" step="0.01" value="'+(e.monto||'')+'" oninput="gpRepartoCalc()" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px;width:140px;text-align:right"></td></tr>';
+  }
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Repartí el total de este renglón entre secciones del costeo, en montos exactos. Lo que no asignes queda “pendiente de repartir”. Se re-aplica solo en las próximas importaciones.</div>'
+    +'<div style="font-size:12px;margin-bottom:10px"><b>'+esc(o.descripcion||o.cod_articulo||'(renglón)')+'</b><br><span style="color:var(--muted)">OC '+esc(o.oc_numero||'')+(o.cod_articulo?(' · '+esc(o.cod_articulo)):'')+' · Total del renglón: <b>$'+fmtNum(total,0)+'</b></span></div>'
+    +'<table class="grid" style="font-size:12px"><thead><tr><th>Sección</th><th style="text-align:right">Monto ($)</th></tr></thead><tbody>'+filas+'</tbody></table>'
+    +'<div id="repCalc" style="font-size:12.5px;margin-top:10px"></div>';
+  const foot=(existing.length?'<button class="btn ghost" style="color:#b0584f" onclick="gpQuitarReparto()">Quitar reparto</button>':'')
+    +'<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarReparto()">Guardar reparto</button>';
+  openModal('Repartir renglón', body, foot, 'wide');
+  gpRepartoCalc();
+}
+window.gpRepartir=gpRepartir;
+function gpRepartoCalc(){
+  let sum=0; for(let k=0;k<(GP._repN||0);k++){ const mi=document.getElementById('rep_mon_'+k); if(mi) sum+=(+mi.value||0); }
+  const total=GP._repTotal||0; const pend=total-sum; const el=document.getElementById('repCalc'); if(!el) return;
+  const col=Math.abs(pend)<1?'#4f8a53':(pend<0?'#b0584f':'var(--muted)');
+  el.innerHTML='Asignado: <b>$'+fmtNum(sum,0)+'</b> · <span style="color:'+col+'">'+(pend<-0.5?('Excede por $'+fmtNum(-pend,0)):('Pendiente $'+fmtNum(pend,0)))+'</span>';
+}
+window.gpRepartoCalc=gpRepartoCalc;
+async function gpGuardarReparto(){
+  if(!(puedeCrearOG()||esDireccion())){ toast('No tenés permiso.'); return; }
+  const firma=GP._repFirma, total=GP._repTotal||0, pid=GP.actualId;
+  const seen={};
+  for(let k=0;k<(GP._repN||0);k++){ const s=((document.getElementById('rep_sec_'+k)||{}).value||'').trim(); const m=+((document.getElementById('rep_mon_'+k)||{}).value)||0; if(!s||!(m>0)) continue; seen[s]=(seen[s]||0)+m; }
+  const allocs=Object.keys(seen).map(s=>({seccion:s, monto:seen[s]}));
+  const sum=allocs.reduce((a,x)=>a+x.monto,0);
+  const el=document.getElementById('repCalc');
+  if(sum>total+1){ if(el) el.innerHTML='<span style="color:#b0584f">El reparto ($'+fmtNum(sum,0)+') supera el total del renglón ($'+fmtNum(total,0)+').</span>'; return; }
+  try{
+    await sbFetch('/compras_gp_reparto?proyecto_id=eq.'+pid+gpFirmaEq(firma),{method:'DELETE',prefer:'return=minimal'});
+    if(allocs.length){ await sbFetch('/compras_gp_reparto',{method:'POST',prefer:'return=minimal',body:JSON.stringify(allocs.map(a=>({proyecto_id:pid, firma, seccion:a.seccion, monto:a.monto})))}); }
+    closeModal(); toast('Reparto guardado'); renderProyectos();
+  }catch(e){ if(el) el.innerHTML='<span style="color:#b0584f">No se pudo guardar: '+esc(e.message||e)+'</span>'; }
+}
+window.gpGuardarReparto=gpGuardarReparto;
+async function gpQuitarReparto(){
+  const firma=GP._repFirma, pid=GP.actualId;
+  try{ await sbFetch('/compras_gp_reparto?proyecto_id=eq.'+pid+gpFirmaEq(firma),{method:'DELETE',prefer:'return=minimal'}); closeModal(); toast('Reparto quitado'); renderProyectos(); }
+  catch(e){ alert('No se pudo quitar: '+(e.message||e)); }
+}
+window.gpQuitarReparto=gpQuitarReparto;
+
 /* -------- Tablero del proyecto -------- */
 function gpEstadoSeccion(comprado, presup, tol){
   if(!(comprado>0)) return {txt:'Sin iniciar', cls:'b-gris'};
@@ -2882,11 +2944,26 @@ function gpEstadoSeccion(comprado, presup, tol){
 }
 function gpAgregado(){
   const p=GP.proyecto||{}; const tc=+p.tc_presupuesto||0; const tol=+p.tolerancia_desvio_pct||0;
-  const compBySec={}; let sinClasArs=0, sinClasN=0;
+  // repartos por firma + total por firma (el reparto se aplica al total del renglón)
+  const rep={}; (GP.reparto||[]).forEach(r=>{ (rep[r.firma]=rep[r.firma]||[]).push({seccion:r.seccion, monto:+r.monto||0}); });
+  const firmaTot={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTot[f]=(firmaTot[f]||0)+(+o.total_ars||0); });
+  const conRep=new Set(Object.keys(rep).filter(f=>firmaTot[f]!=null));   // repartos de renglones presentes en la foto actual
+  const compBySec={}; let sinClasArs=0, sinClasN=0, pendRepArs=0, repOver=0;
+  // 1) renglones SIN reparto: por fila
   (GP.oc||[]).forEach(o=>{
+    if(conRep.has(gpFirma(o))) return;   // los repartidos se suman aparte, por firma
     const a=+o.total_ars||0;
     if(o.seccion==='Sin clasificar' || !o.seccion){ sinClasArs+=a; sinClasN++; return; }
     compBySec[o.seccion]=(compBySec[o.seccion]||0)+a;
+  });
+  // 2) renglones CON reparto: sobre el total del renglón (suma de sus filas)
+  conRep.forEach(f=>{
+    const total=firmaTot[f]||0, allocs=rep[f]||[];
+    let sum=allocs.reduce((x,al)=>x+(+al.monto||0),0);
+    let factor=1; if(sum>total && sum>0){ factor=total/sum; repOver++; }   // reparto excede el total: se escala y se marca
+    allocs.forEach(al=>{ const m=(+al.monto||0)*factor; if(m) compBySec[al.seccion]=(compBySec[al.seccion]||0)+m; });
+    const rem=total-Math.min(sum,total);
+    if(rem>1){ pendRepArs+=rem; }   // lo que falta repartir
   });
   const filas=(GP.presupuesto||[]).map(s=>{
     const comp=compBySec[s.seccion]||0;
@@ -2898,7 +2975,7 @@ function gpAgregado(){
     return {id:s.id, origen:s.origen||'costeo', seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
   });
   const tot=filas.reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
-  return {filas, tot, sinClasArs, sinClasN, tc, tol};
+  return {filas, tot, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
 }
 
 function gpRenderTablero(){
@@ -2928,6 +3005,7 @@ function gpRenderTablero(){
     +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
     +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">'+(ag.tot.desv>0?'sobrecosto':(ag.tot.desv<0?'ahorro':'—'))+'</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
+  const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
@@ -2946,13 +3024,29 @@ function gpRenderTablero(){
 
   // Detalle de OC (filtrable por sección)
   const filtro=GP.filtroSeccion;
-  const detalle=(GP.oc||[]).filter(o=>!filtro || o.seccion===filtro);
-  const detRows=detalle.slice(0,600).map(o=>'<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'')+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td></tr>').join('');
+  const puedeRep=puedeCrearOG()||esDireccion();
+  const repByFirma={}; (GP.reparto||[]).forEach(r=>{ (repByFirma[r.firma]=repByFirma[r.firma]||[]).push(r); });
+  const firmaTotDet={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTotDet[f]=(firmaTotDet[f]||0)+(+o.total_ars||0); });
+  // al filtrar por sección, incluir también los renglones repartidos que aportan a esa sección
+  const detalle=(GP.oc||[]).filter(o=>{ if(!filtro) return true; const al=repByFirma[gpFirma(o)]; if(al) return al.some(r=>r.seccion===filtro); return o.seccion===filtro; });
+  GP._detRows=detalle;
+  const detRows=detalle.slice(0,600).map((o,i)=>{
+    const firma=gpFirma(o); const allocs=repByFirma[firma];
+    let secCell;
+    if(allocs && allocs.length){
+      const sumA=allocs.reduce((x,r)=>x+(+r.monto||0),0); const ftot=firmaTotDet[firma]||0; const pend=ftot-Math.min(sumA,ftot);
+      secCell='<span class="badge b-azul">Repartido</span> <span style="font-size:10.5px;color:var(--muted)">'+allocs.map(r=>esc(r.seccion)+' $'+fmtNum(r.monto,0)).join(' · ')+'</span>'+(pend>1?' <span class="badge b-ambar">pend. $'+fmtNum(pend,0)+'</span>':'');
+    }else{
+      secCell=esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'');
+    }
+    const accion=puedeRep?'<button class="btn ghost sm" onclick="gpRepartir('+i+')">Repartir</button>':'';
+    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+accion+'</td></tr>';
+  }).join('');
 
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+sinClasKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
@@ -2962,8 +3056,8 @@ function gpRenderTablero(){
     +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Detalle de OC importadas</h3>'
       +'<span class="meta">'+detalle.length+' renglones'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
       +(filtro?'<button class="btn ghost sm" style="margin-left:auto" onclick="gpQuitarFiltro()">Quitar filtro</button>':'')+'</div>'
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OC</th><th>Fecha</th><th>Prov.</th><th>Descripción</th><th>Subrubro</th><th>Sección</th><th style="text-align:right">Total ($)</th><th>Estado</th></tr></thead><tbody>'
-      +(detRows||'<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--muted)">Sin OC importadas todavía. Usá “Importar Tango”.</td></tr>')+'</tbody></table></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OC</th><th>Fecha</th><th>Prov.</th><th>Descripción</th><th>Rubro/Costeo</th><th>Sección</th><th style="text-align:right">Total ($)</th><th>Estado</th><th></th></tr></thead><tbody>'
+      +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">Sin OC importadas todavía. Usá “Importar Tango”.</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>';
 
   gpDrawCharts(ag);
