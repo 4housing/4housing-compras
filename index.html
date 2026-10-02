@@ -2720,6 +2720,78 @@ async function gpSetAmbito(id, val){
 }
 window.gpSetAmbito=gpSetAmbito;
 
+/* -------- Desglose de una sección compuesta en sub-rubros (solo dirección) -------- */
+function gpEqQ(col, val){ return '&'+col+'=eq.'+encodeURIComponent('"'+String(val).replace(/"/g,'""')+'"'); }
+function gpDesglosar(id){
+  if(!esDireccion()){ toast('Solo dirección puede desglosar.'); return; }
+  const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const parentArs=+s.presupuesto_ars||0, parentUsd=+s.presupuesto_usd||0, name=s.seccion;
+  GP._desgParent={id:s.id, name, ars:parentArs, usd:parentUsd};
+  const hijos=(GP.presupuesto||[]).filter(x=>x.desglose_de===name).map(x=>({etq:x.seccion, monto:+x.presupuesto_ars||0, ambito:x.ambito||'compras'}));
+  const n=Math.max(hijos.length+2, 4); GP._desgN=n;
+  const ambOpts=sel=>['compras','mod','externo'].map(v=>'<option value="'+v+'"'+(sel===v?' selected':'')+'>'+({compras:'Compras',mod:'MOD',externo:'Externo'}[v])+'</option>').join('');
+  let filas='';
+  for(let k=0;k<n;k++){ const h=hijos[k]||{etq:'',monto:'',ambito:'compras'};
+    filas+='<tr><td><input id="dsg_etq_'+k+'" type="text" value="'+esc(h.etq)+'" placeholder="ej. Infraestructura" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px;min-width:160px"></td>'
+      +'<td><input id="dsg_mon_'+k+'" type="number" step="0.01" value="'+(h.monto||'')+'" oninput="gpDesgloseCalc()" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px;width:130px;text-align:right"></td>'
+      +'<td><select id="dsg_amb_'+k+'" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px">'+ambOpts(h.ambito)+'</select></td></tr>';
+  }
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Partí <b>'+esc(name)+'</b> ($'+fmtNum(parentArs,0)+') en sub-rubros, cada uno con su ámbito. Los montos deben sumar el total de la sección. La sección madre queda "desglosada" (la representan sus hijos).</div>'
+    +'<table class="grid" style="font-size:12px"><thead><tr><th>Sub-rubro</th><th style="text-align:right">Monto ($)</th><th>Ámbito</th></tr></thead><tbody>'+filas+'</tbody></table>'
+    +'<div id="dsgCalc" style="font-size:12.5px;margin-top:10px"></div>';
+  const foot=(hijos.length?'<button class="btn ghost" style="color:#b0584f" onclick="gpDeshacerDesglose()">Deshacer desglose</button>':'')
+    +'<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarDesglose()">Guardar desglose</button>';
+  openModal('Desglosar sección', body, foot, 'wide');
+  gpDesgloseCalc();
+}
+window.gpDesglosar=gpDesglosar;
+function gpDesgloseCalc(){
+  let sum=0; for(let k=0;k<(GP._desgN||0);k++){ const mi=document.getElementById('dsg_mon_'+k); if(mi) sum+=(+mi.value||0); }
+  const total=(GP._desgParent||{}).ars||0; const pend=total-sum; const el=document.getElementById('dsgCalc'); if(!el) return;
+  const col=Math.abs(pend)<1?'#4f8a53':'#b0584f';
+  el.innerHTML='Asignado: <b>$'+fmtNum(sum,0)+'</b> de $'+fmtNum(total,0)+' · <span style="color:'+col+'">'+(Math.abs(pend)<1?'cuadra ✓':('faltan/sobran $'+fmtNum(pend,0)))+'</span>';
+}
+window.gpDesgloseCalc=gpDesgloseCalc;
+async function gpGuardarDesglose(){
+  if(!esDireccion()){ toast('Solo dirección.'); return; }
+  const P=GP._desgParent||{}; const pid=GP.actualId; const el=document.getElementById('dsgCalc');
+  const setErr=t=>{ if(el){ el.style.color='#b3261e'; el.innerHTML=t; } };
+  const items=[]; const etqs={};
+  for(let k=0;k<(GP._desgN||0);k++){
+    const etq=((document.getElementById('dsg_etq_'+k)||{}).value||'').trim();
+    const monto=+((document.getElementById('dsg_mon_'+k)||{}).value)||0;
+    const amb=((document.getElementById('dsg_amb_'+k)||{}).value||'compras');
+    if(!etq||!(monto>0)) continue;
+    if(etqs[gpNorm(etq)]){ setErr('Hay sub-rubros con el mismo nombre ("'+esc(etq)+'").'); return; }
+    etqs[gpNorm(etq)]=1; items.push({etq, monto, amb});
+  }
+  if(items.length<2){ setErr('Cargá al menos 2 sub-rubros (si no, no es un desglose).'); return; }
+  const sum=items.reduce((a,x)=>a+x.monto,0);
+  if(Math.abs(sum-P.ars)>1){ setErr('Los sub-rubros ($'+fmtNum(sum,0)+') tienen que sumar el total de la sección ($'+fmtNum(P.ars,0)+').'); return; }
+  // ningún sub-rubro puede chocar con una sección existente que NO sea hijo de este mismo desglose
+  const choque=items.find(it=> (GP.presupuesto||[]).some(s=> gpNorm(s.seccion)===gpNorm(it.etq) && s.desglose_de!==P.name));
+  if(choque){ setErr('El sub-rubro "'+esc(choque.etq)+'" ya existe como otra sección. Cambiá el nombre.'); return; }
+  try{
+    await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid+gpEqQ('desglose_de',P.name),{method:'DELETE',prefer:'return=minimal'});
+    const rows=items.map((it,idx)=>({proyecto_id:pid, seccion:it.etq, orden:1000+idx, presupuesto_ars:it.monto, presupuesto_usd:(P.ars>0?P.usd*(it.monto/P.ars):0), origen:'manual', desglose_de:P.name, ambito:it.amb}));
+    await sbFetch('/compras_gp_presupuesto',{method:'POST',prefer:'return=minimal',body:JSON.stringify(rows)});
+    await sbFetch('/compras_gp_presupuesto?id=eq.'+P.id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({ambito:'desglosada'})});
+    closeModal(); toast('Sección desglosada en '+items.length+' sub-rubros'); renderProyectos();
+  }catch(e){ setErr('No se pudo guardar: '+esc(e.message||e)); }
+}
+window.gpGuardarDesglose=gpGuardarDesglose;
+async function gpDeshacerDesglose(){
+  if(!esDireccion()){ toast('Solo dirección.'); return; }
+  const P=GP._desgParent||{}; const pid=GP.actualId;
+  if(!confirm('¿Deshacer el desglose de "'+P.name+'"? Se borran los sub-rubros y la sección vuelve a ámbito Compras.')) return;
+  try{
+    await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid+gpEqQ('desglose_de',P.name),{method:'DELETE',prefer:'return=minimal'});
+    await sbFetch('/compras_gp_presupuesto?id=eq.'+P.id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({ambito:'compras'})});
+    closeModal(); toast('Desglose deshecho'); renderProyectos();
+  }catch(e){ alert('No se pudo deshacer: '+(e.message||e)); }
+}
+window.gpDeshacerDesglose=gpDeshacerDesglose;
+
 /* -------- Imputación Tango -> sección -------- */
 // Devuelve {seccion, imputado_por, nuevoMapeo?} para un renglón de OC.
 function gpImputar(o, mapIdx){
@@ -2732,7 +2804,7 @@ function gpImputar(o, mapIdx){
   // 1) mapeo guardado
   for(const c of cands){ if(gpEsNA(c.clave)) continue; const k=gpNorm(c.clave); const hit=mapIdx[c.tipo+'|'+k]; if(hit) return {seccion:hit, imputado_por:c.tipo}; }
   // 2) auto-match contra las secciones del presupuesto
-  const secs=(GP.presupuesto||[]).map(s=>({seccion:s.seccion, n:gpNorm(s.seccion)}));
+  const secs=(GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>({seccion:s.seccion, n:gpNorm(s.seccion)}));
   for(const c of cands){
     if(c.tipo==='prefijo' || gpEsNA(c.clave)) continue;
     const cand=gpNorm(gpSinPrefijo(c.clave));
@@ -2828,7 +2900,7 @@ window.gpTangoAnalizar=gpTangoAnalizar;
 
 /* -------- Revisión de "Sin clasificar" -------- */
 function gpRevisarSinClasificar(){
-  const secs=(GP.presupuesto||[]).map(s=>s.seccion);
+  const secs=(GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion);
   if(!secs.length){ alert('Primero cargá el costeo (presupuesto por sección) para poder asignar.'); return; }
   const sc=(GP.oc||[]).filter(o=>o.seccion==='Sin clasificar');
   if(!sc.length){ alert('No hay renglones sin clasificar. ¡Todo imputado!'); return; }
@@ -2891,7 +2963,7 @@ window.gpGuardarMapeo=gpGuardarMapeo;
 function gpFirmaEq(firma){ return '&firma=eq.'+encodeURIComponent('"'+String(firma).replace(/"/g,'""')+'"'); }
 function gpRepartir(i){
   if(!(puedeCrearOG()||esDireccion())){ toast('No tenés permiso para repartir.'); return; }
-  const secs=(GP.presupuesto||[]).map(s=>s.seccion);
+  const secs=(GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion);
   if(!secs.length){ alert('Primero hay que cargar el costeo (secciones) para poder repartir.'); return; }
   const o=(GP._detRows||[])[i]; if(!o) return;
   const firma=gpFirma(o);
@@ -2982,11 +3054,11 @@ function gpAgregado(){
     const pend=Math.max(presAr-comp,0);
     const desv=comp-presAr;
     const avance=presAr>0?comp/presAr:(comp>0?1:0);
-    return {id:s.id, origen:s.origen||'costeo', ambito:s.ambito||'compras', seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
+    return {id:s.id, origen:s.origen||'costeo', ambito:s.ambito||'compras', desglose_de:s.desglose_de||null, seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
   });
-  // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD y externo se netean)
+  // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD/externo se netean; 'desglosada' la representan sus hijos)
   const tot=filas.filter(f=>f.ambito==='compras').reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
-  const totFuera=filas.filter(f=>f.ambito!=='compras').reduce((a,f)=>({mod:a.mod+(f.ambito==='mod'?f.presAr:0), ext:a.ext+(f.ambito==='externo'?f.presAr:0), compMod:a.compMod+(f.ambito==='mod'?f.comp:0), compExt:a.compExt+(f.ambito==='externo'?f.comp:0)}),{mod:0,ext:0,compMod:0,compExt:0});
+  const totFuera=filas.filter(f=>f.ambito==='mod'||f.ambito==='externo').reduce((a,f)=>({mod:a.mod+(f.ambito==='mod'?f.presAr:0), ext:a.ext+(f.ambito==='externo'?f.presAr:0), compMod:a.compMod+(f.ambito==='mod'?f.comp:0), compExt:a.compExt+(f.ambito==='externo'?f.comp:0)}),{mod:0,ext:0,compMod:0,compExt:0});
   return {filas, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
 }
 
@@ -3021,13 +3093,24 @@ function gpRenderTablero(){
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
-  const ambLbl={compras:'Compras', mod:'MOD', externo:'Externo'};
-  const ambCell=f=> dir
-    ? '<select onclick="event.stopPropagation()" onchange="event.stopPropagation();gpSetAmbito('+f.id+',this.value)" style="border:1px solid var(--line-strong);border-radius:6px;padding:2px 4px;font-size:10.5px;background:#fff">'
-        +['compras','mod','externo'].map(v=>'<option value="'+v+'"'+(f.ambito===v?' selected':'')+'>'+ambLbl[v]+'</option>').join('')+'</select>'
-    : '<span class="badge '+(f.ambito==='mod'?'b-azul':(f.ambito==='externo'?'b-gris':'b-verde'))+'" style="font-size:9.5px">'+(ambLbl[f.ambito]||'Compras')+'</span>';
-  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer'+(f.ambito!=='compras'?';opacity:.55':'')+'" onclick="gpFiltroSeccion('+i+')"><td>'+esc(f.seccion)
-    +(f.origen==='manual'?' <span class="badge b-azul" style="font-size:9.5px">manual</span>'+(dir?' <a href="#" title="Eliminar rubro" onclick="event.stopPropagation();gpEliminarRubro('+f.id+');return false" style="color:#b0584f;text-decoration:none">✕</a>':''):'')+'</td>'
+  const ambLbl={compras:'Compras', mod:'MOD', externo:'Externo', desglosada:'Desglosada'};
+  const ambCell=f=>{
+    if(f.ambito==='desglosada') return '<span class="badge b-gris" style="font-size:9.5px">Desglosada</span>';
+    return dir
+      ? '<select onclick="event.stopPropagation()" onchange="event.stopPropagation();gpSetAmbito('+f.id+',this.value)" style="border:1px solid var(--line-strong);border-radius:6px;padding:2px 4px;font-size:10.5px;background:#fff">'
+          +['compras','mod','externo'].map(v=>'<option value="'+v+'"'+(f.ambito===v?' selected':'')+'>'+ambLbl[v]+'</option>').join('')+'</select>'
+      : '<span class="badge '+(f.ambito==='mod'?'b-azul':(f.ambito==='externo'?'b-gris':'b-verde'))+'" style="font-size:9.5px">'+(ambLbl[f.ambito]||'Compras')+'</span>';
+  };
+  // Nombre de sección: hijos de desglose indentados; madre desglosada con tag; costeo (dir) con link "desglosar"
+  const nombreCell=f=>{
+    if(f.desglose_de) return '<span style="color:var(--muted)">⤷ </span>'+esc(f.seccion)+' <span style="font-size:10px;color:var(--muted)">(de '+esc(f.desglose_de)+')</span>';
+    let s=esc(f.seccion);
+    if(f.ambito==='desglosada'){ s+=' <span class="badge b-gris" style="font-size:9.5px">desglosada</span>'+(dir?' <a href="#" onclick="event.stopPropagation();gpDesglosar('+f.id+');return false" style="font-size:10.5px">editar</a>':''); return s; }
+    if(f.origen==='manual') s+=' <span class="badge b-azul" style="font-size:9.5px">manual</span>'+(dir?' <a href="#" title="Eliminar rubro" onclick="event.stopPropagation();gpEliminarRubro('+f.id+');return false" style="color:#b0584f;text-decoration:none">✕</a>':'');
+    else if(dir) s+=' <a href="#" title="Desglosar en sub-rubros" onclick="event.stopPropagation();gpDesglosar('+f.id+');return false" style="font-size:10.5px">desglosar</a>';
+    return s;
+  };
+  const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer'+(f.ambito!=='compras'?';opacity:.6':'')+'" onclick="gpFiltroSeccion('+i+')"><td>'+nombreCell(f)+'</td>'
     +'<td>'+ambCell(f)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.presAr,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.comp,0)+'</td>'
