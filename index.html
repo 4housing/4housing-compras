@@ -2575,6 +2575,7 @@ async function gpGuardarProyecto(id){
     fecha_inicio_compras: g('gp_fini').value||null, fecha_fin_compras: g('gp_ffin').value||null,
     notas:(g('gp_notas').value||'').trim()||null, actualizado_en:new Date().toISOString()
   };
+  if(parsed && parsed.detalle) obj.costeo_detalle=parsed.detalle;   // propuestas para el desglose
   try{
     let pid=id;
     if(id){ await sbFetch('/compras_gp_proyectos?id=eq.'+id,{method:'PATCH', body:JSON.stringify(obj)}); }
@@ -2601,6 +2602,58 @@ window.gpEliminarProyecto=gpEliminarProyecto;
 
 /* -------- Parseo del costeo (pestaña "Tablero Compras") -------- */
 function gpNumNear(row, c){ for(let k=1;k<=3;k++){ const v=row[c+k]; if(v!==''&&v!=null){ const n=_syncNum(v); if(!isNaN(n)) return n; } } return null; }
+// Adivina el ámbito de un sub-rubro por su nombre (dirección puede corregir)
+function gpAmbitoGuess(etq){
+  const n=gpNorm(etq);
+  if(/MONTAJE|MANO DE OBRA DIRECTA|\bM\.?O\.?D\.?\b/.test(n)) return 'mod';
+  if(/INFRAESTRUCTURA|TASA|SEGURIDAD|HIGIENE|MUNICIPAL|SEGURO/.test(n)) return 'externo';
+  return 'compras';
+}
+// Lee la pestaña de DETALLE del costeo y devuelve, por sección compuesta, sus
+// componentes no-cero: { "<seccion>": [ {etq, ars, usd, ambito}, ... ] }.
+// Heurística por valores (SheetJS no da nivel de esquema): una fila es "madre"
+// (encabezado de sección) si no tiene %/precio/cant (cols C/E/H vacías); es
+// "componente" si tiene alguna de ésas. Layout estándar del costeo: B=detalle,
+// C/E/H=%/material/cant, I=subtotal USD, J=subtotal $.
+function gpParseDetalle(wb, nombres, tableroSheet){
+  try{
+    const secN=new Set((nombres||[]).map(gpNorm));
+    const byNorm={}; (nombres||[]).forEach(s=>{ byNorm[gpNorm(s)]=s; });
+    // Elegí la hoja de detalle: la que más nombres de sección matchea en col B
+    let best=null, bestN=0;
+    for(const name of wb.SheetNames){
+      if(name===tableroSheet) continue;
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null});
+      let cnt=0; for(const r of rows){ if(r && r[1]!=null && secN.has(gpNorm(r[1]))) cnt++; }
+      if(cnt>bestN){ bestN=cnt; best={rows}; }
+    }
+    if(!best || bestN<3) return {};   // no reconozco el detalle: sin propuesta (se carga a mano)
+    const rows=best.rows, map={};
+    const num=v=> (typeof v==='number'?v:_syncNum(v));
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i]||[]; const nm=r[1];
+      if(nm==null || String(nm).trim()==='') continue;
+      if(!secN.has(gpNorm(nm))) continue;                 // busco encabezado de una sección del Tablero
+      if(!(r[2]==null && r[4]==null && r[7]==null)) continue;   // madre: sin %/material/cant
+      const seccion=byNorm[gpNorm(nm)];
+      const comps=[];
+      for(let j=i+1;j<rows.length;j++){
+        const rr=rows[j]||[]; const b=rr[1]; const bs=(b==null?'':String(b).trim());
+        const esComp=(rr[2]!=null||rr[4]!=null||rr[7]!=null);
+        if(!esComp){
+          if(bs==='') continue;                            // fila en blanco: saltear
+          if(secN.has(gpNorm(bs))) break;                  // próxima sección
+          if(/^(SUB\s?TOTAL|TOTAL)/i.test(bs)) break;      // subtotal/total
+          break;                                           // otro encabezado/banner
+        }
+        const ars=num(rr[9])||0, usd=num(rr[8])||0;
+        if(ars>0) comps.push({etq:bs, ars, usd, ambito:gpAmbitoGuess(bs)});
+      }
+      if(comps.length>=2) map[seccion]=comps;              // solo secciones realmente compuestas
+    }
+    return map;
+  }catch(e){ return {}; }
+}
 async function gpParseCosteo(file){
   const wb=await _syncReadWb(file);
   let found=null;
@@ -2611,7 +2664,7 @@ async function gpParseCosteo(file){
       const cSec=h.indexOf('SECCION');
       const cArs=h.findIndex(x=>x==='PRESUPUESTO ($)');
       const cUsd=h.findIndex(x=>x==='PRESUPUESTO (US$)');
-      if(cSec>=0 && cArs>=0){ found={rows, hdr:i, cSec, cArs, cUsd}; break; }
+      if(cSec>=0 && cArs>=0){ found={rows, hdr:i, cSec, cArs, cUsd, sheetName:name}; break; }
     }
     if(found) break;
   }
@@ -2638,7 +2691,8 @@ async function gpParseCosteo(file){
       }
     }
   }
-  return {secciones, tc, meta, tol};
+  const detalle=gpParseDetalle(wb, secciones.map(s=>s.seccion), found.sheetName);
+  return {secciones, tc, meta, tol, detalle};
 }
 async function gpActualizarCosteo(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el Excel del costeo. Leo la pestaña “Tablero Compras” y reemplazo el presupuesto por sección de este proyecto (no toca las OC importadas).</div>'
@@ -2662,6 +2716,7 @@ async function gpCosteoAnalizar(){
     const upd={actualizado_en:new Date().toISOString()};
     if(parsed.tc!=null) upd.tc_presupuesto=parsed.tc;
     if(parsed.meta!=null) upd.meta_ahorro_pct=parsed.meta;
+    if(parsed.detalle) upd.costeo_detalle=parsed.detalle;   // propuestas para el desglose
     await sbFetch('/compras_gp_proyectos?id=eq.'+pid,{method:'PATCH', body:JSON.stringify(upd)});
     closeModal(); toast('Presupuesto actualizado: '+parsed.secciones.length+' secciones'); renderProyectos();
   }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
@@ -2727,7 +2782,12 @@ function gpDesglosar(id){
   const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(!s) return;
   const parentArs=+s.presupuesto_ars||0, parentUsd=+s.presupuesto_usd||0, name=s.seccion;
   GP._desgParent={id:s.id, name, ars:parentArs, usd:parentUsd};
-  const hijos=(GP.presupuesto||[]).filter(x=>x.desglose_de===name).map(x=>({etq:x.seccion, monto:+x.presupuesto_ars||0, ambito:x.ambito||'compras'}));
+  let hijos=(GP.presupuesto||[]).filter(x=>x.desglose_de===name).map(x=>({etq:x.seccion, monto:+x.presupuesto_ars||0, ambito:x.ambito||'compras'}));
+  let propuesto=false;
+  if(!hijos.length){   // sin desglose previo: proponer desde el costeo si hay detalle
+    const comps=((GP.proyecto&&GP.proyecto.costeo_detalle)||{})[name];
+    if(comps && comps.length){ hijos=comps.map(c=>({etq:c.etq, monto:+c.ars||0, ambito:c.ambito||gpAmbitoGuess(c.etq)})); propuesto=true; }
+  }
   const n=Math.max(hijos.length+2, 4); GP._desgN=n;
   const ambOpts=sel=>['compras','mod','externo'].map(v=>'<option value="'+v+'"'+(sel===v?' selected':'')+'>'+({compras:'Compras',mod:'MOD',externo:'Externo'}[v])+'</option>').join('');
   let filas='';
@@ -2737,6 +2797,7 @@ function gpDesglosar(id){
       +'<td><select id="dsg_amb_'+k+'" style="border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;font-size:12px">'+ambOpts(h.ambito)+'</select></td></tr>';
   }
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Partí <b>'+esc(name)+'</b> ($'+fmtNum(parentArs,0)+') en sub-rubros, cada uno con su ámbito. Los montos deben sumar el total de la sección. La sección madre queda "desglosada" (la representan sus hijos).</div>'
+    +(propuesto?'<div style="font-size:12px;color:#4f8a53;margin-bottom:10px">✓ Propuesto desde el costeo — revisá el ámbito de cada uno y aceptá o editá.</div>':'')
     +'<table class="grid" style="font-size:12px"><thead><tr><th>Sub-rubro</th><th style="text-align:right">Monto ($)</th><th>Ámbito</th></tr></thead><tbody>'+filas+'</tbody></table>'
     +'<div id="dsgCalc" style="font-size:12.5px;margin-top:10px"></div>';
   const foot=(hijos.length?'<button class="btn ghost" style="color:#b0584f" onclick="gpDeshacerDesglose()">Deshacer desglose</button>':'')
