@@ -755,7 +755,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 6l4 4-8 8-4-4z"/><path d="M18 10l2.5-2.5a2 2 0 0 0-3-2.6L15 7"/><path d="M6 14l-2 6 6-2"/></svg>',
   },
   mantenimiento: {
-    title:'Mantenimiento', sub:'Programa anual: planificá los meses y confirmá lo realizado', table:'mantenimiento',
+    title:'Mantenimiento', sub:'Programa anual: planificá los meses y confirmá lo realizado', table:'compras_mantenimiento',
     custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2z"/></svg>',
     form:[
@@ -1288,7 +1288,7 @@ async function renderPrograma(){
 /* ---- Alta / edición con selector de meses ---- */
 function openFormMant(id){
   const s=SCHEMAS.mantenimiento;
-  const row = id!=null ? (DEMO_MODE?mem.mantenimiento:[]).find(r=>String(r.id)===String(id)) : null;
+  const row = id!=null ? mantRow(id) : null;   // antes buscaba en [] fuera de DEMO: el form de edición abría vacío
   const cur = row || {};
   MANT_EDIT = JSON.parse(JSON.stringify(cur.meses||{}));   // copia editable
 
