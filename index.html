@@ -2075,7 +2075,7 @@ const IDX_DEF={
     campos:[ {k:'compra', label:'TC Vendedor'} ] },
   sueldos:{ nombre:'Sueldos (RIPTE)', tabla:'compras_idx_sueldos', diaEsperado:null,
     fuenteUrl:'http://estudiodelamo.com/indice-salarios-argentina/',
-    campos:[ {k:'ars', label:'Sueldos $ (RIPTE)'}, {k:'pct', label:'Sueldos % (índice)'} ] },
+    campos:[ {k:'ars', label:'Sueldos $ (RIPTE)'}, {k:'pct', label:'Sueldos % (índice)', pct:true} ] },
 };
 // Sueldos (RIPTE) es información sensible de compensaciones: solo la ve quien tiene el mismo
 // permiso "confidencial" que ya usa Contabilidad para ocultar cuentas confidenciales (canSeeConfid,
@@ -2324,7 +2324,7 @@ function idxTabBody(ns){
   const rowsHtml = rows.map(r=>{
     const iv = def.pesos ? idxCalculado(ns,r) : null;
     const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+(iv!=null?fmtNum(iv,2):'—')+'</strong></td>' : '';
-    const tds = indiceTd + def.campos.map(c=>'<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(r[c.k]!=null&&r[c.k]!==''?fmtNum(r[c.k],2):'—')+'</td>').join('');
+    const tds = indiceTd + def.campos.map(c=>'<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(r[c.k]!=null&&r[c.k]!==''?(c.pct?fmtNum(r[c.k]*100,2)+'%':fmtNum(r[c.k],2)):'—')+'</td>').join('');
     return '<tr><td>'+idxPeriodoFmt(r.periodo)+'</td>'+tds
       +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openIdxRow(\''+ns+'\','+r.periodo+')">'+ICO.edit+'</button>'
       +'<button class="iconbtn del" title="Eliminar" onclick="askIdxDelete(\''+ns+'\','+r.periodo+')">'+ICO.del+'</button></div></td></tr>';
@@ -2338,7 +2338,9 @@ function openIdxRow(ns, periodo){
   const def=IDX_DEF[ns];
   const cur = periodo!=null ? (DIC['idx_'+ns]||[]).find(r=>+r.periodo===+periodo) : null;
   const periodoVal = cur ? String(cur.periodo).slice(0,4)+'-'+String(cur.periodo).slice(4,6) : '';
-  const camposHtml = def.campos.map(c=>'<div class="field"><label>'+esc(c.label)+'</label><input id="idx_c_'+c.k+'" type="number" step="0.0001" value="'+(cur&&cur[c.k]!=null?cur[c.k]:'')+'"></div>').join('');
+  // Campos pct:true (ej. Sueldos %): en la base van como fracción (0,0282) y se cargan/ven como porcentaje (2,82).
+  const camposHtml = def.campos.map(c=>{ const raw=cur&&cur[c.k]!=null&&cur[c.k]!==''?+cur[c.k]:null; const v=raw==null?'':(c.pct?+(raw*100).toFixed(6):raw);
+    return '<div class="field"><label>'+esc(c.label)+(c.pct?' — en %':'')+'</label><input id="idx_c_'+c.k+'" type="number" step="0.0001" value="'+v+'"'+(c.pct?' placeholder="ej. 2,82"':'')+'></div>'; }).join('');
   const body='<div class="field"><label>Período</label><input id="idx_periodo" type="month" value="'+periodoVal+'"'+(cur?' readonly style="background:#f3f1e8"':'')+'></div>'
     +'<div class="frow c2">'+camposHtml+'</div>';
   openModal((cur?'Editar':'Cargar período')+' · '+esc(def.nombre), body,
@@ -2352,7 +2354,7 @@ function guardarIdxRow(ns, periodoOrig){
   const periodo=+pv.replace('-','');
   if(periodoOrig==null && (DIC['idx_'+ns]||[]).some(r=>+r.periodo===periodo)){ toast('Ya existe ese período. Editalo desde la lista.'); return; }
   const fields={};
-  def.campos.forEach(c=>{ const v=document.getElementById('idx_c_'+c.k).value; fields[c.k]=v===''?null:+v; });
+  def.campos.forEach(c=>{ const v=document.getElementById('idx_c_'+c.k).value; fields[c.k]=v===''?null:(c.pct?+(+v/100).toFixed(8):+v); });
   idxUpsert(ns, periodo, fields);
   closeModal(); toast('Guardado'); renderIndices();
 }
