@@ -2039,7 +2039,9 @@ const IDX_DEF={
   ipc:{ nombre:'IPC (INDEC)', tabla:'compras_idx_ipc', diaEsperado:10,
     fuenteUrl:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-31',
     fuenteLabel:'Fuente IPC', fuentesExtra:[ {label:'Fuente IPIM', url:'https://www.indec.gob.ar/indec/web/Nivel4-Tema-3-5-32'} ],   // para la columna "IPIM Nacional" (columna ipim, sql/2026-10_indices_ipim.sql)
-    campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'empalme', label:'IPC Nac. empalme IPIM'}, {k:'ipim', label:'IPIM Nacional'} ] },
+    // "IPC Nac. empalme IPIM" (campo empalme) se sacó de la vista a pedido de Micaela: desde 2020 repetía el IPC.
+    // La columna sigue en compras_idx_ipc con sus datos (el upsert solo manda los campos de acá, no la pisa).
+    campos:[ {k:'nacional', label:'IPC Nacional'}, {k:'ipim', label:'IPIM Nacional'} ] },
   cac:{ nombre:'CAC (Índice de la Construcción)', tabla:'compras_idx_cac', diaEsperado:20,
     fuenteUrl:'https://www.camarco.org.ar/indice-cac/',
     campos:[ {k:'construccion', label:'Costo Construcción'}, {k:'materiales', label:'Materiales'}, {k:'mano_obra', label:'Mano de obra'} ] },
