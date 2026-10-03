@@ -3007,24 +3007,32 @@ function gpDesglosar(id){
   const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(!s) return;
   const parentArs=+s.presupuesto_ars||0, parentUsd=+s.presupuesto_usd||0, name=s.seccion;
   GP._desgParent={id:s.id, name, ars:parentArs, usd:parentUsd};
-  // Reconstruir sub-rubros existentes (pares "· Material" / "· MO") para re-editar
   let hijos=[]; let propuesto=false;
   const kids=(GP.presupuesto||[]).filter(x=>x.desglose_de===name);
-  if(kids.length){
+  // destinos previos por sub-rubro (para conservar la clasificación al re-proponer)
+  const prior={};
+  kids.forEach(x=>{ const b=gpNorm(gpDesgBase(x.seccion)); const p=prior[b]||(prior[b]={});
+    if(/\s·\sMO$/.test(x.seccion)) p.moDest=(x.ambito==='mod'?'mod':'compras');
+    else if(/\s·\sMaterial$/.test(x.seccion)) p.matAmb=(x.ambito==='externo'?'externo':'compras');
+    else if(x.ambito==='mod') p.moDest='mod';
+    else p.matAmb=(x.ambito==='externo'?'externo':'compras');
+  });
+  const comps=((GP.proyecto&&GP.proyecto.costeo_detalle)||{})[name];
+  if(comps && comps.length){   // SIEMPRE proponer como fue cotizado (del costeo), conservando destinos previos
+    hijos=comps.map(c=>{ const g=gpAmbitoGuess(c.etq); const pr=prior[gpNorm(c.etq)]||{};
+      const material=(c.material!=null?+c.material:(+c.ars||0))||0, mo=+c.mo||0;
+      return {etq:c.etq, material:(mo>0?material:(+c.ars||material)), matAmb: pr.matAmb||(g==='externo'?'externo':'compras'), mo, moDest: pr.moDest||(g==='mod'?'mod':'compras')}; });
+    propuesto=true;
+  } else if(kids.length){   // sin costeo_detalle: reconstruir de lo guardado
     const byBase={};
-    kids.forEach(x=>{ const base=gpDesgBase(x.seccion); const g=byBase[base]||(byBase[base]={etq:base, material:0, matAmb:'compras', mo:0, moDest:'compras'});
+    kids.forEach(x=>{ const base=gpDesgBase(x.seccion); const gg=byBase[base]||(byBase[base]={etq:base, material:0, matAmb:'compras', mo:0, moDest:'compras'});
       const monto=+x.presupuesto_ars||0;
-      if(/\s·\sMO$/.test(x.seccion)){ g.mo=monto; g.moDest=(x.ambito==='mod'?'mod':'compras'); }
-      else if(/\s·\sMaterial$/.test(x.seccion)){ g.material=monto; g.matAmb=(x.ambito==='externo'?'externo':'compras'); }
-      else if(x.ambito==='mod'){ g.mo=monto; g.moDest='mod'; }
-      else { g.material=monto; g.matAmb=(x.ambito==='externo'?'externo':'compras'); }
+      if(/\s·\sMO$/.test(x.seccion)){ gg.mo=monto; gg.moDest=(x.ambito==='mod'?'mod':'compras'); }
+      else if(/\s·\sMaterial$/.test(x.seccion)){ gg.material=monto; gg.matAmb=(x.ambito==='externo'?'externo':'compras'); }
+      else if(x.ambito==='mod'){ gg.mo=monto; gg.moDest='mod'; }
+      else { gg.material=monto; gg.matAmb=(x.ambito==='externo'?'externo':'compras'); }
     });
     hijos=Object.values(byBase);
-  } else {   // proponer desde el costeo
-    const comps=((GP.proyecto&&GP.proyecto.costeo_detalle)||{})[name];
-    if(comps && comps.length){ hijos=comps.map(c=>{ const g=gpAmbitoGuess(c.etq);
-      const material=(c.material!=null?+c.material:(+c.ars||0))||0, mo=+c.mo||0;
-      return {etq:c.etq, material: (mo>0? material : (+c.ars||material)), matAmb:(g==='externo'?'externo':'compras'), mo, moDest:(g==='mod'?'mod':'compras')}; }); propuesto=true; }
   }
   const n=Math.max(hijos.length+2, 4); GP._desgN=n;
   const matOpts=sel=>['compras','externo'].map(v=>'<option value="'+v+'"'+(sel===v?' selected':'')+'>'+({compras:'Compras',externo:'Externo'}[v])+'</option>').join('');
