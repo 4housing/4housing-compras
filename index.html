@@ -3105,17 +3105,14 @@ async function gpGuardarDesglose(){
 window.gpGuardarDesglose=gpGuardarDesglose;
 // Recalcula el MOD (huella = sección "M.O.D."; montaje = MO propia del resto) y lo
 // actualiza en el proyecto de Planificación (match por código de OE). Best-effort.
+// El MOD a Planificación lo sincroniza un trigger server-side (164). Acá solo
+// releemos el valor que dejó y lo mostramos como confirmación (si hay permiso de lectura).
 async function gpSyncPlanifMOD(){
   try{
     const cod=(GP.proyecto&&GP.proyecto.codigo)||''; if(!cod) return;
-    // releer presupuesto fresco
-    const pres=await sbFetch('/compras_gp_presupuesto?select=seccion,ambito,presupuesto_ars&proyecto_id=eq.'+GP.actualId)||[];
-    const esMOD=s=>{ const n=gpNorm(s.seccion); return n==='MOD'||n==='MANODEOBRADIRECTA'; };
-    const huella=pres.filter(esMOD).reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
-    const montaje=pres.filter(s=>s.ambito==='mod' && !esMOD(s)).reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
-    const r=await sbFetch('/planificacion_proyectos?codigo=eq.'+encodeURIComponent(cod),{method:'PATCH',prefer:'return=representation',body:JSON.stringify({presupuesto_mo_huella:huella, presupuesto_mo_montaje:montaje})});
-    if(r && r.length) toast('MOD actualizado en Planificación (huella $'+fmtNum(huella,0)+' · montaje $'+fmtNum(montaje,0)+')');
-  }catch(e){ console.warn('Sync MOD Planificación:', e&&e.message); }
+    const r=await sbFetch('/planificacion_proyectos?select=presupuesto_mo_huella,presupuesto_mo_montaje&codigo=eq.'+encodeURIComponent(cod));
+    if(r && r[0]) toast('MOD en Planificación: huella $'+fmtNum(r[0].presupuesto_mo_huella,0)+' · montaje $'+fmtNum(r[0].presupuesto_mo_montaje,0));
+  }catch(e){ console.warn('Leer MOD Planificación:', e&&e.message); }
 }
 window.gpSyncPlanifMOD=gpSyncPlanifMOD;
 async function gpDeshacerDesglose(){
