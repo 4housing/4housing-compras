@@ -2743,7 +2743,7 @@ function gpRenderLista(){
         ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">'+cards+'</div>'
         : '<div class="empty">Todavía no hay proyectos. Usá “Nuevo proyecto” para crear el primero cargando su costeo.</div>');
 }
-function gpAbrir(id){ GP.actualId=id; GP.filtroSeccion=''; renderProyectos(); }
+function gpAbrir(id){ GP.actualId=id; GP.filtroSeccion=''; try{ delete XLF_STORE['gpdet']; delete XLF_DATE['gpdet']; delete SP_SORT['gpdet']; }catch(_){ } renderProyectos(); }
 window.gpAbrir=gpAbrir;
 function gpVolver(){ GP.actualId=null; renderProyectos(); }
 window.gpVolver=gpVolver;
@@ -3397,6 +3397,18 @@ function gpAgregado(){
   return {filas, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
 }
 
+// Orden por columna para las tablas de Gestión de Proyectos (reusa SP_SORT/_spTh/_spOrdenar,
+// mismo estándar que Solicitudes de pago, pero re-renderizando el tablero).
+function gpSort(ev, ns, k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  const cur=SP_SORT[ns]; SP_SORT[ns]={k, dir:(cur&&cur.k===k&&cur.dir===1)?-1:1};
+  gpRenderTablero();
+}
+window.gpSort=gpSort;
+function _gpTh(ns, label, col, k){ return _spTh(ns,label,col,k).split("spSort(event,").join("gpSort(event,"); }
+// Igual que _gpTh pero alineado a la derecha (columnas numéricas).
+function _gpThNum(ns, label, col, k){ return _gpTh(ns,label,col,k).replace('<th style="','<th style="text-align:right;'); }
+
 function gpRenderTablero(){
   const p=GP.proyecto; const ag=gpAgregado();
   const dir=esDireccion();            // estructura (crear/editar/costeo/rubros/eliminar) = solo dirección
@@ -3464,7 +3476,23 @@ function gpRenderTablero(){
   const repByFirma={}; (GP.reparto||[]).forEach(r=>{ (repByFirma[r.firma]=repByFirma[r.firma]||[]).push(r); });
   const firmaTotDet={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTotDet[f]=(firmaTotDet[f]||0)+(+o.total_ars||0); });
   // al filtrar por sección, incluir también los renglones repartidos que aportan a esa sección
-  const detalle=(GP.oc||[]).filter(o=>{ if(!filtro) return true; const al=repByFirma[gpFirma(o)]; if(al) return al.some(r=>r.seccion===filtro); return o.seccion===filtro; });
+  const detalleBase=(GP.oc||[]).filter(o=>{ if(!filtro) return true; const al=repByFirma[gpFirma(o)]; if(al) return al.some(r=>r.seccion===filtro); return o.seccion===filtro; });
+  // Filtros tipo Excel + orden por columna (estándar Mica)
+  const secVal=o=>{ const al=repByFirma[gpFirma(o)]; return (al&&al.length)?'(repartido)':(o.seccion||'Sin clasificar'); };
+  xlfRegister('gpdet', { rows:()=>detalleBase, onChange:gpRenderTablero, dateVal:o=>o.fecha||'',
+    val:(o,col)=>{
+      if(col==='oc') return nroOCTango(o.oc_numero)||'(sin N°)';
+      if(col==='prov') return o.proveedor_cod||'(sin proveedor)';
+      if(col==='rubro') return o.subrubro||o.rubro||o.costeo_tag||'(sin)';
+      if(col==='sec') return secVal(o);
+      if(col==='estado') return o.estado_oc||'(sin estado)';
+      return '';
+    } });
+  let detalle=detalleBase.filter(o=>xlfPass('gpdet',o));
+  detalle=_spOrdenar('gpdet', detalle, {
+    oc:o=>nroOCTango(o.oc_numero), fecha:o=>o.fecha||'', prov:o=>o.proveedor_cod||'',
+    desc:o=>o.descripcion||'', rubro:o=>o.subrubro||o.rubro||o.costeo_tag||'',
+    sec:o=>secVal(o), total:o=>+o.total_ars||0, estado:o=>o.estado_oc||'' });
   GP._detRows=detalle;
   const detRows=detalle.slice(0,600).map((o,i)=>{
     const firma=gpFirma(o); const allocs=repByFirma[firma];
@@ -3487,14 +3515,21 @@ function gpRenderTablero(){
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
     +'</div>'
-    +'<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar · el TOTAL y los indicadores cuentan solo el ámbito Compras</span></div>'
-      +'<div class="tbl-hscroll tbl-compact"><table class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div>'
+    +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar · el TOTAL y los indicadores cuentan solo el ámbito Compras</span>'
+      +'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpSecTbl\')">Auto-ajustar columnas</button></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table id="gpSecTbl" class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div>'
       +(((ag.totFuera.mod+ag.totFuera.ext)>1)?('<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Fuera del alcance de Compras (referencia, neteado): MOD $'+fmtNum(ag.totFuera.mod,0)+' · Externo $'+fmtNum(ag.totFuera.ext,0)+'</div>'):'')+'</div>'
     +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Detalle de OC importadas</h3>'
       +'<span class="meta">'+detalle.length+' renglones'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
-      +(filtro?'<button class="btn ghost sm" style="margin-left:auto" onclick="gpQuitarFiltro()">Quitar filtro</button>':'')+'</div>'
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OC</th><th>Fecha</th><th>Prov.</th><th>Descripción</th><th>Rubro/Costeo</th><th>Sección</th><th style="text-align:right">Total ($)</th><th>Estado</th><th></th></tr></thead><tbody>'
-      +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">Sin OC importadas todavía. Usá “Importar Tango”.</td></tr>')+'</tbody></table></div>'
+      +'<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
+        +(filtro?'<button class="btn ghost sm" onclick="gpQuitarFiltro()">Quitar filtro</button>':'')
+        +(xlfHasAny('gpdet')?'<button class="btn ghost sm" onclick="xlfClearAll(\'gpdet\')">Limpiar filtros</button>':'')
+        +'<button class="btn ghost sm" onclick="tblAutofit(\'#gpDetTbl\')">Auto-ajustar columnas</button></div></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table id="gpDetTbl" class="grid" style="font-size:11.5px"><thead><tr>'
+        +_gpTh('gpdet','OC','oc','oc')+_gpTh('gpdet','Fecha','__fecha__','fecha')+_gpTh('gpdet','Prov.','prov','prov')
+        +_gpTh('gpdet','Descripción',null,'desc')+_gpTh('gpdet','Rubro/Costeo','rubro','rubro')+_gpTh('gpdet','Sección','sec','sec')
+        +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+'<th></th></tr></thead><tbody>'
+      +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>';
 
   gpDrawCharts(ag);
