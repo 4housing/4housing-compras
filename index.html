@@ -3076,6 +3076,7 @@ function gpRenderTrasladosCard(){
     const pb=[t.persona,t.bloque].filter(Boolean).join(' · ');
     const acc = puede ? (
         (t.estado==='propuesto'?'<button class="btn sm" onclick="gpAplicarTraslado('+t.id+')">Aplicar</button> ':'')
+      + (t.estado==='aplicado'&&t.direccion==='mod_a_compras'?'<button class="btn ghost sm" onclick="gpCrearSolpTraslado('+t.id+')">Crear SOLP</button> ':'')
       + (t.estado!=='revertido'?'<button class="btn ghost sm" onclick="gpRevertirTraslado('+t.id+')">Revertir</button> ':'')
       + (t.estado==='revertido'&&esDireccion()?'<button class="btn ghost sm" onclick="gpEliminarTraslado('+t.id+')">Eliminar</button>':'')
     ) : '';
@@ -3229,6 +3230,8 @@ async function gpEliminarTraslado(id){
   catch(e){ toast('No se pudo eliminar: '+(e.message||e)); }
 }
 window.gpEliminarTraslado=gpEliminarTraslado;
+function gpCrearSolpTraslado(id){ const t=(GP.traslados||[]).find(x=>String(x.id)===String(id)); if(t) gpCrearSolpDesdeTraslado(t); }
+window.gpCrearSolpTraslado=gpCrearSolpTraslado;
 
 /* -------- Desglose de una sección compuesta en sub-rubros (solo dirección) -------- */
 function gpEqQ(col, val){ return '&'+col+'=eq.'+encodeURIComponent('"'+String(val).replace(/"/g,'""')+'"'); }
