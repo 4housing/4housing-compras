@@ -3061,6 +3061,8 @@ window.gpSetAmbito=gpSetAmbito;
    mod_a_compras = MO propia (MOD→Nico) que se terceriza → pasa a Compras.
    compras_a_mod = MO contratada (Compras) que la hace nuestra gente → MOD (Nico).
    No tocan la línea base: el trigger recalcula el presupuesto_mo VIGENTE de Nico. */
+// Webhook Teams del canal de Compras (URL firmada de Power Automate, pública como la de cobranzas).
+const TRASLADO_WEBHOOK_COMPRAS = 'https://defaultc408b6d8ae0b4d309056da52e18116.c4.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/12/workflows/0b3186fa2d4646b28511363d9c37268c/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kA1RapaRv0cMHBWebxt3-AdjtH1ZrE7CxCFAdYLtVeU';
 const GP_TRAS_DIR={ mod_a_compras:'MOD → Compras (tercerizado)', compras_a_mod:'Compras → MOD (internalizado)' };
 const GP_TRAS_EST={ propuesto:['Propuesto','b-ambar'], aplicado:['Aplicado','b-verde'], revertido:['Revertido','b-gris'] };
 function gpTrasPuede(){ return puedeCrearOG()||esDireccion(); }   // compras o dirección operan
@@ -3150,11 +3152,67 @@ async function gpGuardarTraslado(){
 window.gpGuardarTraslado=gpGuardarTraslado;
 async function gpAplicarTraslado(id){
   if(!gpTrasPuede()) return;
-  try{ await sbFetch('/compras_gp_traslados_mo?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({estado:'aplicado'})});
-    toast('Traslado aplicado · se actualizó el MO de Nico'); await gpReloadTraslados(); gpRenderTablero(); }
-  catch(e){ toast('No se pudo aplicar: '+(e.message||e)); }
+  const t=(GP.traslados||[]).find(x=>String(x.id)===String(id));
+  try{ await sbFetch('/compras_gp_traslados_mo?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({estado:'aplicado'})}); }
+  catch(e){ toast('No se pudo aplicar: '+(e.message||e)); return; }
+  toast('Traslado aplicado · se actualizó el MO de Nico');
+  await gpReloadTraslados(); gpRenderTablero();
+  if(t){ gpNotificarTrasladoCompras(t); }   // aviso a Teams de Compras (best-effort)
+  // Solo MOD→Compras genera trabajo para Compras → ofrecer crear la SOLP
+  if(t && t.direccion==='mod_a_compras' && gpTrasPuede()){
+    if(confirm('Traslado aplicado y avisado a Compras.\n\n¿Querés crear ahora la SOLP para este trabajo tercerizado?')){ await gpCrearSolpDesdeTraslado(t); }
+  }
 }
 window.gpAplicarTraslado=gpAplicarTraslado;
+
+// Aviso a Teams de Compras (mismo formato Adaptive Card que Comercial).
+async function gpNotificarTrasladoCompras(t){
+  try{
+    if(!TRASLADO_WEBHOOK_COMPRAS || !t) return;
+    const facts=[
+      {title:'Proyecto:', value:(t.proyecto_nombre||t.codigo||'—')},
+      {title:'OE:', value:t.codigo||'—'},
+      {title:'Dirección:', value:(GP_TRAS_DIR[t.direccion]||t.direccion)},
+      {title:'Rubro:', value:t.rubro||'—'},
+      {title:'Monto:', value:'$ '+Number(t.monto_ars||0).toLocaleString('es-AR')}
+    ];
+    if(t.motivo) facts.push({title:'Motivo:', value:t.motivo});
+    if(t.cliente) facts.push({title:'Cliente:', value:t.cliente});
+    if(t.persona||t.bloque) facts.push({title:'Detalle:', value:[t.persona,t.bloque].filter(Boolean).join(' · ')});
+    const titulo = t.direccion==='mod_a_compras'
+      ? '🔁 Traslado de MO → Compras (tercerizar) · cargar SOLP'
+      : '🔁 Traslado de MO: Compras → MOD (lo ejecuta La Huella)';
+    const card={type:'message',attachments:[{contentType:'application/vnd.microsoft.card.adaptive',content:{
+      $schema:'http://adaptivecards.io/schemas/adaptive-card.json',type:'AdaptiveCard',version:'1.4',
+      body:[{type:'TextBlock',size:'Medium',weight:'Bolder',text:titulo,wrap:true},{type:'FactSet',facts}]}}]};
+    await fetch(TRASLADO_WEBHOOK_COMPRAS,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(card)})
+      .then(r=>{ if(!(r.ok||r.status===202)) console.warn('Aviso traslado: Teams', r.status); })
+      .catch(e=>console.warn('Aviso traslado no enviado:', e.message));
+  }catch(e){ console.warn('Aviso traslado no enviado:', e.message); }
+}
+
+// Abre el alta de SOLP (sección Compras) pre-cargada con los datos del traslado.
+// Reusa guardarSolp (numeración, validación y columnas correctas); el comprador
+// confirma la obra (catálogo propio de SOLP) y la fecha de necesidad.
+async function gpCrearSolpDesdeTraslado(t){
+  if(!canEditOG()){ toast('La SOLP la carga un comprador (ya quedó el aviso en Teams).'); return; }
+  try{ if(!(SOLP.rows&&SOLP.rows.length) || !(SOLP.rubros&&SOLP.rubros.length)) await solpLoad(); }catch(_){ }
+  openSolpForm(null);
+  const obs=document.getElementById('sp_obs');
+  if(obs){ obs.value='Traslado de MO a Compras — '+(t.rubro?('rubro '+t.rubro+': '):'')+(t.motivo||'')
+    +' ($'+Number(t.monto_ars||0).toLocaleString('es-AR')+')'
+    +([t.persona,t.bloque].filter(Boolean).length?(' · '+[t.persona,t.bloque].filter(Boolean).join(' / ')):'')
+    +' · OE '+(t.codigo||''); }
+  const rubSel=document.getElementById('sp_rubro');
+  if(rubSel && t.rubro){ const m=(SOLP.rubros||[]).find(r=>gpNorm(r.nombre)===gpNorm(t.rubro)); if(m) rubSel.value=m.nombre; }
+  try{   // obra: match best-effort por código exacto o por nombre; si no, lo elige el comprador
+    const obras=solpObrasDic(); let o=obras.find(x=>x.cod===t.codigo);
+    if(!o && t.proyecto_nombre){ const pn=gpNorm(t.proyecto_nombre); o=obras.find(x=>gpNorm(x.desc||'')===pn); }
+    if(o){ const h=document.getElementById('sp_obra'), q=document.getElementById('sp_obra_q');
+      if(h) h.value=o.cod; if(q) q.value=obraInputVal(o.cod, solpObraNom);
+      if(typeof solpFormRenumerar==='function') solpFormRenumerar(); }
+  }catch(_){ }
+}
 async function gpRevertirTraslado(id){
   if(!gpTrasPuede()) return;
   if(!confirm('¿Revertir este traslado? Deja de impactar el presupuesto vigente.')) return;
