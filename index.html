@@ -2669,7 +2669,7 @@ window.renderPanol=renderPanol;
    Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
    Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
    ================================================================ */
-const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], charts:{}, filtroSeccion:'' };
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], charts:{}, filtroSeccion:'' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
 function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
@@ -2700,15 +2700,17 @@ async function gpLoadLista(){
 }
 async function gpLoadProyecto(id){
   GP.proyecto=(GP.proyectos||[]).find(p=>String(p.id)===String(id))||null;
-  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; return; }
-  const [pres, oc, map, imp, rep] = await Promise.all([
+  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; GP.traslados=[]; return; }
+  const codq = GP.proyecto.codigo ? ('/compras_gp_traslados_mo?select=*&codigo=eq.'+encodeURIComponent(GP.proyecto.codigo)+'&order=creado_en.desc') : null;
+  const [pres, oc, map, imp, rep, tras] = await Promise.all([
     sbFetch('/compras_gp_presupuesto?select=*&proyecto_id=eq.'+id+'&order=orden.asc'),
     sbFetchAll('/compras_gp_oc?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_mapeo?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc'),
-    sbFetch('/compras_gp_reparto?select=*&proyecto_id=eq.'+id)
+    sbFetch('/compras_gp_reparto?select=*&proyecto_id=eq.'+id),
+    codq ? sbFetch(codq).catch(()=>[]) : Promise.resolve([])
   ]);
-  GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[]; GP.reparto=rep||[];
+  GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[]; GP.reparto=rep||[]; GP.traslados=tras||[];
 }
 
 async function renderProyectos(){
@@ -2998,6 +3000,121 @@ async function gpSetAmbito(id, val){
   }catch(e){ toast('No se pudo cambiar el ámbito: '+(e.message||e)); }
 }
 window.gpSetAmbito=gpSetAmbito;
+
+/* ===== Fase 5 · Traslados de MO (overlay; libro mayor compartido con Planificación) =====
+   mod_a_compras = MO propia (MOD→Nico) que se terceriza → pasa a Compras.
+   compras_a_mod = MO contratada (Compras) que la hace nuestra gente → MOD (Nico).
+   No tocan la línea base: el trigger recalcula el presupuesto_mo VIGENTE de Nico. */
+const GP_TRAS_DIR={ mod_a_compras:'MOD → Compras (tercerizado)', compras_a_mod:'Compras → MOD (internalizado)' };
+const GP_TRAS_EST={ propuesto:['Propuesto','b-ambar'], aplicado:['Aplicado','b-verde'], revertido:['Revertido','b-gris'] };
+function gpTrasPuede(){ return puedeCrearOG()||esDireccion(); }   // compras o dirección operan
+// Neto trasladado HACIA Compras (solo aplicados): entra (+) lo tercerizado, sale (−) lo internalizado.
+function gpTrasNetoCompras(){ return (GP.traslados||[]).filter(t=>t.estado==='aplicado').reduce((a,t)=>a+(t.direccion==='mod_a_compras'?(+t.monto_ars||0):(t.direccion==='compras_a_mod'?-(+t.monto_ars||0):0)),0); }
+
+function gpRenderTrasladosCard(){
+  const list=(GP.traslados||[]); const puede=gpTrasPuede();
+  const rows=list.map(t=>{
+    const est=GP_TRAS_EST[t.estado]||[t.estado,'b-gris'];
+    const pb=[t.persona,t.bloque].filter(Boolean).join(' · ');
+    const acc = puede ? (
+        (t.estado==='propuesto'?'<button class="btn sm" onclick="gpAplicarTraslado('+t.id+')">Aplicar</button> ':'')
+      + (t.estado!=='revertido'?'<button class="btn ghost sm" onclick="gpRevertirTraslado('+t.id+')">Revertir</button> ':'')
+      + (t.estado==='revertido'&&esDireccion()?'<button class="btn ghost sm" onclick="gpEliminarTraslado('+t.id+')">Eliminar</button>':'')
+    ) : '';
+    return '<tr'+(t.estado==='revertido'?' style="opacity:.55"':'')+'>'
+      +'<td>'+fmtDate(String(t.creado_en).slice(0,10))+'</td>'
+      +'<td>'+esc(GP_TRAS_DIR[t.direccion]||t.direccion)+'</td>'
+      +'<td>'+esc(t.rubro||'')+'</td>'
+      +'<td style="text-align:right">'+fmtNum(t.monto_ars,0)+'</td>'
+      +'<td>'+esc(t.motivo||'')+'</td>'
+      +'<td>'+esc(pb)+'</td>'
+      +'<td><span class="badge '+est[1]+'">'+est[0]+'</span></td>'
+      +'<td style="font-size:10.5px;color:var(--muted)">'+esc(t.creado_por||'')+(t.app_origen?(' · '+esc(t.app_origen)):'')+'</td>'
+      +'<td>'+acc+'</td></tr>';
+  }).join('');
+  return '<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Traslados de MO</h3>'
+    +'<span class="meta">mueven mano de obra entre Compras y Nico · overlay (no tocan la línea base)</span>'
+    +'<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
+      +(list.length?'<button class="btn ghost sm" onclick="tblAutofit(\'#gpTrasTbl\')">Auto-ajustar columnas</button>':'')
+      +(puede?'<button class="btn sm" onclick="gpNuevoTraslado()">'+ICO.plus+'Nuevo traslado</button>':'')+'</div></div>'
+    +'<div class="tbl-hscroll tbl-compact"><table id="gpTrasTbl" class="grid" style="font-size:11.5px"><thead><tr>'
+      +'<th>Fecha</th><th>Dirección</th><th>Rubro</th><th style="text-align:right">Monto ($)</th><th>Motivo</th><th>Persona / bloque</th><th>Estado</th><th>Cargó</th><th></th></tr></thead><tbody>'
+    +(rows||'<tr><td colspan="9" style="text-align:center;padding:14px;color:var(--muted)">Sin traslados. Cargá uno cuando una MO cambie de propia ↔ tercerizada.</td></tr>')
+    +'</tbody></table></div></div>';
+}
+
+function gpNuevoTraslado(){
+  if(!gpTrasPuede()){ toast('Solo compras o dirección pueden cargar traslados.'); return; }
+  const p=GP.proyecto; if(!p){ return; }
+  if(!p.codigo){ toast('El proyecto no tiene código de OE; no se puede trazar el traslado.'); return; }
+  const secs=[...new Set((GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion))];
+  const rubroOpts=secs.map(s=>'<option value="'+esc(s)+'">').join('');
+  const body=''
+    +'<div class="field"><label>Dirección</label><select id="gp_tras_dir">'
+      +'<option value="mod_a_compras">MOD → Compras (se terceriza una MO propia)</option>'
+      +'<option value="compras_a_mod">Compras → MOD (lo hace nuestra gente)</option></select></div>'
+    +'<div class="field"><label>Rubro / sección afectada</label><input id="gp_tras_rubro" list="gp_tras_rubros" placeholder="Elegí del costeo o escribí"><datalist id="gp_tras_rubros">'+rubroOpts+'</datalist>'
+      +'<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Si el nombre contiene “Montaje”, impacta el MO de Montaje; si no, el de La Huella.</div></div>'
+    +'<div class="field"><label>Monto ($)</label><input id="gp_tras_monto" type="number" step="0.01" min="0"></div>'
+    +'<div class="field"><label>Motivo</label><input id="gp_tras_motivo" placeholder="Por qué se traslada (trazabilidad)"></div>'
+    +'<div class="frow c2"><div class="field"><label>Persona (opcional)</label><input id="gp_tras_persona"></div>'
+      +'<div class="field"><label>Bloque (opcional)</label><input id="gp_tras_bloque"></div></div>'
+    +'<div style="font-size:11.5px;color:var(--muted)">Proyecto: <b>'+esc(p.nombre||p.codigo)+'</b>'+(p.cliente?(' · '+esc(p.cliente)):'')+'</div>'
+    +'<div id="gpTrasMsg" style="font-size:12px;margin-top:8px"></div>';
+  openModal('Nuevo traslado de MO', body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarTraslado()">Guardar (propuesto)</button>');
+}
+window.gpNuevoTraslado=gpNuevoTraslado;
+
+async function gpReloadTraslados(){
+  const p=GP.proyecto; if(!p||!p.codigo){ GP.traslados=[]; return; }
+  try{ GP.traslados=await sbFetch('/compras_gp_traslados_mo?select=*&codigo=eq.'+encodeURIComponent(p.codigo)+'&order=creado_en.desc')||[]; }catch(_){ GP.traslados=[]; }
+}
+async function gpGuardarTraslado(){
+  const msg=document.getElementById('gpTrasMsg'); const setErr=t=>{ if(msg){ msg.style.color='#b3261e'; msg.textContent=t; } };
+  if(!gpTrasPuede()){ setErr('Sin permiso.'); return; }
+  const p=GP.proyecto; if(!p||!p.codigo){ setErr('El proyecto no tiene código de OE.'); return; }
+  const dir=document.getElementById('gp_tras_dir').value;
+  const rubro=(document.getElementById('gp_tras_rubro').value||'').trim();
+  const monto=+document.getElementById('gp_tras_monto').value||0;
+  const motivo=(document.getElementById('gp_tras_motivo').value||'').trim();
+  const persona=(document.getElementById('gp_tras_persona').value||'').trim();
+  const bloque=(document.getElementById('gp_tras_bloque').value||'').trim();
+  if(!(monto>0)){ setErr('Poné un monto mayor a 0.'); return; }
+  if(!motivo){ setErr('Poné el motivo (para trazabilidad).'); return; }
+  if(msg){ msg.style.color='var(--muted)'; msg.textContent='Guardando…'; }
+  try{
+    await sbFetch('/compras_gp_traslados_mo',{method:'POST',prefer:'return=minimal',body:JSON.stringify({
+      codigo:p.codigo, cliente:p.cliente||null, proyecto_nombre:p.nombre||null,
+      direccion:dir, rubro:rubro||null, monto_ars:monto, motivo, persona:persona||null, bloque:bloque||null,
+      estado:'propuesto', app_origen:'compras', creado_por:(AUTH_USER&&AUTH_USER.email)||null })});
+    closeModal(); toast('Traslado cargado (propuesto)'); await gpReloadTraslados(); gpRenderTablero();
+  }catch(e){ setErr('No se pudo guardar: '+(e.message||e)); }
+}
+window.gpGuardarTraslado=gpGuardarTraslado;
+async function gpAplicarTraslado(id){
+  if(!gpTrasPuede()) return;
+  try{ await sbFetch('/compras_gp_traslados_mo?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({estado:'aplicado'})});
+    toast('Traslado aplicado · se actualizó el MO de Nico'); await gpReloadTraslados(); gpRenderTablero(); }
+  catch(e){ toast('No se pudo aplicar: '+(e.message||e)); }
+}
+window.gpAplicarTraslado=gpAplicarTraslado;
+async function gpRevertirTraslado(id){
+  if(!gpTrasPuede()) return;
+  if(!confirm('¿Revertir este traslado? Deja de impactar el presupuesto vigente.')) return;
+  try{ await sbFetch('/compras_gp_traslados_mo?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({estado:'revertido', revertido_por:(AUTH_USER&&AUTH_USER.email)||null, revertido_en:new Date().toISOString()})});
+    toast('Traslado revertido'); await gpReloadTraslados(); gpRenderTablero(); }
+  catch(e){ toast('No se pudo revertir: '+(e.message||e)); }
+}
+window.gpRevertirTraslado=gpRevertirTraslado;
+async function gpEliminarTraslado(id){
+  if(!esDireccion()){ toast('Solo dirección puede eliminar.'); return; }
+  if(!confirm('¿Eliminar definitivamente este traslado revertido?')) return;
+  try{ await sbFetch('/compras_gp_traslados_mo?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    toast('Traslado eliminado'); await gpReloadTraslados(); gpRenderTablero(); }
+  catch(e){ toast('No se pudo eliminar: '+(e.message||e)); }
+}
+window.gpEliminarTraslado=gpEliminarTraslado;
 
 /* -------- Desglose de una sección compuesta en sub-rubros (solo dirección) -------- */
 function gpEqQ(col, val){ return '&'+col+'=eq.'+encodeURIComponent('"'+String(val).replace(/"/g,'""')+'"'); }
@@ -3437,6 +3554,8 @@ function gpRenderTablero(){
     +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">'+(ag.tot.desv>0?'sobrecosto':(ag.tot.desv<0?'ahorro':'—'))+'</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
+  const trasNeto=gpTrasNetoCompras();
+  const trasKpi=(Math.abs(trasNeto)>0.5)?('<div class="kpi"><div class="kpi-label">Presupuesto vigente (c/ traslados)</div><div class="kpi-value">'+gpMoney(ag.tot.presAr+trasNeto)+'</div><div class="kpi-sub">'+(trasNeto>0?'+':'')+gpMoney(trasNeto)+' trasladado neto</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
@@ -3510,7 +3629,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
@@ -3530,7 +3649,8 @@ function gpRenderTablero(){
         +_gpTh('gpdet','Descripción',null,'desc')+_gpTh('gpdet','Rubro/Costeo','rubro','rubro')+_gpTh('gpdet','Sección','sec','sec')
         +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+'<th></th></tr></thead><tbody>'
       +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
-      +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>';
+      +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>'
+    +gpRenderTrasladosCard();
 
   gpDrawCharts(ag);
 }
