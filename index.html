@@ -9810,7 +9810,9 @@ function openSolpForm(id){
   if(!canEditOG()){ toast('No tenés permiso para cargar SOLP.'); return; }
   const cur = id!=null ? (SOLP.rows||[]).find(x=>String(x.id)===String(id)) : {};
   const serieVal = id!=null ? solpSerie(cur.solp) : 'mat';
-  const obraOpts = solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es')).map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===cur.obra_cod?' selected':'')+'>'+esc(p.desc)+'</option>').join('');
+  // Obra: buscador (como Clasificación de la OG). El código queda en el hidden #sp_obra;
+  // el texto visible es #sp_obra_q ("COD — Nombre").
+  const obraVal = cur.obra_cod ? (solpObraNom(cur.obra_cod)!==cur.obra_cod ? cur.obra_cod+' — '+solpObraNom(cur.obra_cod) : cur.obra_cod) : '';
   // Comprador (Gestiona): igual criterio que en la OG — cada usuario no-admin solo puede
   // figurar como sí mismo (tanto al crear como al editar), el admin puede elegir a cualquiera.
   const gestOpts = ROLE.admin
@@ -9821,7 +9823,7 @@ function openSolpForm(id){
   const condPagoOpts = SOLP_COND_PAGO.map(c=>'<option'+(c===cur.condicion_pago?' selected':'')+'>'+esc(c)+'</option>').join('')
     + (cur.condicion_pago && !SOLP_COND_PAGO.includes(cur.condicion_pago) ? '<option selected>'+esc(cur.condicion_pago)+'</option>' : '');
   const hoy=solpHoy();
-  const body='<div class="frow c2"><div class="field"><label>Obra</label><select id="sp_obra" onchange="solpFormRenumerar()"><option value="">— elegí —</option>'+obraOpts+'</select></div>'
+  const body='<div class="frow c2"><div class="field"><label>Obra</label><input type="hidden" id="sp_obra" value="'+esc(cur.obra_cod||'')+'"><input id="sp_obra_q" value="'+esc(obraVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboSolpObra()" oninput="document.getElementById(\'sp_obra\').value=\'\';comboSolpObra();solpFormRenumerar()" onblur="solpObraBlur()"><div style="font-size:11px;color:var(--muted);margin-top:4px">Escribí código o nombre y elegí de la lista.</div></div>'
     +'<div class="field"><label>Estado</label><select id="sp_estado"><option value="">— elegí —</option>'+estOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Serie de SOLP</label><select id="sp_serie" onchange="solpFormRenumerar()"'+(id!=null?' disabled':'')+'>'+SOLP_SERIES.map(([k,l])=>'<option value="'+k+'"'+(k===serieVal?' selected':'')+'>'+l+'</option>').join('')+'</select></div>'
     +'<div class="field"><label>N° SOLP</label><input id="sp_num" type="number" min="0" value="'+(id!=null?cur.solp:'')+'"></div></div>'
@@ -9864,6 +9866,29 @@ function comboSolpProv(){
   });
 }
 window.comboSolpProv=comboSolpProv;
+function comboSolpObra(){
+  const inp=document.getElementById('sp_obra_q'); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  const src=solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
+  // Primero los que arrancan con lo escrito (código o nombre), después los que lo contienen.
+  const txt=p=>((p.cod||'')+' '+(p.desc||'')).toLowerCase();
+  const empieza=p=>(p.cod||'').toLowerCase().startsWith(q)||(p.desc||'').toLowerCase().startsWith(q);
+  const list=q?src.filter(empieza).concat(src.filter(p=>!empieza(p)&&txt(p).includes(q))):src;
+  const items=list.slice(0,80).map(p=>({code:p.cod, name:p.desc||''}));
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; document.getElementById('sp_obra').value=it.code; solpFormRenumerar(); });
+}
+window.comboSolpObra=comboSolpObra;
+// Al salir del campo: si lo escrito es exactamente un código de obra, lo toma sin tener que elegir de la lista.
+function solpObraBlur(){
+  comboHideDelayed();
+  setTimeout(()=>{
+    const inp=document.getElementById('sp_obra_q'), hid=document.getElementById('sp_obra'); if(!inp||!hid||hid.value) return;
+    const t=(inp.value||'').split(' — ')[0].trim().toUpperCase(); if(!t) return;
+    const p=solpObrasDic().find(x=>String(x.cod||'').toUpperCase()===t);
+    if(p){ hid.value=p.cod; inp.value=p.cod+' — '+(p.desc||''); solpFormRenumerar(); }
+  },160);
+}
+window.solpObraBlur=solpObraBlur;
 function solpFormRenumerar(){
   const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
   if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
@@ -9895,7 +9920,7 @@ async function guardarSolp(id){
   const cotizacion_solicitada=document.getElementById('sp_cotiz').value.trim()||null;
   const condicion_pago=document.getElementById('sp_condpago').value.trim()||null;
   const msg=document.getElementById('spMsg2');
-  if(!obra_cod){ toast('Elegí la obra.'); return; }
+  if(!obra_cod){ toast('Elegí la obra de la lista (escribí código o nombre).'); return; }
   if(!estado){ toast('Elegí el estado.'); return; }
   if(!fecha_ingreso){ toast('Ingresá la fecha de ingreso.'); return; }
   if(!f_necesidad){ toast('La fecha de necesidad es obligatoria.'); return; }
