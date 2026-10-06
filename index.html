@@ -9812,7 +9812,7 @@ function openSolpForm(id){
   const serieVal = id!=null ? solpSerie(cur.solp) : 'mat';
   // Obra: buscador (como Clasificación de la OG). El código queda en el hidden #sp_obra;
   // el texto visible es #sp_obra_q ("COD — Nombre").
-  const obraVal = cur.obra_cod ? (solpObraNom(cur.obra_cod)!==cur.obra_cod ? cur.obra_cod+' — '+solpObraNom(cur.obra_cod) : cur.obra_cod) : '';
+  const obraVal = obraInputVal(cur.obra_cod, solpObraNom);
   // Comprador (Gestiona): igual criterio que en la OG — cada usuario no-admin solo puede
   // figurar como sí mismo (tanto al crear como al editar), el admin puede elegir a cualquiera.
   const gestOpts = ROLE.admin
@@ -9866,8 +9866,10 @@ function comboSolpProv(){
   });
 }
 window.comboSolpProv=comboSolpProv;
-function comboSolpObra(){
-  const inp=document.getElementById('sp_obra_q'); if(!inp) return;
+// Buscador de obra reutilizable (SOLP, Evaluación de proveedores): el código va al hidden `hidId`,
+// el texto visible ("COD — Nombre") al input `qId`. `after` se llama al elegir (opcional).
+function comboObra(qId, hidId, after){
+  const inp=document.getElementById(qId); if(!inp) return;
   const q=(inp.value||'').trim().toLowerCase();
   const src=solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
   // Primero los que arrancan con lo escrito (código o nombre), después los que lo contienen.
@@ -9875,20 +9877,27 @@ function comboSolpObra(){
   const empieza=p=>(p.cod||'').toLowerCase().startsWith(q)||(p.desc||'').toLowerCase().startsWith(q);
   const list=q?src.filter(empieza).concat(src.filter(p=>!empieza(p)&&txt(p).includes(q))):src;
   const items=list.slice(0,80).map(p=>({code:p.cod, name:p.desc||''}));
-  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; document.getElementById('sp_obra').value=it.code; solpFormRenumerar(); });
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; document.getElementById(hidId).value=it.code; if(after) after(); });
 }
-window.comboSolpObra=comboSolpObra;
 // Al salir del campo: si lo escrito es exactamente un código de obra, lo toma sin tener que elegir de la lista.
-function solpObraBlur(){
+function obraBlur(qId, hidId, after){
   comboHideDelayed();
   setTimeout(()=>{
-    const inp=document.getElementById('sp_obra_q'), hid=document.getElementById('sp_obra'); if(!inp||!hid||hid.value) return;
+    const inp=document.getElementById(qId), hid=document.getElementById(hidId); if(!inp||!hid||hid.value) return;
     const t=(inp.value||'').split(' — ')[0].trim().toUpperCase(); if(!t) return;
     const p=solpObrasDic().find(x=>String(x.cod||'').toUpperCase()===t);
-    if(p){ hid.value=p.cod; inp.value=p.cod+' — '+(p.desc||''); solpFormRenumerar(); }
+    if(p){ hid.value=p.cod; inp.value=p.cod+' — '+(p.desc||''); if(after) after(); }
   },160);
 }
+function obraInputVal(cod, nomFn){ if(!cod) return ''; const n=nomFn(cod); return n!==cod ? cod+' — '+n : cod; }
+function comboSolpObra(){ comboObra('sp_obra_q','sp_obra',solpFormRenumerar); }
+window.comboSolpObra=comboSolpObra;
+function solpObraBlur(){ obraBlur('sp_obra_q','sp_obra',solpFormRenumerar); }
 window.solpObraBlur=solpObraBlur;
+function comboEvalProvObra(){ comboObra('ep_obra_q','ep_obra'); }
+window.comboEvalProvObra=comboEvalProvObra;
+function evalProvObraBlur(){ obraBlur('ep_obra_q','ep_obra'); }
+window.evalProvObraBlur=evalProvObraBlur;
 function solpFormRenumerar(){
   const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
   if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
@@ -11229,11 +11238,12 @@ function openEvalProvForm(id){
   if(!canEvalProv()){ toast('No tenés permiso para cargar evaluaciones.'); return; }
   const cur = id!=null ? (EVALPROV.rows||[]).find(x=>String(x.id)===String(id)) : {};
   const area = cur.area || 'compras';
-  const obraOpts = solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es')).map(p=>'<option value="'+esc(p.cod)+'"'+(p.cod===cur.obra_cod?' selected':'')+'>'+esc(p.desc)+'</option>').join('');
+  // Obra: buscador (igual que en la SOLP). Código en el hidden #ep_obra, texto visible en #ep_obra_q.
+  const obraVal = obraInputVal(cur.obra_cod, evalProvObraNom);
   const body='<div class="frow c2"><div class="field"><label>Área que evalúa</label><select id="ep_area" onchange="evalProvFormArea()"><option value="compras"'+(area==='compras'?' selected':'')+'>Compras (Atención + Costos)</option><option value="proyectos"'+(area==='proyectos'?' selected':'')+'>Técnico / Proyectos (Planificación, Técnico, Calidad, Seguridad)</option></select></div>'
     +'<div class="field"><label>Fecha</label><input id="ep_fecha" type="date" value="'+esc(cur.fecha||solpHoy())+'"></div></div>'
     +'<div class="field"><label>Proveedor</label><input id="ep_prov" type="text" placeholder="Buscar por código o nombre…" autocomplete="off" oninput="comboEvalProvProv()" onblur="comboHideDelayed()" value="'+(cur.proveedor_cod?esc(cur.proveedor_cod+' — '+solpProvNom(cur.proveedor_cod)):'')+'"></div>'
-    +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><select id="ep_obra"><option value="">— sin obra —</option>'+obraOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Obra (opcional)</label><input type="hidden" id="ep_obra" value="'+esc(cur.obra_cod||'')+'"><input id="ep_obra_q" value="'+esc(obraVal)+'" placeholder="Escribí código o nombre… (vacío = sin obra)" autocomplete="off" onfocus="comboEvalProvObra()" oninput="document.getElementById(\'ep_obra\').value=\'\';comboEvalProvObra()" onblur="evalProvObraBlur()"></div>'
     +'<div class="field"><label>Rubro *</label><select id="ep_rubro" required><option value="">— elegí un rubro —</option>'+(EVALPROV.rubros||[]).map(r=>'<option'+(r.nombre===cur.rubro?' selected':'')+'>'+esc(r.nombre)+'</option>').join('')+'</select></div></div>'
     +'<div style="font-size:11.5px;color:var(--muted);margin:10px 0 2px">Escala: '+EVALPROV_ESCALA.join(' · ')+'</div>'
     +'<div id="ep_preguntas">'+evalProvPreguntasHtml(area,cur)+'</div>'
@@ -11252,6 +11262,7 @@ async function guardarEvalProv(id){
   const fecha=document.getElementById('ep_fecha').value;
   if(!fecha){ toast('Ingresá la fecha.'); return; }
   const obra_cod=document.getElementById('ep_obra').value||null;
+  if(!obra_cod && document.getElementById('ep_obra_q').value.trim()){ toast('La obra escrita no coincide con ninguna: elegila de la lista o dejá el campo vacío.'); return; }
   const rubro=document.getElementById('ep_rubro').value.trim()||null;
   if(!rubro){ toast('Elegí un rubro.'); return; }
   const comentarios=document.getElementById('ep_coment').value.trim()||null;
