@@ -2788,6 +2788,10 @@ async function gpGuardarProyecto(id){
   let parsed=null;
   const fEl=g('gp_costeo'); const file=fEl?(fEl.files||[])[0]:null;
   if(file){ try{ parsed=await gpParseCosteo(file); }catch(e){ setErr('Costeo: '+(e.message||e)); return; } }
+  if(parsed && parsed.via_fallback){
+    const tot=parsed.secciones.reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
+    if(!confirm('Este costeo NO tiene la pestaña “Tablero Compras”: leí las secciones del detalle.\n\n'+parsed.secciones.length+' secciones · total $'+tot.toLocaleString('es-AR')+'\n\nVerificá que el total coincida con el costeo. ¿Continuar?')){ setErr('Cancelado.'); return; }
+  }
   const tcManual=g('gp_tc').value!==''?(+g('gp_tc').value):null;
   const metaManual=g('gp_meta').value!==''?(+g('gp_meta').value/100):null;
   const tolManual=g('gp_tol').value!==''?(+g('gp_tol').value/100):null;
@@ -2879,6 +2883,49 @@ function gpParseDetalle(wb, nombres, tableroSheet){
     return map;
   }catch(e){ return {}; }
 }
+// Fallback SIN "Tablero Compras": deriva secciones + detalle del propio costeo.
+// Madre = fila con nombre en B y C/E/H (2/4/7) vacías; sus hijos tienen alguna de
+// esas. Presupuesto de sección = suma de subtotales $ (col J) de los hijos; si no
+// tiene hijos pero la madre trae su propio subtotal, se toma como renglón único.
+function gpParseDetalleAuto(wb){
+  const num=v=>(typeof v==='number'?v:_syncNum(v));
+  const isTotal=s=>/^(SUB\s?TOTAL|TOTAL)\b/i.test(String(s||'').trim());
+  function parseSheet(rows){
+    const out=[];
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i]||[]; const nm=r[1];
+      if(nm==null||String(nm).trim()==='') continue;
+      if(isTotal(nm)) continue;
+      if(!(r[2]==null && r[4]==null && r[7]==null)) continue;   // madre: C/E/H vacías
+      const comps=[];
+      for(let j=i+1;j<rows.length;j++){
+        const rr=rows[j]||[]; const b=rr[1]; const bs=(b==null?'':String(b).trim());
+        const esComp=(rr[2]!=null||rr[4]!=null||rr[7]!=null);
+        if(!esComp){ if(bs==='') continue; break; }
+        const ars=num(rr[9])||0, usd=num(rr[8])||0;
+        const cant=num(rr[7])||1, mo=(num(rr[3])||0)*cant, material=(num(rr[5])||0)*cant;
+        if(ars>0||mo>0||material>0) comps.push({etq:bs, ars, usd, mo, material, ambito:gpAmbitoGuess(bs)});
+      }
+      const sumArs=comps.reduce((a,c)=>a+c.ars,0);
+      if(comps.length>=1 && sumArs>0){ out.push({seccion:String(nm).trim(), comps, ars:sumArs, usd:comps.reduce((a,c)=>a+c.usd,0)}); }
+      else { const mArs=num(r[9])||0; if(mArs>0) out.push({seccion:String(nm).trim(), comps:[], ars:mArs, usd:num(r[8])||0}); }
+    }
+    return out;
+  }
+  let best=null, bestN=0;
+  for(const name of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null});
+    const secs=parseSheet(rows);
+    if(secs.length>bestN){ bestN=secs.length; best=secs; }
+  }
+  if(!best || bestN<2) return null;
+  const secciones=[], detalle={};
+  best.forEach((s,i)=>{
+    secciones.push({seccion:s.seccion, orden:i, presupuesto_ars:s.ars, presupuesto_usd:s.usd});
+    if((s.comps||[]).length>=2) detalle[s.seccion]=s.comps;
+  });
+  return {secciones, detalle};
+}
 async function gpParseCosteo(file){
   const wb=await _syncReadWb(file);
   let found=null;
@@ -2893,16 +2940,22 @@ async function gpParseCosteo(file){
     }
     if(found) break;
   }
-  if(!found) throw new Error('No encontré la tabla “AVANCE POR SECCIÓN” (columnas “Sección” y “Presupuesto ($)”). ¿Es el Excel del costeo con la pestaña “Tablero Compras”?');
-  const {rows,hdr,cSec,cArs,cUsd}=found;
-  const secciones=[];
-  for(let r=hdr+1;r<rows.length;r++){
-    const row=rows[r]||[]; const sec=_syncNorm(row[cSec]);
-    if(!sec){ if(secciones.length) break; else continue; }
-    if(gpNorm(sec).indexOf('TOTAL')>=0) break;   // fila TOTAL PROYECTO
-    secciones.push({ seccion:sec, orden:secciones.length, presupuesto_ars:_syncNum(row[cArs])||0, presupuesto_usd:cUsd>=0?(_syncNum(row[cUsd])||0):0 });
+  let secciones=[], detalle={}, viaFallback=false;
+  if(found){
+    const {rows,hdr,cSec,cArs,cUsd}=found;
+    for(let r=hdr+1;r<rows.length;r++){
+      const row=rows[r]||[]; const sec=_syncNorm(row[cSec]);
+      if(!sec){ if(secciones.length) break; else continue; }
+      if(gpNorm(sec).indexOf('TOTAL')>=0) break;   // fila TOTAL PROYECTO
+      secciones.push({ seccion:sec, orden:secciones.length, presupuesto_ars:_syncNum(row[cArs])||0, presupuesto_usd:cUsd>=0?(_syncNum(row[cUsd])||0):0 });
+    }
+    if(!secciones.length) throw new Error('Encontré la tabla pero sin filas de sección.');
+    detalle=gpParseDetalle(wb, secciones.map(s=>s.seccion), found.sheetName);
+  } else {
+    const auto=gpParseDetalleAuto(wb);
+    if(!auto || !auto.secciones.length) throw new Error('No encontré ni la tabla “AVANCE POR SECCIÓN” (pestaña “Tablero Compras”) ni una estructura de costeo reconocible (secciones con sub-rubros). Hojas vistas: '+wb.SheetNames.join(', ')+'.');
+    secciones=auto.secciones; detalle=auto.detalle; viaFallback=true;
   }
-  if(!secciones.length) throw new Error('Encontré la tabla pero sin filas de sección.');
   // TC, meta de ahorro y tolerancia: buscar en cualquier celda de cualquier hoja
   let tc=null, meta=null, tol=null;
   for(const name of wb.SheetNames){
@@ -2916,8 +2969,7 @@ async function gpParseCosteo(file){
       }
     }
   }
-  const detalle=gpParseDetalle(wb, secciones.map(s=>s.seccion), found.sheetName);
-  return {secciones, tc, meta, tol, detalle};
+  return {secciones, tc, meta, tol, detalle, via_fallback:viaFallback};
 }
 async function gpActualizarCosteo(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el Excel del costeo. Leo la pestaña “Tablero Compras” y reemplazo el presupuesto por sección de este proyecto (no toca las OC importadas).</div>'
@@ -2933,6 +2985,10 @@ async function gpCosteoAnalizar(){
   if(!file){ setErr('Necesito el archivo.'); return; }
   msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
   let parsed; try{ parsed=await gpParseCosteo(file); }catch(e){ setErr(e.message||String(e)); return; }
+  if(parsed.via_fallback){
+    const tot=parsed.secciones.reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
+    if(!confirm('Este costeo NO tiene la pestaña “Tablero Compras”: leí las secciones del detalle.\n\n'+parsed.secciones.length+' secciones · total $'+tot.toLocaleString('es-AR')+'\n\nVerificá que el total coincida con el costeo. ¿Guardar igual?')){ msg.textContent=''; return; }
+  }
   const pid=GP.actualId;
   try{
     await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
