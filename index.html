@@ -2759,7 +2759,7 @@ function gpProyectoForm(p){
   const estSel=e=>['en_curso','pausado','cerrado'].map(v=>'<option value="'+v+'"'+((p&&p.estado===v)||(!p&&v==='en_curso')?' selected':'')+'>'+({en_curso:'En curso',pausado:'Pausado',cerrado:'Cerrado'}[v])+'</option>').join('');
   const nuevo=!p;
   const body=''
-    +(nuevo?'<div class="field"><label>Costeo del proyecto (.xlsx)</label><input id="gp_costeo" type="file" accept=".xlsx,.xls"><div style="font-size:11.5px;color:var(--muted);margin-top:4px">Si lo subís, leo la pestaña “Tablero Compras” y completo el presupuesto por sección, el TC y la meta de ahorro automáticamente. Podés cargarlo después.</div></div>':'')
+    +(nuevo?'<div class="field"><label>Costeo del proyecto (.xlsx / .xlsm)</label><input id="gp_costeo" type="file" accept=".xlsx,.xlsm,.xls"><div style="font-size:11.5px;color:var(--muted);margin-top:4px">Si lo subís, leo la pestaña “Tablero Compras” y completo el presupuesto por sección, el TC y la meta de ahorro automáticamente. Podés cargarlo después.</div></div>':'')
     +'<div class="field"><label>Nombre del proyecto *</label><input id="gp_nombre" type="text" value="'+esc(p?p.nombre:'')+'" placeholder="ej. PL0096 ANDY — Oficina Albardón"></div>'
     +'<div class="frow c2"><div class="field"><label>Obra (maestro Tango)</label><select id="gp_codigo">'+opts+'</select></div>'
       +'<div class="field"><label>Estado</label><select id="gp_estado">'+estSel()+'</select></div></div>'
@@ -2919,7 +2919,7 @@ async function gpParseCosteo(file){
 }
 async function gpActualizarCosteo(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el Excel del costeo. Leo la pestaña “Tablero Compras” y reemplazo el presupuesto por sección de este proyecto (no toca las OC importadas).</div>'
-    +'<div class="field"><label>Costeo (.xlsx) *</label><input id="gp_costeo2" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Costeo (.xlsx / .xlsm) *</label><input id="gp_costeo2" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="gpCosteoMsg" style="font-size:12px;color:var(--muted);margin-top:6px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpCosteoAnalizar()">Actualizar presupuesto</button>';
   openModal('Actualizar costeo / presupuesto', body, foot);
@@ -3158,7 +3158,7 @@ function gpImputar(o, mapIdx){
 function gpImportTango(){
   if(!(GP.presupuesto||[]).length){ if(!confirm('Este proyecto todavía no tiene presupuesto cargado, así que todo caerá en “Sin clasificar”. ¿Importar igual?')) return; }
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el informe de Tango del proyecto (el que trae los campos <b>RUBRO / SUBRUBRO (Adic.)</b>). Reemplaza la foto de OC del proyecto — es una instantánea; volvé a subirlo cuando quieras actualizar.</div>'
-    +'<div class="field"><label>Informe de Tango (.xlsx) *</label><input id="gp_tango_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Informe de Tango (.xlsx) *</label><input id="gp_tango_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="gpTangoMsg" style="font-size:12px;color:var(--muted);margin-top:6px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpTangoAnalizar()">Importar e imputar</button>';
   openModal('Importar informe de Tango', body, foot);
@@ -3680,7 +3680,7 @@ async function panolMarcarExportados(rows){
 /* ===== Importar "Saldos" de Tango (foto de existencia real por artículo/depósito) ===== */
 function openPanolSyncSaldos(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "Stock - Artículos - Saldos". Reemplaza toda la tabla de saldos actuales — es una foto del momento, no un histórico.</div>'
-    +'<div class="field"><label>Saldos (.xlsx) *</label><input id="pnsal_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Saldos (.xlsx) *</label><input id="pnsal_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="pnsalMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolSyncSaldosAnalizar()">Importar</button>';
   openModal('Importar saldos de Tango', body, foot);
@@ -3725,7 +3725,7 @@ window.panolSyncSaldosAnalizar=panolSyncSaldosAnalizar;
 /* ===== Importar "Precios" de Tango (costo de referencia por artículo) ===== */
 function openPanolSyncPrecios(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el reporte de Tango "Precios" (último costo de compra por artículo). Actualiza el costo de referencia ARS/USD de los artículos que coincidan por código; no toca los que no aparezcan en el archivo.</div>'
-    +'<div class="field"><label>Precios (.xlsx) *</label><input id="pnprc_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Precios (.xlsx) *</label><input id="pnprc_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="pnprcMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolSyncPreciosAnalizar()">Importar</button>';
   openModal('Importar costos de referencia (Precios) de Tango', body, foot);
@@ -7670,8 +7670,8 @@ function openSyncTango(){
   SYNC_RESULT=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí los dos exports de Tango (maestro de artículos y parametrización contable). La app los compara contra los artículos cargados e informa qué falta crear, qué cambió y qué está sin parametrizar. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
     +'<div class="frow c2">'
-    +'<div class="field"><label>Maestro de artículos (.xlsx) *</label><input id="sync_maestro" type="file" accept=".xlsx,.xls"></div>'
-    +'<div class="field"><label>Parametrización contable (.xlsx) *</label><input id="sync_param" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Maestro de artículos (.xlsx) *</label><input id="sync_maestro" type="file" accept=".xlsx,.xlsm,.xls"></div>'
+    +'<div class="field"><label>Parametrización contable (.xlsx) *</label><input id="sync_param" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'</div>'
     +'<div id="syncMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="syncReport" style="margin-top:12px"></div>';
@@ -7849,7 +7849,7 @@ function openSyncProv(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar proveedores.'); return; }
   SYNC_PROV=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export de proveedores de Tango. La app lo compara contra los proveedores cargados por <strong>código</strong> e informa cuáles hay que crear y cuáles cambiaron. Un dato vacío de Tango nunca pisa uno que ya está, y no se borra ninguno. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
-    +'<div class="field"><label>Proveedores (.xlsx) *</label><input id="syncp_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Proveedores (.xlsx) *</label><input id="syncp_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="syncpMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="syncpReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -8123,7 +8123,7 @@ function openSyncDepositos(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar depósitos.'); return; }
   SYNC_DEP=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export de depósitos de Tango. La app lo compara contra los depósitos cargados por <strong>código</strong> e informa altas, bajas y modificaciones. Un dato vacío de Tango nunca pisa uno que ya está, y no se borra ninguno. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
-    +'<div class="field"><label>Depósitos (.xlsx) *</label><input id="syncd_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Depósitos (.xlsx) *</label><input id="syncd_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="syncdMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="syncdReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -8245,7 +8245,7 @@ function openSyncCuentas(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar cuentas.'); return; }
   SYNC_CTA=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí hasta 3 exports de cuentas contables de Tango (una por base). La app las combina por código e informa qué hay que crear, qué cambió y los casos donde dos bases dicen algo distinto del mismo código (ahí elegís vos cuál vale). No se borra nada. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
-    +'<div class="field"><label>Cuentas contables — hasta 3 archivos (.xlsx) *</label><input id="syncc_files" type="file" accept=".xlsx,.xls" multiple></div>'
+    +'<div class="field"><label>Cuentas contables — hasta 3 archivos (.xlsx) *</label><input id="syncc_files" type="file" accept=".xlsx,.xlsm,.xls" multiple></div>'
     +'<div id="synccMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="synccReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -8412,7 +8412,7 @@ function openSyncClasif(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar clasificación.'); return; }
   SYNC_CLASIF=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí hasta 3 exports de "Clasificación de comprobantes" de Tango (una por base). Solo quedan disponibles para elegir en una OG los códigos con <strong>Habilitado para Compras = Sí</strong>. No se borra nada. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
-    +'<div class="field"><label>Clasificación de comprobantes — hasta 3 archivos (.xlsx) *</label><input id="syncl_files" type="file" accept=".xlsx,.xls" multiple></div>'
+    +'<div class="field"><label>Clasificación de comprobantes — hasta 3 archivos (.xlsx) *</label><input id="syncl_files" type="file" accept=".xlsx,.xlsm,.xls" multiple></div>'
     +'<div id="synclMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="synclReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -8427,7 +8427,7 @@ function openSyncAux(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar auxiliares.'); return; }
   SYNC_AUX=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí hasta 3 archivos de <strong>"Tipos de auxiliares"</strong> de Tango (uno por empresa). La app lee la solapa <strong>Auxiliares</strong>, toma solo los <strong>Habilitado = Sí</strong>, ignora el Aux 01 (no se usa), une por tipo+código y marca conflictos si un mismo código viene distinto entre archivos o contra lo que ya hay. <strong>Nunca borra</strong> y no escribe nada hasta que toques Aplicar.</div>'
-    +'<div class="field"><label>Tipos de auxiliares — hasta 3 archivos (.xlsx) *</label><input id="synca_files" type="file" accept=".xlsx,.xls" multiple></div>'
+    +'<div class="field"><label>Tipos de auxiliares — hasta 3 archivos (.xlsx) *</label><input id="synca_files" type="file" accept=".xlsx,.xlsm,.xls" multiple></div>'
     +'<div id="syncaMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="syncaReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="syncaApplyBtn" onclick="syncAuxAnalizar()">Analizar</button>';
@@ -8795,7 +8795,7 @@ function openSyncSeries(){
   if(!ROLE.admin){ toast('Solo un administrador puede sincronizar series activas.'); return; }
   SYNC_SERIES=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí hasta 3 archivos de "Series Activas de Artículos" de Tango (podés subir un solo archivo con varias solapas, o uno por familia). La app separa solo mirando el código de depósito: <strong>2 letras = Módulo de alquiler</strong>, cualquier otro formato = Herramientas/Rodados/Muebles. Es una foto del estado actual: si una serie ya existe, se actualiza su depósito; si una serie vieja no aparece en el archivo nuevo, se deja como estaba. <strong>No escribe nada hasta que toques Aplicar.</strong></div>'
-    +'<div class="field"><label>Series activas — hasta 3 archivos (.xlsx) *</label><input id="syncs_files" type="file" accept=".xlsx,.xls" multiple></div>'
+    +'<div class="field"><label>Series activas — hasta 3 archivos (.xlsx) *</label><input id="syncs_files" type="file" accept=".xlsx,.xlsm,.xls" multiple></div>'
     +'<div id="syncsMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="syncsReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -9325,7 +9325,7 @@ function openImportClasif(){
   if(!ROLE.admin){ toast('Solo un administrador puede importar.'); return; }
   SYNC_CLASIF_IMP=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí tu archivo curado de Clasificación (columnas <strong>Código</strong>, <strong>Descripción</strong>, <strong>Habilitado para Compras</strong> y la <strong>Categoría</strong> en la 4ª columna). Lo comparo contra las <strong>'+(CLASIF_ALL||[]).length+'</strong> que tenés cargadas y te muestro qué se agrega, qué cambia y qué se borraría. <strong>No escribe ni borra nada hasta que confirmes.</strong></div>'
-    +'<div class="field"><label>Archivo de Clasificación (.xlsx) *</label><input id="impcl_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Archivo de Clasificación (.xlsx) *</label><input id="impcl_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="impclMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="impclReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
@@ -9970,7 +9970,7 @@ window.confirmDelSolp=confirmDelSolp;
 function openSolpImportRubros(){
   if(!ROLE.admin){ toast('Solo un administrador puede importar.'); return; }
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export a Excel de la lista "Rubros Base" de SharePoint (columnas Title y Dias). Reemplaza el catálogo de rubros por completo.</div>'
-    +'<div class="field"><label>Rubros Base (.xlsx) *</label><input id="spr_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Rubros Base (.xlsx) *</label><input id="spr_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="sprMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="solpImportRubros()">Importar</button>';
   openModal('Importar Rubros Base', body, foot);
@@ -10008,7 +10008,7 @@ function openSolpImportHistorico(){
   if(!ROLE.admin){ toast('Solo un administrador puede importar el histórico.'); return; }
   SOLP_IMPORT=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el export a Excel de la lista "Seguimiento Compras 2026" (Exportar a Excel desde SharePoint). Es una migración única: agrega estas filas a las que ya haya en <code>compras_solp_items</code>, no reemplaza nada. Revisá los "sin matchear" antes de aplicar.</div>'
-    +'<div class="field"><label>Seguimiento Compras 2026 (.xlsx) *</label><input id="sph_file" type="file" accept=".xlsx,.xls"></div>'
+    +'<div class="field"><label>Seguimiento Compras 2026 (.xlsx) *</label><input id="sph_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
     +'<div id="sphMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="sphReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" id="sphBtn" onclick="solpImportHistoricoAnalizar()">Analizar</button>';
@@ -11085,8 +11085,8 @@ function openEvalProvImportHistorico(){
   if(!ROLE.admin){ toast('Solo un administrador puede importar el histórico.'); return; }
   EVALPROV_IMPORT=null;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de RC-03.03 (hoja "BD"). Es una migración única: agrega estas evaluaciones a las que ya haya, no reemplaza nada. El proveedor que no matchee por nombre exacto contra el diccionario queda sin código — se guarda el texto original de consulta y se puede completar después a mano.</div>'
-    +'<div class="field"><label>RC-03.03 Evaluación de proveedores (.xlsx) *</label><input id="epih_file" type="file" accept=".xlsx,.xls"></div>'
-    +'<div class="field"><label>Equivalencias proveedor (opcional)</label><input id="epih_equiv" type="file" accept=".xlsx,.xls"><div style="font-size:11.5px;color:var(--muted);margin-top:3px">Tu Excel con "Proveedor a evaluar" / "CODIGO" (hoja Hoja1) — los códigos que confirmaste a mano ahí pisan al match automático.</div></div>'
+    +'<div class="field"><label>RC-03.03 Evaluación de proveedores (.xlsx) *</label><input id="epih_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
+    +'<div class="field"><label>Equivalencias proveedor (opcional)</label><input id="epih_equiv" type="file" accept=".xlsx,.xlsm,.xls"><div style="font-size:11.5px;color:var(--muted);margin-top:3px">Tu Excel con "Proveedor a evaluar" / "CODIGO" (hoja Hoja1) — los códigos que confirmaste a mano ahí pisan al match automático.</div></div>'
     +'<div id="epihMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>'
     +'<div id="epihReport" style="margin-top:12px"></div>';
   const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" id="epihBtn" onclick="evalProvImportHistoricoAnalizar()">Analizar</button>';
