@@ -3571,14 +3571,15 @@ function openPanolEgresoForm(id){
   if(cur && cur.exportado){ toast('Este egreso ya se exportó a Tango; no se puede editar.'); return; }
   const hoy=new Date().toISOString().slice(0,10);
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(cur&&cur.cod_deposito===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
-  const obraOpts=auxOpts('3').map(o=>'<option value="'+esc(o.cod)+'"'+(cur&&cur.proyecto_cod===o.cod?' selected':'')+'>'+esc(o.cod)+' · '+esc(o.desc)+'</option>').join('');
+  // Obra: buscador (igual que SOLP). Código en el hidden #pn_obra, texto visible en #pn_obra_q.
+  const obraVal=obraInputVal(cur&&cur.proyecto_cod, panolObraNom);
   const artOpts=(DIC.articulos||[]).map(a=>'<option value="'+esc(a.codigo)+'"'+(cur&&cur.cod_articulo===a.codigo?' selected':'')+'>'+esc(a.codigo)+' · '+esc(a.descripcion)+'</option>').join('');
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pn_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'"></div>'
     +'<div class="field"><label>Depósito</label><select id="pn_deposito"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
     +'<div class="field"><label>Artículo</label><select id="pn_articulo" onchange="panolArticuloChanged()"><option value="">— elegí —</option>'+artOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pn_cantidad" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolCalcTotal()"></div>'
     +'<div class="field"><label>Unidad de medida</label><input id="pn_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Obra</label><select id="pn_obra"><option value="">— elegí —</option>'+obraOpts+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Obra</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra()" onblur="panolObraBlur()"></div>'
     +'<div class="field"><label>Operario</label><input id="pn_operario" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Nombre, o dejalo vacío = Genérico"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Costo unit. ARS</label><input id="pn_costo_ars" type="number" step="0.01" value="'+(cur?cur.costo_unit_ars:'')+'" oninput="panolCalcTotal()"></div>'
     +'<div class="field"><label>Costo unit. USD</label><input id="pn_costo_usd" type="number" step="0.01" value="'+(cur?cur.costo_unit_usd:'')+'" oninput="panolCalcTotal()"></div></div>'
@@ -3620,7 +3621,7 @@ async function guardarPanolEgreso(id){
   if(!cod_deposito){ toast('Elegí un depósito'); return; }
   if(!cod_articulo){ toast('Elegí un artículo'); return; }
   if(!cantidad){ toast('Ingresá una cantidad'); return; }
-  if(!proyecto_cod){ toast('Elegí la obra'); return; }
+  if(!proyecto_cod){ toast('Elegí la obra de la lista (escribí código o nombre)'); return; }
   const periodo=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
   const row={ fecha, periodo, cod_deposito, cod_articulo, cantidad, um, proyecto_cod, operario,
     costo_unit_ars, costo_unit_usd, total_ars:+(cantidad*costo_unit_ars).toFixed(2), total_usd:+(cantidad*costo_unit_usd).toFixed(2),
@@ -9868,10 +9869,11 @@ function comboSolpProv(){
 window.comboSolpProv=comboSolpProv;
 // Buscador de obra reutilizable (SOLP, Evaluación de proveedores): el código va al hidden `hidId`,
 // el texto visible ("COD — Nombre") al input `qId`. `after` se llama al elegir (opcional).
-function comboObra(qId, hidId, after){
+// `srcFn` (opcional) devuelve la lista [{cod,desc}] a buscar; por defecto, las obras de la SOLP.
+function comboObra(qId, hidId, after, srcFn){
   const inp=document.getElementById(qId); if(!inp) return;
   const q=(inp.value||'').trim().toLowerCase();
-  const src=solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
+  const src=srcFn ? srcFn() : solpObrasDic().slice().sort((a,b)=>a.desc.localeCompare(b.desc,'es'));
   // Primero los que arrancan con lo escrito (código o nombre), después los que lo contienen.
   const txt=p=>((p.cod||'')+' '+(p.desc||'')).toLowerCase();
   const empieza=p=>(p.cod||'').toLowerCase().startsWith(q)||(p.desc||'').toLowerCase().startsWith(q);
@@ -9880,12 +9882,12 @@ function comboObra(qId, hidId, after){
   comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; document.getElementById(hidId).value=it.code; if(after) after(); });
 }
 // Al salir del campo: si lo escrito es exactamente un código de obra, lo toma sin tener que elegir de la lista.
-function obraBlur(qId, hidId, after){
+function obraBlur(qId, hidId, after, srcFn){
   comboHideDelayed();
   setTimeout(()=>{
     const inp=document.getElementById(qId), hid=document.getElementById(hidId); if(!inp||!hid||hid.value) return;
     const t=(inp.value||'').split(' — ')[0].trim().toUpperCase(); if(!t) return;
-    const p=solpObrasDic().find(x=>String(x.cod||'').toUpperCase()===t);
+    const p=(srcFn?srcFn():solpObrasDic()).find(x=>String(x.cod||'').toUpperCase()===t);
     if(p){ hid.value=p.cod; inp.value=p.cod+' — '+(p.desc||''); if(after) after(); }
   },160);
 }
@@ -9898,6 +9900,13 @@ function comboEvalProvObra(){ comboObra('ep_obra_q','ep_obra'); }
 window.comboEvalProvObra=comboEvalProvObra;
 function evalProvObraBlur(){ obraBlur('ep_obra_q','ep_obra'); }
 window.evalProvObraBlur=evalProvObraBlur;
+// Pañol: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
+function panolObras(){ return auxOpts('3'); }
+function panolObraNom(cod){ const o=panolObras().find(x=>x.cod===cod); return o?(o.desc||cod):cod; }
+function comboPanolObra(){ comboObra('pn_obra_q','pn_obra',null,panolObras); }
+window.comboPanolObra=comboPanolObra;
+function panolObraBlur(){ obraBlur('pn_obra_q','pn_obra',null,panolObras); }
+window.panolObraBlur=panolObraBlur;
 function solpFormRenumerar(){
   const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
   if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
