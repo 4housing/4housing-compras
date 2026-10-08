@@ -5454,7 +5454,7 @@ function pendFacturarView(){
   SPF_GRUPOS=_spOrdenar('spf', todos.filter(o=>xlfPass('spf',o)), { oc:o=>+o.oc_numero||o.oc_numero, prov:o=>o.proveedor_cod, ing:o=>o.fecha_ingreso, comp:o=>o.comprador,
     aux:o=>o.clasif_desc||o.clasif_cod, pend:o=>o.pend, estado:o=>o.estado });
   const pedirBtn=puede?'<button class="btn sm" style="margin-left:auto" onclick="spPedirPagoSel()">Pedir pago de las tildadas (<span id="spSelCount">0</span>)</button>':'';
-  const header='<div class="card-h"><h3>Pendientes de facturar</h3><span class="meta">OCs de Tango con saldo sin facturar. Adjuntá la FAC de cada OC; después tildá las que correspondan y pedí el pago. '+esc(_spUltimaImport('pend_facturar'))+'</span>'+pedirBtn+'</div>';
+  const header='<div class="card-h"><h3>Pendientes de facturar</h3><span class="meta">OCs de Tango con saldo sin facturar. Adjuntá la FAC de cada OC y pedí el pago en el mismo paso, o guardala y pedí el pago después tildándola. '+esc(_spUltimaImport('pend_facturar'))+'</span>'+pedirBtn+'</div>';
   if(!todos.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas carga el reporte "Pendientes de facturar" desde su app.</div></div>';
   if(!SPF_GRUPOS.length) return '<div class="card">'+header+_spTools('spfTabla','spf','Buscar OC, proveedor, comprador, auxiliar o FAC…')+'<div class="empty" style="padding:20px">Ninguna OC coincide con los filtros.</div></div>';
   const ESTADO_CLR={'Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde','Cancelada':'b-rojo'};
@@ -5501,9 +5501,11 @@ function openAdjuntarFac(k){
     +'<div class="frow c2"><div class="field"><label>N° de factura *</label><input id="spf_nro" type="text" placeholder="Ej. A0000700005352" onblur="spfNroMsg('+k+')"><div id="spfNro" style="font-size:11px;margin-top:3px"></div></div>'
     +'<div class="field"><label>Neto de la FAC sin IVA ('+(mon==='USD'?'US$':'$')+') *</label><input id="spf_neto" type="number" step="0.01" oninput="spfDifMsg('+k+')"></div></div>'
     +'<div class="field"><label>Factura (PDF) *</label><input id="spf_file" type="file" accept="application/pdf,image/*"></div>'
+    +'<div class="field"><label>Comentario para Finanzas (opcional)</label><textarea id="spf_com" rows="2" placeholder="Ej: urgente, el proveedor corta el servicio el viernes…"></textarea></div>'
     +'<div id="spfDif" style="font-size:12px;margin-top:4px;min-height:16px"></div>'
     +'<div id="spfMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
-  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarFacCargada('+k+')">Guardar FAC</button>';
+  // "Guardar FAC" la deja en "FAC cargada" (se pide el pago después, tildando); "Guardar FAC y pedir pago" la deja directo en Pendiente.
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn ghost" onclick="guardarFacCargada('+k+')">Guardar FAC</button><button class="btn" onclick="guardarFacCargada('+k+',true)">Guardar FAC y pedir pago</button>';
   openModal('Adjuntar FAC a la OC '+o.oc_numero, body, foot, 'wide');
 }
 window.openAdjuntarFac=openAdjuntarFac;
@@ -5523,7 +5525,7 @@ function spfNroMsg(k){
   else{ el.style.color='var(--muted)'; el.textContent='Todavía no figura en Pagos a realizar (o el N° está escrito distinto que en Tango, ej. A0000700005352).'; }
 }
 window.spfNroMsg=spfNroMsg;
-async function guardarFacCargada(k){
+async function guardarFacCargada(k, pedirPago){
   const o=SPF_GRUPOS[k]; if(!o) return;
   if(!puedeCrearSolicitudPago()) return;
   const msg=document.getElementById('spfMsg');
@@ -5543,9 +5545,12 @@ async function guardarFacCargada(k){
   const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
   const hist=[{fecha:ahora, autor, texto:'FAC cargada desde Pendientes de facturar (neto sin IVA '+_spMoney(neto,mon)+').', estado_nuevo:SOLPAGO_FAC_CARGADA}];
   if(Math.abs(neto-o.pend)>1) hist.push({fecha:ahora, autor, texto:'⚠ El neto de la FAC ('+_spMoney(neto,mon)+') no coincide con lo pendiente de facturar de la OC ('+_spMoney(o.pend,mon)+').'});
+  const com=((document.getElementById('spf_com')||{}).value||'').trim();
+  if(pedirPago) hist.push({fecha:ahora, autor, texto:'Pidió el pago.'+(com?' '+com:''), estado_nuevo:'Pendiente'});
+  else if(com) hist.push({fecha:ahora, autor, texto:com});
   const row={ proveedor_cod:o.proveedor_cod, proveedor:_spProvNombre(o.proveedor_cod), comprador:o.comprador||'', oc_numero:o.oc_numero,
     remito_numero:rems.length===1?rems[0]:'', proyecto_cod:o.clasif_cod||'', nro_factura:nro, monto:neto, moneda:mon, neto_oc:o.pend,
-    estado:SOLPAGO_FAC_CARGADA, historial:hist, creado_en:ahora, creado_por:autor };
+    estado:pedirPago?'Pendiente':SOLPAGO_FAC_CARGADA, historial:hist, creado_en:ahora, creado_por:autor };
   // Si la FAC ya figura en Pagos a realizar, queda marcada como vista: así, cuando salga del informe, pasa a Pagada.
   if(_spEnPagosRealizar(o.proveedor_cod, nro)) row.pagos_realizar_visto_en=ahora;
   try{
@@ -5555,7 +5560,7 @@ async function guardarFacCargada(k){
     row.adjunto_path=path; row.adjunto_nombre=f.name;
     if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
     else{ await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
-    closeModal(); toast('FAC cargada en la OC '+o.oc_numero); renderSolicitudesPago();
+    closeModal(); toast(pedirPago?'FAC cargada y pago pedido (OC '+o.oc_numero+'): pasó a Pagos solicitados':'FAC cargada en la OC '+o.oc_numero); renderSolicitudesPago();
   }catch(e){ err('Error: '+(e.message||e)); }
 }
 window.guardarFacCargada=guardarFacCargada;
