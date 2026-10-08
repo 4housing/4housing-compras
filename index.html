@@ -5414,9 +5414,10 @@ function spFiltrar(inp, tblId){
   document.querySelectorAll('#'+tblId+' tbody tr').forEach(tr=>{ tr.style.display=(!q||(tr.dataset.q||'').includes(q))?'':'none'; });
 }
 window.spFiltrar=spFiltrar;
-function _spTools(tblId, ns, placeholder){
+function _spTools(tblId, ns, placeholder, extra){
   return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px">'
     +'<input type="search" data-sptbl="'+tblId+'" placeholder="'+esc(placeholder)+'" oninput="spFiltrar(this,\''+tblId+'\')" style="flex:1;min-width:220px;max-width:420px">'
+    +(extra||'')
     +xlfClearAllBtn(ns)
     +'<button class="btn ghost sm" style="'+(xlfHasAny(ns)?'':'margin-left:auto')+'" onclick="tblAutofit(\'#'+tblId+'\')">Auto-ajustar columnas</button></div>';
 }
@@ -5619,7 +5620,11 @@ function pagosRealizarView(){
       if(col==='sol'){ const s=solDe(r); return s?(s.estado||'Pendiente'):'Sin pedir'; }
       return '';
     } });
-  const visibles=_spOrdenar('spr', rows.filter(r=>xlfPass('spr',r)), { sol:r=>{ const s=solDe(r); return s?(s.estado||'Pendiente'):'~'; }, fe:r=>r.fecha_emision, fc:r=>r.fecha_contable,
+  // "Solo mis OC": facturas cuya OC (según el Informe OC) tiene como comprador al usuario logueado.
+  const miComp=_syncFold(MI_NOMBRE);
+  const esMia=r=>{ const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)]; return !!(miComp && m && m.comp && _syncFold(m.comp)===miComp); };
+  if(!miComp) SPR_SOLO_MIAS=false;
+  const visibles=_spOrdenar('spr', rows.filter(r=>xlfPass('spr',r) && (!SPR_SOLO_MIAS || esMia(r))), { sol:r=>{ const s=solDe(r); return s?(s.estado||'Pendiente'):'~'; }, fe:r=>r.fecha_emision, fc:r=>r.fecha_contable,
     tipo:r=>r.tipo_comprobante, prov:r=>r.proveedor_cod, nro:r=>r.comprobante_numero, tot:r=>+r.total_pend_cte||0, aux:r=>join(r,'aux'), oc:r=>join(r,'oc'), rem:r=>join(r,'rem'), comp:r=>{ const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)]; return m?m.comp:''; } });
   const ESTADO_CLR={'FAC cargada':'b-gris','Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
   let total=0, sinMatch=0;
@@ -5643,15 +5648,22 @@ function pagosRealizarView(){
   const aviso=!(DIC.oc_informe||[]).length
     ? '<div style="font-size:12px;color:#b3261e;margin-bottom:8px">No hay Informe OC importado: no se pueden completar Auxiliar / OC / Remito.</div>'
     : (sinMatch?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+sinMatch+' de '+rows.length+' facturas no aparecen en el Informe OC (por ejemplo, facturas sin OC, o un Informe OC desactualizado): quedan con "—".</div>':'');
+  const btnMias = miComp
+    ? '<button class="btn sm'+(SPR_SOLO_MIAS?'':' ghost')+'" onclick="sprToggleMias()" title="Mostrar solo las facturas de las OC donde el comprador sos vos ('+esc(MI_NOMBRE)+')">'+(SPR_SOLO_MIAS?'✓ ':'')+'Solo mis OC</button>'
+    : '<button class="btn ghost sm" disabled title="Tu usuario no tiene un nombre de comprador asociado en Usuarios autorizados">Solo mis OC</button>';
+  const avisoMias = SPR_SOLO_MIAS && !visibles.length ? '<div class="empty" style="padding:14px 20px">No hay facturas de OC tuyas ('+esc(MI_NOMBRE)+')'+(xlfHasAny('spr')?' con los filtros actuales':'')+'. El comprador sale del Informe OC: si no coincide con tu nombre tal cual figura ahí, no aparece.</div>' : '';
   return '<div class="card">'+header+(aviso?'<div style="padding:10px 14px 0">'+aviso+'</div>':'')
-    +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC, remito o comprador…')
+    +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC, remito o comprador…', btnMias)
     +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+_spTh('spr','Pago','sol','sol')+_spTh('spr','Fecha de emisión','__fecha__','fe')+_spTh('spr','Fecha contable','fc','fc')+_spTh('spr','Tipo de comprobante','tipo','tipo')+_spTh('spr','Cód. proveedor','prov','prov')
     +_spTh('spr','Nro. Comprobante','nro','nro')+_spTh('spr','Total Pendiente (CTE)',null,'tot')+_spTh('spr','Auxiliar','aux','aux')+_spTh('spr','Orden de compra','oc','oc')+_spTh('spr','Remito','rem','rem')+_spTh('spr','Comprador','comp','comp')+'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
-    +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="4"></td></tr></tfoot></table></div>';
+    +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="4"></td></tr></tfoot></table>'+avisoMias+'</div>';
 }
 window.pagosRealizarView=pagosRealizarView;
 let SPR_ROWS=[];
+let SPR_SOLO_MIAS=false;
+function sprToggleMias(){ SPR_SOLO_MIAS=!SPR_SOLO_MIAS; renderSolicitudesPago(); }
+window.sprToggleMias=sprToggleMias;
 function sprSelCount(){ const n=document.querySelectorAll('.sprsel:checked').length; const el=document.getElementById('sprSelCount'); if(el) el.textContent=n; }
 window.sprSelCount=sprSelCount;
 // Pedir el pago de facturas que ya están en Pagos a realizar (ej. sin OC: seguros, servicios) sin cargar datos a mano:
