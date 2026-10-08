@@ -5588,7 +5588,7 @@ function pagosRealizarView(){
   SPR_ROWS=rows;
   const puede=puedeCrearSolicitudPago();
   const pedirBtn=puede?'<button class="btn sm" style="margin-left:auto" onclick="openSprPedirPago()">Pedir pago de las tildadas (<span id="sprSelCount">0</span>)</button>':'';
-  const header='<div class="card-h"><h3>Pagos a realizar</h3><span class="meta">Reporte de Tango con el Auxiliar, la OC y el Remito de cada factura (del Informe OC, por proveedor + N° de comprobante). Tildá las facturas y pedí el pago, con un comentario si hace falta. '+esc(_spUltimaImport('pagos_realizar'))+'</span>'+pedirBtn+'</div>';
+  const header='<div class="card-h"><h3>Pagos a realizar</h3><span class="meta">Reporte de Tango con el Auxiliar, la OC, el Remito y el Comprador de cada factura (del Informe OC, por proveedor + N° de comprobante). Tildá las facturas y pedí el pago, con un comentario si hace falta. '+esc(_spUltimaImport('pagos_realizar'))+'</span>'+pedirBtn+'</div>';
   if(!rows.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas carga el reporte "Pagos a realizar" desde su app.</div></div>';
   // Solicitud ya existente para cada factura (misma clave que compras_clave_fac en SQL)
   const solPorFac={};
@@ -5598,7 +5598,8 @@ function pagosRealizarView(){
   (DIC.oc_informe||[]).forEach(r=>{
     if(!r.comprobante_numero) return;
     const k=_spKey(r.proveedor_cod, r.comprobante_numero);
-    const o=(idx[k]=idx[k]||{aux:new Set(), oc:new Set(), rem:new Set()});
+    const o=(idx[k]=idx[k]||{aux:new Set(), oc:new Set(), rem:new Set(), comp:''});
+    if(r.comprador&&!o.comp) o.comp=_syncNorm(r.comprador);   // comprador de la OC asociada a la factura
     if(r.clasif_cod) o.aux.add(_syncNorm(r.clasif_cod));
     if(r.oc_numero) o.oc.add(nroOCTango(r.oc_numero));
     if(r.remito_numero) o.rem.add(_syncNorm(r.remito_numero));
@@ -5614,18 +5615,19 @@ function pagosRealizarView(){
       if(col==='aux') return join(r,'aux');
       if(col==='oc') return join(r,'oc');
       if(col==='rem') return join(r,'rem');
+      if(col==='comp'){ const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)]; return m&&m.comp?m.comp:'(sin comprador)'; }
       if(col==='sol'){ const s=solDe(r); return s?(s.estado||'Pendiente'):'Sin pedir'; }
       return '';
     } });
   const visibles=_spOrdenar('spr', rows.filter(r=>xlfPass('spr',r)), { sol:r=>{ const s=solDe(r); return s?(s.estado||'Pendiente'):'~'; }, fe:r=>r.fecha_emision, fc:r=>r.fecha_contable,
-    tipo:r=>r.tipo_comprobante, prov:r=>r.proveedor_cod, nro:r=>r.comprobante_numero, tot:r=>+r.total_pend_cte||0, aux:r=>join(r,'aux'), oc:r=>join(r,'oc'), rem:r=>join(r,'rem') });
+    tipo:r=>r.tipo_comprobante, prov:r=>r.proveedor_cod, nro:r=>r.comprobante_numero, tot:r=>+r.total_pend_cte||0, aux:r=>join(r,'aux'), oc:r=>join(r,'oc'), rem:r=>join(r,'rem'), comp:r=>{ const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)]; return m?m.comp:''; } });
   const ESTADO_CLR={'FAC cargada':'b-gris','Pendiente':'b-ambar','En gestión':'b-azul','Pagada':'b-verde'};
   let total=0, sinMatch=0;
   rows.forEach(r=>{ if(!idx[_spKey(r.proveedor_cod, r.comprobante_numero)]) sinMatch++; });
   const filas=visibles.map(r=>{
     const m=idx[_spKey(r.proveedor_cod, r.comprobante_numero)];
     total+=(+r.total_pend_cte||0);
-    const q=_syncFold([r.proveedor_cod,_spProvNombre(r.proveedor_cod),r.comprobante_numero,r.tipo_comprobante,m?[...m.aux,...m.oc,...m.rem].join(' '):''].join(' '));
+    const q=_syncFold([r.proveedor_cod,_spProvNombre(r.proveedor_cod),r.comprobante_numero,r.tipo_comprobante,m?[...m.aux,...m.oc,...m.rem,m.comp].join(' '):''].join(' '));
     const sol=solDe(r);
     const celSol = sol
       ? '<a href="#" onclick="openSolicitudPagoDetalle('+sol.id+');return false"><span class="badge '+(ESTADO_CLR[sol.estado]||'b-gris')+'">'+esc(sol.estado||'Pendiente')+'</span></a>'
@@ -5636,17 +5638,17 @@ function pagosRealizarView(){
       +'<td title="'+esc(_spProvNombre(r.proveedor_cod))+'"><strong>'+esc(r.proveedor_cod||'')+'</strong></td>'
       +'<td>'+esc(r.comprobante_numero||'')+'</td>'
       +'<td style="text-align:right;white-space:nowrap">'+fmtNum(r.total_pend_cte,2)+'</td>'
-      +'<td style="font-size:11px">'+lista(m&&m.aux)+'</td><td style="font-size:11px">'+lista(m&&m.oc)+'</td><td style="font-size:11px">'+lista(m&&m.rem)+'</td></tr>';
+      +'<td style="font-size:11px">'+lista(m&&m.aux)+'</td><td style="font-size:11px">'+lista(m&&m.oc)+'</td><td style="font-size:11px">'+lista(m&&m.rem)+'</td><td style="font-size:11px">'+(m&&m.comp?esc(m.comp):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }).join('');
   const aviso=!(DIC.oc_informe||[]).length
     ? '<div style="font-size:12px;color:#b3261e;margin-bottom:8px">No hay Informe OC importado: no se pueden completar Auxiliar / OC / Remito.</div>'
     : (sinMatch?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+sinMatch+' de '+rows.length+' facturas no aparecen en el Informe OC (por ejemplo, facturas sin OC, o un Informe OC desactualizado): quedan con "—".</div>':'');
   return '<div class="card">'+header+(aviso?'<div style="padding:10px 14px 0">'+aviso+'</div>':'')
-    +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC o remito…')
+    +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC, remito o comprador…')
     +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+_spTh('spr','Pago','sol','sol')+_spTh('spr','Fecha de emisión','__fecha__','fe')+_spTh('spr','Fecha contable','fc','fc')+_spTh('spr','Tipo de comprobante','tipo','tipo')+_spTh('spr','Cód. proveedor','prov','prov')
-    +_spTh('spr','Nro. Comprobante','nro','nro')+_spTh('spr','Total Pendiente (CTE)',null,'tot')+_spTh('spr','Auxiliar','aux','aux')+_spTh('spr','Orden de compra','oc','oc')+_spTh('spr','Remito','rem','rem')+'</tr></thead>'
+    +_spTh('spr','Nro. Comprobante','nro','nro')+_spTh('spr','Total Pendiente (CTE)',null,'tot')+_spTh('spr','Auxiliar','aux','aux')+_spTh('spr','Orden de compra','oc','oc')+_spTh('spr','Remito','rem','rem')+_spTh('spr','Comprador','comp','comp')+'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
-    +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="3"></td></tr></tfoot></table></div>';
+    +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="4"></td></tr></tfoot></table></div>';
 }
 window.pagosRealizarView=pagosRealizarView;
 let SPR_ROWS=[];
