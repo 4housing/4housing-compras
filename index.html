@@ -5160,7 +5160,7 @@ window.renderSugeridasSolPago=renderSugeridasSolPago;
 function elegirOCSugerida(k){
   const o=SOLPAGO_SUGERIDAS[k]; if(!o) return;
   const ocEl=document.getElementById('sp_oc'); if(ocEl) ocEl.value=o.oc_numero||'';
-  if(o.clasif_cod) facProySet(o.clasif_cod);
+  const proyEl=document.getElementById('sp_proyecto'); if(proyEl && o.clasif_cod) proyEl.value=o.clasif_cod;
   const compEl=document.getElementById('sp_comprador'); if(compEl && o.comprador && nombresComp().includes(o.comprador)) compEl.value=o.comprador;
   const msg=document.getElementById('spMsg'); if(msg){ msg.style.color='#4f8a53'; msg.textContent='OC '+o.oc_numero+' asignada.'; }
 }
@@ -5173,7 +5173,7 @@ function solPagoFacturaBlur(){
     const m=matches[0];
     const ocEl=document.getElementById('sp_oc'); if(ocEl && !ocEl.value) ocEl.value=nroOCTango(m.oc_numero);
     const remEl=document.getElementById('sp_remito'); if(remEl && !remEl.value) remEl.value=m.remito_numero||'';
-    const proyEl=document.getElementById('sp_proyecto'); if(proyEl && !proyEl.value) facProySet(m.clasif_cod||'');
+    const proyEl=document.getElementById('sp_proyecto'); if(proyEl && !proyEl.value) proyEl.value=m.clasif_cod||'';
     const compEl=document.getElementById('sp_comprador'); if(compEl && !compEl.value && nombresComp().includes(m.comprador)) compEl.value=m.comprador;
     if(msg){ msg.style.color='#4f8a53'; msg.textContent='Encontrada en el Informe OC: se completó OC/Remito/Proyecto solo.'; }
     const box=document.getElementById('spSugeridas'); if(box) box.innerHTML='';
@@ -5186,15 +5186,14 @@ function openSolicitudPagoForm(id){
   const cur=s||{};
   const provVal = cur.proveedor_cod ? (cur.proveedor_cod+' — '+(cur.proveedor||'')) : '';
   const compOpts = nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===cur.comprador?' selected':'')+'>'+esc(ogxName(n))+'</option>').join('');
-  // Proyecto: buscador (igual que SOLP/Pañol), lista del auxiliar 3. Código en el hidden #sp_proyecto, texto en #sp_proyecto_q.
-  const proyVal = obraInputVal(cur.proyecto_cod, panolObraNom);
+  const proyOpts = auxOpts('3').map(o=>'<option value="'+esc(o.cod)+'"'+(cur.proyecto_cod===o.cod?' selected':'')+'>'+esc(o.cod)+' · '+esc(o.desc)+'</option>').join('');
   const monOpts = ['ARS','USD'].map(m=>'<option value="'+m+'"'+((cur.moneda||'ARS')===m?' selected':'')+'>'+(m==='USD'?'Dólares':'Pesos')+'</option>').join('');
   const body='<div class="field"><label>Proveedor</label><input id="sp_proveedor" value="'+esc(provVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboProvSol()" oninput="comboProvSol()" onblur="comboHideDelayed()"></div>'
     +'<div class="frow c2"><div class="field"><label>N° de factura</label><input id="sp_factura" type="text" value="'+esc(cur.nro_factura||'')+'" placeholder="Ej. A0000700005352" onblur="solPagoFacturaBlur()"></div>'
     +'<div class="field"><label>Comprador</label><select id="sp_comprador"><option value="">— elegí —</option>'+compOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>N° de OC (Tango)</label><input id="sp_oc" type="text" value="'+esc(nroOCTango(cur.oc_numero))+'"></div>'
     +'<div class="field"><label>N° de Remito</label><input id="sp_remito" type="text" value="'+esc(cur.remito_numero||'')+'"></div></div>'
-    +'<div class="field"><label>Proyecto / Auxiliar</label><input type="hidden" id="sp_proyecto" value="'+esc(cur.proyecto_cod||'')+'"><input id="sp_proyecto_q" value="'+esc(proyVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboFacProy()" oninput="document.getElementById(\'sp_proyecto\').value=\'\';comboFacProy()" onblur="facProyBlur()"></div>'
+    +'<div class="field"><label>Proyecto / Auxiliar</label><select id="sp_proyecto"><option value="">— elegí —</option>'+proyOpts+'</select></div>'
     +'<div class="frow c2"><div class="field"><label>Monto</label><input id="sp_monto" type="number" step="0.01" value="'+(cur.monto!=null?cur.monto:'')+'"></div>'
     +'<div class="field"><label>Moneda</label><select id="sp_moneda">'+monOpts+'</select></div></div>'
     +'<div class="field"><label>Adjuntar factura (PDF)</label><input id="sp_file" type="file" accept="application/pdf,image/*">'+(cur.adjunto_nombre?'<div style="font-size:11px;color:var(--muted);margin-top:4px">Ya tiene adjunto: '+esc(cur.adjunto_nombre)+' (subí uno nuevo para reemplazarlo)</div>':'')+'</div>'
@@ -5217,7 +5216,6 @@ async function guardarSolicitudPago(id){
   const oc_numero=nroOCTango(document.getElementById('sp_oc').value);
   const remito_numero=(document.getElementById('sp_remito').value||'').trim();
   const proyecto_cod=document.getElementById('sp_proyecto').value||'';
-  if(!proyecto_cod && document.getElementById('sp_proyecto_q').value.trim()){ toast('El proyecto escrito no coincide con ninguno: elegilo de la lista o dejá el campo vacío.'); return; }
   const monto=+document.getElementById('sp_monto').value||0;
   const moneda=document.getElementById('sp_moneda').value||'ARS';
   const comentario=(document.getElementById('sp_comentario').value||'').trim();
@@ -10165,18 +10163,6 @@ function comboPanolObra(){ comboObra('pn_obra_q','pn_obra',null,panolObras); }
 window.comboPanolObra=comboPanolObra;
 function panolObraBlur(){ obraBlur('pn_obra_q','pn_obra',null,panolObras); }
 window.panolObraBlur=panolObraBlur;
-// Facturas (solicitud de pago): Proyecto / Auxiliar, misma lista del auxiliar 3 que Pañol.
-function comboFacProy(){ comboObra('sp_proyecto_q','sp_proyecto',null,panolObras); }
-window.comboFacProy=comboFacProy;
-function facProyBlur(){ obraBlur('sp_proyecto_q','sp_proyecto',null,panolObras); }
-window.facProyBlur=facProyBlur;
-// Autocompletado desde el Informe OC: igual que antes con el <select>, solo toma códigos que están
-// en la lista (si no está, queda vacío).
-function facProySet(cod){
-  const hid=document.getElementById('sp_proyecto'), inp=document.getElementById('sp_proyecto_q'); if(!hid||!inp) return;
-  const o=panolObras().find(x=>x.cod===cod);
-  hid.value=o?o.cod:''; inp.value=o?obraInputVal(o.cod, panolObraNom):'';
-}
 function solpFormRenumerar(){
   const obraEl=document.getElementById('sp_obra'), serieEl=document.getElementById('sp_serie'), numEl=document.getElementById('sp_num');
   if(!obraEl||!serieEl||!numEl || numEl.dataset.touched==='1') return;
