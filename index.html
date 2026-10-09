@@ -11657,8 +11657,9 @@ async function initAuth(){
    ================================================================ */
 /* Carga de datos desde Supabase en producción (mismo criterio que la comercial:
    una caché en memoria — mem.* — que en demo trae los seeds y en real trae la nube). */
-async function reloadDB(){
+async function reloadDB(opts){
   if(DEMO_MODE) return;
+  opts=opts||{};
   try{
     const [ogs, certificados, pagos, ingresos, cajas] = await Promise.all([
       sbFetch('/compras_ogs?select=*&order=id.desc'),
@@ -11674,10 +11675,17 @@ async function reloadDB(){
     mem.ingresos = ingresos || [];
     mem.caja = mem.caja || {};
     (cajas||[]).forEach(c=>{ if(c.moneda==='ARS') mem.caja.ARS_ini=+c.saldo_inicial||0; if(c.moneda==='USD') mem.caja.USD_ini=+c.saldo_inicial||0; });
-    // Los siguientes diccionarios/tablas son independientes entre sí (cada uno escribe su propia
-    // variable y atrapa sus propios errores) — antes se pedían en secuencia, una espera atrás de
-    // otra; ahora se disparan todos en paralelo para que la carga inicial no sea la suma de ~16
-    // round-trips de red sino solo el más lento de ellos.
+  }catch(e){ toast('No se pudieron cargar los datos desde la nube.'); return; }
+  // Los diccionarios pesados (catálogos, snapshots de Tango, índices) NO necesitan estar para
+  // mostrar la vista inicial (OGs). Con opts.core se cargan en SEGUNDO PLANO y la vista se
+  // refresca al terminar — así la app abre apenas tiene las OGs, en vez de esperar ~20 consultas.
+  if(opts.core){ reloadDicts(true); return; }
+  await reloadDicts(false);
+}
+// Diccionarios/tablas de referencia (independientes entre sí → en paralelo). Cada uno atrapa su
+// propio error. Si background=true, al terminar refresca la vista actual (si depende de ellos).
+async function reloadDicts(background){
+  try{
     await Promise.all([
       // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
       (async()=>{ try{
@@ -11795,7 +11803,10 @@ async function reloadDB(){
     ]);
     idxDolarRecalc();
     idxDolAutoCompletar();   // sin await: no demora la carga de la app
-  }catch(e){ toast('No se pudieron cargar los datos desde la nube.'); }
+  }catch(e){ /* diccionarios best-effort: no rompen la app */ }
+  // Si se cargaron en segundo plano y el usuario ya está en una vista que depende de estos
+  // diccionarios (no la inicial 'compras'), re-render para que aparezcan los datos.
+  if(background){ try{ if(typeof current!=='undefined' && current && current!=='compras') render(current); }catch(_){ } }
 }
 window.reloadDB=reloadDB;
 
@@ -12456,7 +12467,7 @@ function mergeRowInto(arr, row){
     document.getElementById('autosaveLbl').textContent='Modo demo';
     document.getElementById('btnLogout').style.display='none';
   }else{
-    await reloadDB();
+    await reloadDB({core:true});   // trae lo justo para la vista inicial; los diccionarios cargan en 2º plano
     await uiPrefsLoad();
     document.getElementById('autosaveLbl').textContent=
       (AUTH_USER && (AUTH_USER.user_metadata?.name || AUTH_USER.email)) || 'Conectado';
