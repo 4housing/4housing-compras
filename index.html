@@ -11468,7 +11468,8 @@ async function evalProvImportHistoricoAplicar(){
     }
     if(filas.length){
       if(msg)msg.textContent='Importando '+filas.length+'…';
-      for(let i=0;i<filas.length;i+=500){ await sbFetch('/compras_prov_evaluaciones',{method:'POST', body:JSON.stringify(filas.slice(i,i+500))}); }
+      // Un solo POST = una sentencia INSERT → la auditoría lo cuenta como UN movimiento (SQL 085).
+      await sbFetch('/compras_prov_evaluaciones',{method:'POST', prefer:'return=minimal', body:JSON.stringify(filas)});
     }
     closeModal(); toast('Listo: '+filas.length+' importadas, '+s.obraParaCompletar.length+' corregidas'); await evalProvLoad(); renderEvalProv();
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
