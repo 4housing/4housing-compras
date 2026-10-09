@@ -10396,7 +10396,9 @@ async function solpImportHistoricoAplicar(){
   if(!filas.length){ if(msg)msg.textContent='Nada para importar.'; return; }
   if(msg)msg.textContent='Importando '+filas.length+'…';
   try{
-    for(let i=0;i<filas.length;i+=500){ await sbFetch('/compras_solp_items',{method:'POST', body:JSON.stringify(filas.slice(i,i+500))}); }
+    // Un solo POST = una sola sentencia INSERT → la auditoría lo registra como UN movimiento
+    // (antes se partía en lotes de 500 y cada fila quedaba como un movimiento → inflaba el tablero).
+    await sbFetch('/compras_solp_items',{method:'POST', prefer:'return=minimal', body:JSON.stringify(filas)});
     closeModal(); toast('Histórico importado: '+filas.length+' ítems'); await solpLoad(); renderSolp();
   }catch(e){ if(msg){ msg.style.color='#b3261e'; msg.textContent='Error al guardar: '+(e.message||e); } }
 }
