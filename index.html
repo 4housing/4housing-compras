@@ -3651,7 +3651,12 @@ function gpOGsDelProyecto(p){
   if(!p) return [];
   const keys=new Set(_obraNums(p.codigo).concat(_obraNums(p.nombre)));
   if(!keys.size) return [];
-  return (mem.ogs||[]).filter(o=> !o.anulada && _obraNums(o.clasif_og).some(n=>keys.has(n)) );
+  const match=(mem.ogs||[]).filter(o=> !o.anulada && _obraNums(o.clasif_og).some(n=>keys.has(n)) );
+  // Blindaje contra doble conteo: si una OG quedó cargada dos veces (mismo N°), se cuenta una
+  // sola vez (se queda la de id más alto). Las OGs sin N° se dejan tal cual (cada una es única).
+  const byNum={};
+  match.forEach(o=>{ const k=(o.numero!=null&&o.numero!=='')?('n'+o.numero):('id'+o.id); const prev=byNum[k]; if(!prev || (+o.id||0)>(+prev.id||0)) byNum[k]=o; });
+  return Object.values(byNum);
 }
 function gpRenderOGsCard(p){
   const ogs=gpOGsDelProyecto(p);
