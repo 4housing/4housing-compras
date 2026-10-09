@@ -3643,6 +3643,46 @@ function _gpTh(ns, label, col, k){ return _spTh(ns,label,col,k).split("spSort(ev
 // Igual que _gpTh pero alineado a la derecha (columnas numéricas).
 function _gpThNum(ns, label, col, k){ return _gpTh(ns,label,col,k).replace('<th style="','<th style="text-align:right;'); }
 
+/* ===== OGs de la app que impactan en este proyecto (canal aparte del informe de Tango) =====
+   Vínculo = número de obra (ej. 4317) que aparece en el nombre/código del proyecto GP y en la
+   Clasificación de la OG. No toca compras_gp_oc (el import de Tango): conviven como dos canales. */
+function _obraNums(s){ const m=String(s||'').match(/\d{3,}/g); return m||[]; }
+function gpOGsDelProyecto(p){
+  if(!p) return [];
+  const keys=new Set(_obraNums(p.codigo).concat(_obraNums(p.nombre)));
+  if(!keys.size) return [];
+  return (mem.ogs||[]).filter(o=> !o.anulada && _obraNums(o.clasif_og).some(n=>keys.has(n)) );
+}
+function gpRenderOGsCard(p){
+  const ogs=gpOGsDelProyecto(p);
+  const head='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Órdenes de gasto del proyecto</h3>'
+    +'<span class="meta">OGs cargadas en Compras para la obra de este proyecto · canal aparte del informe de Tango</span>'
+    +(ogs.length?'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpOGTbl\')">Auto-ajustar columnas</button>':'')+'</div>';
+  if(!ogs.length) return head+'<div style="padding:14px;color:var(--muted);font-size:12.5px">No hay OGs de la app para la obra de este proyecto (se vinculan por el N° de obra de la Clasificación de la OG).</div></div>';
+  const mapIdx={}; (GP.mapeo||[]).forEach(m=>{ mapIdx[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
+  let total=0; const porSec={};
+  const rows=ogs.map(o=>{
+    const t=ogTotal(o); total+=t;
+    const imp=gpImputar({subrubro:'', rubro:o.clasif_og||'', costeo_tag:o.costeo||o.costeo_new||'', grupo:'', cod_articulo:''}, mapIdx);
+    porSec[imp.seccion]=(porSec[imp.seccion]||0)+t;
+    return '<tr style="cursor:pointer" onclick="openOG('+o.id+')">'
+      +'<td>'+esc(o.numero||'')+'</td><td>'+fmtDate(o.fecha)+'</td>'
+      +'<td>'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
+      +'<td>'+esc(o.clasif_og||'')+'</td>'
+      +'<td>'+esc(imp.seccion)+'</td>'
+      +'<td style="text-align:right">'+fmtNum(t,0)+'</td>'
+      +'<td>'+esc(ogEstado(o))+'</td></tr>';
+  }).join('');
+  const secsOrd=Object.keys(porSec).sort((a,b)=>porSec[b]-porSec[a]);
+  const resumen=secsOrd.map(s=>esc(s)+': $'+fmtNum(porSec[s],0)).join(' · ');
+  return head
+    +'<div class="tbl-hscroll tbl-compact"><table id="gpOGTbl" class="grid" style="font-size:11.5px"><thead><tr>'
+      +'<th>OG</th><th>Fecha</th><th>Prov.</th><th>Clasificación</th><th>Sección (imputada)</th><th style="text-align:right">Total ($)</th><th>Estado</th></tr></thead><tbody>'
+      +rows+'<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td colspan="5">TOTAL comprometido (OGs)</td><td style="text-align:right">'+fmtNum(total,0)+'</td><td></td></tr>'
+      +'</tbody></table></div>'
+    +(resumen?'<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Por sección: '+resumen+'</div>':'')+'</div>';
+}
+
 function gpRenderTablero(){
   const p=GP.proyecto; const ag=gpAgregado();
   const dir=esDireccion();            // estructura (crear/editar/costeo/rubros/eliminar) = solo dirección
@@ -3673,6 +3713,8 @@ function gpRenderTablero(){
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
   const trasNeto=gpTrasNetoCompras();
   const trasKpi=(Math.abs(trasNeto)>0.5)?('<div class="kpi"><div class="kpi-label">Presupuesto vigente (c/ traslados)</div><div class="kpi-value">'+gpMoney(ag.tot.presAr+trasNeto)+'</div><div class="kpi-sub">'+(trasNeto>0?'+':'')+gpMoney(trasNeto)+' trasladado neto</div></div>'):'';
+  const ogComprometido=gpOGsDelProyecto(p).reduce((a,o)=>a+ogTotal(o),0);
+  const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprometido (OGs)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">órdenes de gasto de la app · ver abajo</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
@@ -3746,7 +3788,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+ogKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
@@ -3767,6 +3809,7 @@ function gpRenderTablero(){
         +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+'<th></th></tr></thead><tbody>'
       +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>'
+    +gpRenderOGsCard(p)
     +gpRenderTrasladosCard();
 
   gpDrawCharts(ag);
