@@ -6827,12 +6827,24 @@ window.guardarAsientoOP=guardarAsientoOP;
 function askDelPago(id){
   if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
   const p=(mem.pagos||[]).find(x=>String(x.id)===String(id));
-  const asi=p&&p.asiento_num ? '<p style="margin:10px 0 0;font-size:13px;color:#b3261e;line-height:1.5">⚠ Esta OP tiene cargado el asiento de Tango N° '+esc(p.asiento_num)+'. Eliminarla acá no borra el asiento en Tango: hay que corregirlo allá a mano.</p>' : '';
-  openModal('Eliminar pago','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago'+(p&&p.numero?' (OG '+esc(p.numero)+')':'')+'? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo. Se elimina para todos.</p>'+asi,
+  const ref=p?[(p.op_numero!=null&&p.op_numero!=='')?'OP '+p.op_numero:'', p.numero?'OG '+p.numero:''].filter(Boolean).join(' · '):'';
+  const base='<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago'+(ref?' ('+esc(ref)+')':'')+'? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo. Se elimina para todos.</p>';
+  // Con N° de asiento de Tango cargado: aviso destacado con el N° y una confirmación extra (tilde) antes de habilitar Eliminar.
+  if(p && p.asiento_num){
+    const n=esc(p.asiento_num);
+    const aviso='<div style="margin:0 0 12px;padding:10px 12px;border:1px solid #b3261e;border-radius:8px;background:#fdecea;color:#7a1c14;font-size:13.5px;line-height:1.5">'
+      +'<strong>⚠ Tiene asiento cargado: N° '+n+'</strong><br>Eliminar el pago acá <strong>no</strong> borra el asiento en Tango: anotá el N° '+n+' y corregilo allá a mano.</div>';
+    const tilde='<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;cursor:pointer"><input type="checkbox" id="delPagoAsiOk" onchange="document.getElementById(\'delPagoBtn\').disabled=!this.checked" style="margin-top:2px">Tomé nota del asiento N° '+n+' y lo voy a corregir en Tango.</label>';
+    openModal('Eliminar pago con asiento cargado', aviso+base+tilde,
+      '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" id="delPagoBtn" disabled onclick="confirmDelPago('+id+')">Eliminar</button>');
+    return;
+  }
+  openModal('Eliminar pago', base,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelPago('+id+')">Eliminar</button>');
 }
 async function confirmDelPago(id){
   if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
+  const asiNum=(((mem.pagos||[]).find(x=>String(x.id)===String(id))||{}).asiento_num)||'';
   if(DEMO_MODE){ mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id)); }
   else {
     // return=representation: si la base no deja borrar (RLS), no da error sino 0 filas — hay que chequearlo.
@@ -6842,7 +6854,7 @@ async function confirmDelPago(id){
     if(!Array.isArray(borradas)||!borradas.length){ closeModal(); toast('No se eliminó: la base no te deja borrar este pago (falta el permiso puede_eliminar_pagos).'); return; }
     mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id));
   }
-  closeModal(); toast('Pago eliminado'); renderTesoreria();
+  closeModal(); toast(asiNum?'Pago eliminado. Acordate de corregir en Tango el asiento N° '+asiNum+'.':'Pago eliminado'); renderTesoreria();
 }
 window.askDelPago=askDelPago; window.confirmDelPago=confirmDelPago;
 
