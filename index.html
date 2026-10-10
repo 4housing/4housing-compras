@@ -964,17 +964,17 @@ const DEMO_ROLES={
   certificador:{comprador:false, certificador:true, tesorero:false, confidencial:false, admin:false, asiento:false, lbl:'Certificador (técnica)', nombre:'Seoane, Micaela'},
   tesorero:{comprador:false, certificador:false, tesorero:true, confidencial:false, admin:false, asiento:false, lbl:'Tesorero', nombre:''},
 };
-function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento}; MI_NOMBRE=r.nombre||''; ES_DIRECCION=(DEMO_ROLE==='admin'); }
+function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento, eliminarPagos:!!r.admin}; MI_NOMBRE=r.nombre||''; ES_DIRECCION=(DEMO_ROLE==='admin'); }
 async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
-  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false};   // por defecto, sin permisos
+  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false, eliminarPagos:false};   // por defecto, sin permisos
   MI_NOMBRE=''; ES_DIRECCION=false;
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
     const rows=await sbFetch('/compras_usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
     const u=rows&&rows[0];
-    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento}; MI_NOMBRE=u.nombre||''; }
+    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento, eliminarPagos:!!u.puede_eliminar_pagos}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
   // es_direccion del portal (perfiles) — igual criterio que nav.js. Habilita la estructura de Gestión de Proyectos.
   try{
@@ -989,6 +989,9 @@ function canPago(){ return ROLE.tesorero||ROLE.admin; }
 // puede cargar solo un grupo chico de personas (hoy: Pablo, Micaela, Gustavo, Alexis Carranza) —
 // pedido explícito de Micaela, no el rol Tesorero completo.
 function canAsiento(){ return ROLE.admin||ROLE.asiento; }
+// Eliminar pagos (OP): solo quien tiene puede_eliminar_pagos en compras_usuarios_autorizados (hoy Micaela y
+// Gustavo) — ni todo Tesorero ni todo Admin. La base lo exige también (policy compras_pagos_del_solo_flag).
+function canEliminarPago(){ return !!ROLE.eliminarPagos; }
 /* Restricciones por usuario: cada comprador/certificador solo actúa sobre lo que tiene asignado.
    El admin no tiene esta restricción (puede actuar "como cualquiera"). */
 function puedeCrearOG(){ return ROLE.admin||ROLE.comprador; }
@@ -6155,7 +6158,7 @@ function opsView(){
         +'<input type="text" id="asientoInp'+p.id+'" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares. Escribí y apretá Enter (o el ✓) para guardar — no se guarda solo con hacer click afuera.':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onkeydown="if(event.key===\'Enter\'){ guardarAsientoOP('+p.id+',this.value); this.blur(); }" style="width:62px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'">'
         +(canAsiento()?'<button class="iconbtn" title="Guardar N° de asiento" onclick="guardarAsientoOP('+p.id+',document.getElementById(\'asientoInp'+p.id+'\').value)" style="flex:none">'+ICO.check+'</button>':'')
         +'</div></td>'
-      +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button></div></td></tr>';
+      +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button>'+(canEliminarPago()?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+p.id+')">'+ICO.del+'</button>':'')+'</div></td></tr>';
   }).join('') || '<tr><td colspan="16" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="12" style="text-align:right">Total mostrado</td>'
     +'<td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td>'
@@ -6822,14 +6825,21 @@ async function guardarAsientoOP(id, valor){
 }
 window.guardarAsientoOP=guardarAsientoOP;
 function askDelPago(id){
-  openModal('Eliminar pago','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo.</p>',
+  if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(id));
+  const asi=p&&p.asiento_num ? '<p style="margin:10px 0 0;font-size:13px;color:#b3261e;line-height:1.5">⚠ Esta OP tiene cargado el asiento de Tango N° '+esc(p.asiento_num)+'. Eliminarla acá no borra el asiento en Tango: hay que corregirlo allá a mano.</p>' : '';
+  openModal('Eliminar pago','<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago'+(p&&p.numero?' (OG '+esc(p.numero)+')':'')+'? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo. Se elimina para todos.</p>'+asi,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmDelPago('+id+')">Eliminar</button>');
 }
 async function confirmDelPago(id){
-  if(!canPago()){ toast('Solo el tesorero puede eliminar pagos.'); return; }
+  if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
   if(DEMO_MODE){ mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id)); }
   else {
-    await sbFetch('/compras_pagos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'});
+    // return=representation: si la base no deja borrar (RLS), no da error sino 0 filas — hay que chequearlo.
+    let borradas;
+    try{ borradas=await sbFetch('/compras_pagos?id=eq.'+id,{method:'DELETE',prefer:'return=representation'}); }
+    catch(e){ toast('No se pudo eliminar: '+(e&&e.message?e.message:e)); return; }
+    if(!Array.isArray(borradas)||!borradas.length){ closeModal(); toast('No se eliminó: la base no te deja borrar este pago (falta el permiso puede_eliminar_pagos).'); return; }
     mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id));
   }
   closeModal(); toast('Pago eliminado'); renderTesoreria();
@@ -6860,7 +6870,7 @@ function arqueoView(){
       const pos=m.imp>=0; const col=pos?'#1a7a3a':'var(--bad)';
       const acc = m.tipo==='ing'
         ? '<button class="btn ghost sm" title="Asiento de transferencia (Tango)" onclick="exportAsientoReposicion('+m.id+')">Asiento</button>'+((canPago()&&m.id!=null)?' <button class="iconbtn del" title="Eliminar reposición" onclick="askDelIngreso('+m.id+')">'+ICO.del+'</button>':'')
-        : ((canPago()&&m.id!=null)?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+m.id+')">'+ICO.del+'</button>':'');
+        : ((canEliminarPago()&&m.id!=null)?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+m.id+')">'+ICO.del+'</button>':'');
       return '<tr><td>'+esc(fmtDate(m.fecha))+'</td><td>'+esc(m.det)+'</td><td>'+esc(m.medio)+'</td><td style="text-align:right;color:'+col+'">'+(pos?'+':'-')+fmt(Math.abs(m.imp))+'</td><td style="text-align:right">'+acc+'</td></tr>';
     }).join(''):'<tr><td colspan="5" style="color:var(--muted)">'+(xlfHasAny('arqueo')?'Ningún movimiento coincide con los filtros.':'Sin movimientos')+'</td></tr>';
     const btnIng = canPago()? '<button class="btn sm" onclick="openIngresoCaja(\''+mon+'\')">+ Ingresar fondos</button>' : '';
