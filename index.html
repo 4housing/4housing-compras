@@ -6169,7 +6169,64 @@ function opsView(){
   const hayFiltro=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
   const limpiar = hayFiltro ? '<button class="btn ghost sm" style="margin-left:auto" onclick="opFilterClearAll()">Limpiar filtros</button>' : '';
   return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Cargá el N° de asiento de Tango una vez que lo corregiste e importaste, para llevar el control de qué quedó realmente asentado. Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Lugar de pago','lugar')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Lugar de pago','lugar')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>'
+    +opsAnuladasView();
+}
+// --- OP anuladas: registro de pagos eliminados (compras_pagos_anulados). No cuentan para caja, erogación ni asientos. ---
+let OPAN_VER=false; const OPAN_SORT={};
+function opanToggle(){ OPAN_VER=!OPAN_VER; renderTesoreria(); }
+window.opanToggle=opanToggle;
+function opanSort(ev,k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  OPAN_SORT.k===k ? (OPAN_SORT.dir=-OPAN_SORT.dir) : (OPAN_SORT.k=k, OPAN_SORT.dir=1);
+  renderTesoreria();
+}
+window.opanSort=opanSort;
+function _opanMontos(a){
+  const d=a.datos||{}; const imp=+(a.importe_pago!=null?a.importe_pago:d.importe_pago)||0; const tc=+d.tc||0; const mon=a.moneda_pago||d.moneda_pago;
+  return mon==='USD' ? {usd:imp, ars:tc?imp*tc:null} : {ars:imp, usd:tc?imp/tc:null};
+}
+function opsAnuladasView(){
+  const todas=(mem.pagos_anulados||[]);
+  if(!todas.length) return '';
+  const head='<div class="card-h"><h3>OP anuladas ('+todas.length+')</h3><span class="meta">Pagos eliminados: quedan como registro de qué eran y por qué se anularon. No cuentan como erogación, ni para el saldo de caja, ni para los asientos.</span>'
+    +'<button class="btn ghost sm" style="margin-left:auto" onclick="opanToggle()">'+(OPAN_VER?'Ocultar':'Ver anuladas')+'</button></div>';
+  if(!OPAN_VER) return '<div class="card" style="margin-top:14px">'+head+'</div>';
+  const og=a=>(ogById(a.og_id)||{});
+  const prov=a=>og(a).proveedor_cod||((a.datos||{}).proveedor_cod)||'';
+  xlfRegister('opan', { rows:()=>todas, onChange:renderTesoreria, dateVal:a=>String(a.anulado_en||'').slice(0,10),
+    val:(a,col)=>{
+      if(col==='op') return a.op_numero?('OP '+a.op_numero):'(sin OP)';
+      if(col==='og') return a.og_numero?('OG '+a.og_numero):'(sin OG)';
+      if(col==='prov') return prov(a)||'(sin proveedor)';
+      if(col==='asi') return a.asiento_num?'Tenía asiento':'Sin asiento';
+      if(col==='por') return a.anulado_por||'(sin dato)';
+      return '';
+    } });
+  const vis=todas.filter(a=>xlfPass('opan',a));
+  const claves={ op:a=>+a.op_numero||a.op_numero, og:a=>+a.og_numero||a.og_numero, prov:prov, fp:a=>a.fecha_pago, usd:a=>_opanMontos(a).usd, ars:a=>_opanMontos(a).ars,
+    asi:a=>a.asiento_num, en:a=>a.anulado_en, por:a=>a.anulado_por, mot:a=>a.motivo };
+  const fn=claves[OPAN_SORT.k];
+  const filas=(fn?vis.slice().sort((x,y)=>{ const a=fn(x), b=fn(y); if(a==null||a==='') return 1; if(b==null||b==='') return -1;
+      return ((typeof a==='number'&&typeof b==='number')?a-b:String(a).localeCompare(String(b),'es',{numeric:true}))*OPAN_SORT.dir; }):vis);
+  const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fl=k=>OPAN_SORT.k===k?(OPAN_SORT.dir===1?' ▲':' ▼'):'';
+  const th=(label,col,k)=>{ const on='onclick="opanSort(event,\''+k+'\')"';
+    if(col==null) return '<th style="cursor:pointer" title="Ordenar" '+on+'>'+esc(label)+fl(k)+'</th>';
+    return xlfTh('opan',label,col).replace('<th style="white-space:nowrap">'+esc(label), '<th style="white-space:nowrap;cursor:pointer" title="Ordenar" '+on+'>'+esc(label)+fl(k)); };
+  const tr=filas.map(a=>{ const m=_opanMontos(a);
+    return '<tr style="color:var(--muted)"><td><strong style="text-decoration:line-through">OP '+esc(a.op_numero||'—')+'</strong> <span class="badge b-rojo">Anulada</span></td>'
+      +'<td>OG '+esc(a.og_numero||'—')+'</td><td style="font-size:11px">'+esc(prov(a))+'</td><td>'+fmtDate(a.fecha_pago)+'</td>'
+      +'<td style="text-align:right;text-decoration:line-through">'+(m.usd!=null?'US$ '+f2(m.usd):'—')+'</td><td style="text-align:right;text-decoration:line-through">'+(m.ars!=null?'$ '+f2(m.ars):'—')+'</td>'
+      +'<td>'+(a.asiento_num?'<strong style="color:#b3261e">N° '+esc(a.asiento_num)+'</strong>':'—')+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+_spCuando({fecha:a.anulado_en, autor:a.anulado_por})+'</td>'
+      +'<td style="font-size:11.5px;color:var(--ink)">'+esc(a.motivo||'')+'</td></tr>'; }).join('')
+    || '<tr><td colspan="9" style="color:var(--muted);padding:14px">Ninguna OP anulada coincide con los filtros.</td></tr>';
+  return '<div class="card" style="margin-top:14px">'+head
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px">'+xlfClearAllBtn('opan')
+    +'<button class="btn ghost sm" style="'+(xlfHasAny('opan')?'':'margin-left:auto')+'" onclick="tblAutofit(\'#opanTabla\')">Auto-ajustar columnas</button></div>'
+    +'<table class="grid" id="opanTabla" style="font-size:12.5px"><thead><tr>'+th('OP N°','op','op')+th('OG','og','og')+th('Prov.','prov','prov')+th('Fecha de pago',null,'fp')
+    +th('Monto USD',null,'usd')+th('Monto ARS',null,'ars')+th('Asiento que tenía','asi','asi')+th('Anulada (quién · cuándo)','__fecha__','en')+th('Motivo',null,'mot')+'</tr></thead><tbody>'+tr+'</tbody></table></div>';
 }
 
 let COLA_ROWS=[];   // última lista renderizada en "Pagos pendientes" (og + montos ya calculados), para el total marcado y el export por proveedor
@@ -6828,7 +6885,9 @@ function askDelPago(id){
   if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
   const p=(mem.pagos||[]).find(x=>String(x.id)===String(id));
   const ref=p?[(p.op_numero!=null&&p.op_numero!=='')?'OP '+p.op_numero:'', p.numero?'OG '+p.numero:''].filter(Boolean).join(' · '):'';
-  const base='<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago'+(ref?' ('+esc(ref)+')':'')+'? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo. Se elimina para todos.</p>';
+  const base='<p style="margin:0;font-size:14px;color:#5f5c52;line-height:1.5">¿Eliminar este pago'+(ref?' ('+esc(ref)+')':'')+'? La OG vuelve a quedar pendiente de pago y sus certificados podrán editarse de nuevo. Se elimina para todos.</p>'
+    +'<p style="margin:8px 0 0;font-size:12.5px;color:var(--muted);line-height:1.5">Queda registrada en <strong>OP anuladas</strong> (qué era, quién, cuándo y por qué). No cuenta como erogación ni para la caja ni para los asientos.</p>'
+    +'<div class="field" style="margin-top:12px"><label>Motivo de la anulación *</label><textarea id="delPagoMotivo" rows="2" placeholder="Ej: se cargó dos veces, pago no realizado, error de importe…"></textarea></div>';
   // Con N° de asiento de Tango cargado: aviso destacado con el N° y una confirmación extra (tilde) antes de habilitar Eliminar.
   if(p && p.asiento_num){
     const n=esc(p.asiento_num);
@@ -6844,17 +6903,25 @@ function askDelPago(id){
 }
 async function confirmDelPago(id){
   if(!canEliminarPago()){ toast('No tenés permiso para eliminar pagos.'); return; }
-  const asiNum=(((mem.pagos||[]).find(x=>String(x.id)===String(id))||{}).asiento_num)||'';
-  if(DEMO_MODE){ mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id)); }
-  else {
-    // return=representation: si la base no deja borrar (RLS), no da error sino 0 filas — hay que chequearlo.
-    let borradas;
-    try{ borradas=await sbFetch('/compras_pagos?id=eq.'+id,{method:'DELETE',prefer:'return=representation'}); }
+  const motivo=((document.getElementById('delPagoMotivo')||{}).value||'').trim();
+  if(!motivo){ toast('Escribí el motivo de la anulación.'); const el=document.getElementById('delPagoMotivo'); if(el) el.focus(); return; }
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(id));
+  const asiNum=(p&&p.asiento_num)||'';
+  let anulado;
+  if(DEMO_MODE){
+    if(!p) return;
+    anulado={ id:Date.now(), pago_id:p.id, op_numero:p.op_numero, og_id:p.og_id, og_numero:p.numero, fecha_pago:p.fecha, moneda_pago:p.moneda_pago, importe_pago:p.importe_pago,
+      asiento_num:asiNum||null, datos:Object.assign({},p), motivo, anulado_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', anulado_en:new Date().toISOString() };
+  } else {
+    // Copia el pago a compras_pagos_anulados y lo borra de compras_pagos en una sola operación (ver sql/2026-10_pagos_anulados.sql).
+    try{ anulado=await sbFetch('/rpc/compras_anular_pago',{method:'POST',body:JSON.stringify({p_id:+id, p_motivo:motivo})}); }
     catch(e){ toast('No se pudo eliminar: '+(e&&e.message?e.message:e)); return; }
-    if(!Array.isArray(borradas)||!borradas.length){ closeModal(); toast('No se eliminó: la base no te deja borrar este pago (falta el permiso puede_eliminar_pagos).'); return; }
-    mem.pagos=(mem.pagos||[]).filter(p=>String(p.id)!==String(id));
+    if(Array.isArray(anulado)) anulado=anulado[0];
+    if(!anulado){ toast('No se pudo confirmar la anulación: recargá la página y fijate si la OP sigue en la lista.'); return; }
   }
-  closeModal(); toast(asiNum?'Pago eliminado. Acordate de corregir en Tango el asiento N° '+asiNum+'.':'Pago eliminado'); renderTesoreria();
+  mem.pagos=(mem.pagos||[]).filter(x=>String(x.id)!==String(id));
+  mem.pagos_anulados=[anulado].concat(mem.pagos_anulados||[]);
+  closeModal(); toast(asiNum?'Pago eliminado (queda en OP anuladas). Acordate de corregir en Tango el asiento N° '+asiNum+'.':'Pago eliminado (queda en OP anuladas).'); renderTesoreria();
 }
 window.askDelPago=askDelPago; window.confirmDelPago=confirmDelPago;
 
@@ -11734,17 +11801,19 @@ async function reloadDB(opts){
   if(DEMO_MODE) return;
   opts=opts||{};
   try{
-    const [ogs, certificados, pagos, ingresos, cajas] = await Promise.all([
+    const [ogs, certificados, pagos, ingresos, cajas, pagosAnulados] = await Promise.all([
       sbFetch('/compras_ogs?select=*&order=id.desc'),
       sbFetch('/compras_og_certificados?select=*&order=id.asc'),
       sbFetch('/compras_pagos?select=*&order=id.asc'),
       sbFetch('/compras_caja_ingresos?select=*&order=id.asc').catch(()=>[]),
       sbFetch('/compras_caja?select=*'),
+      sbFetch('/compras_pagos_anulados?select=*&order=anulado_en.desc').catch(()=>[]),   // solo registro: no cuenta para caja/erogación/asientos
     ]);
     mem.ogs = ogs || [];
     mem.ogs.forEach(ogNormalizeCondicion);
     mem.certificados = certificados || [];
     mem.pagos = pagos || [];
+    mem.pagos_anulados = pagosAnulados || [];
     mem.ingresos = ingresos || [];
     mem.caja = mem.caja || {};
     (cajas||[]).forEach(c=>{ if(c.moneda==='ARS') mem.caja.ARS_ini=+c.saldo_inicial||0; if(c.moneda==='USD') mem.caja.USD_ini=+c.saldo_inicial||0; });
