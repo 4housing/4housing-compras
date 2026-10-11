@@ -5025,7 +5025,7 @@ function exportAsientoSelTango(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
   const sel=_selPagosToOgs(); if(!sel){ toast('Tildá al menos una OP.'); return; }
   if(!sel.ogs.length){ toast('No se encontró la OG de las OP tildadas.'); return; }
-  const s=asientoTangoSheets(sel.ogs, sel.opByOg); const wb=XLSX.utils.book_new();
+  const s=asientoTangoSheets(sel.ogs, sel.opByOg); if(_asientoBloqueaSinCuenta(s)) return; const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.cab),'Asientos contables');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.ren),'Renglones');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.cot),'Cotizaciones');
@@ -6418,12 +6418,22 @@ function _xlsFecha(iso){
   const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); if(!m) return iso||'';
   return { t:'n', v:(Date.UTC(+m[1],+m[2]-1,+m[3])-Date.UTC(1899,11,30))/86400000, z:'dd/mm/yyyy' };
 }
+// Si algún renglón quedó sin cuenta, no se exporta: muestra qué OG/OP/ítem hay que clasificar. Devuelve true si bloquea.
+function _asientoBloqueaSinCuenta(s){
+  if(!s||!s.faltan||!s.faltan.length) return false;
+  const filas=s.faltan.map(f=>'<tr><td>OG '+esc(f.og)+'</td><td>'+(f.op!==''?'OP '+esc(f.op):'—')+'</td><td>'+esc(f.nro)+'</td><td>'+esc(f.item)+'</td><td>'+esc(f.clasif||'—')+'</td><td style="text-align:right">'+fmtNum(f.imp,2)+'</td></tr>').join('');
+  openModal('No se puede exportar: hay renglones sin cuenta',
+    '<p style="margin:0 0 10px;font-size:13.5px;line-height:1.5">Estos renglones no tienen cuenta contable (ni por la clasificación ni por el artículo). Corregí el artículo o la clasificación del renglón en la OG y volvé a exportar.</p>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>OP</th><th>Renglón</th><th>Ítem</th><th>Clasificación</th><th>Importe</th></tr></thead><tbody>'+filas+'</tbody></table>',
+    '<button class="btn" onclick="closeModal()">Entendido</button>', 'wide');
+  return true;
+}
 function asientoTangoSheets(ogs, opByOg){
   const cabH=['Identificador','Fecha de asiento','Clase de asiento','Código de tipo de asiento','Estado','Código de moneda','Concepto','Observaciones','SOLP','OG','BONOS','Eliminar','ROW_VERSION'];
   const renH=['Identificador','Nro.','Código de cuenta','Debe','Haber','Fecha de origen','Leyenda','Importe de la unidad adicional','Cantidad','Eliminar','ROW_VERSION'];
   const cotH=['Identificador','Código de moneda','Código de tipo de cotización','Cotización','Eliminar','ROW_VERSION'];
   const auxH=['Identificador','Nro. renglón','Código tipo auxiliar','Tipo auxiliar','Código auxiliar','Descripción auxiliar','Porcentaje','Importe','Leyenda'];
-  const cab=[cabH], ren=[renH], cot=[cotH], aux=[auxH];
+  const cab=[cabH], ren=[renH], cot=[cotH], aux=[auxH], faltan=[];   // faltan: renglones sin cuenta (no se puede exportar así)
   ogs.forEach(o=>{
     const pagosOG=(opByOg&&opByOg[o.id])||[null];               // [null] = sin pago puntual, se toma el 100% de la OG (preview desde "Ver imputación")
     const multi=pagosOG.length>1;                                 // 2+ pagos de la MISMA OG seleccionados juntos: hay que separarlos en asientos distintos
@@ -6453,6 +6463,7 @@ function asientoTangoSheets(ogs, opByOg){
         const im=imputacion(it); const imp=aMonPago(itemTotal(it)*pctGasto/100);
         nro++;
         const leyenda=_leyRenglon(o,it,opByOgLey);
+        if(!String(im.cuenta_cod||'').trim()) faltan.push({og:o.numero||o.id, op:(pago&&pago.op_numero!=null)?pago.op_numero:'', nro, item:(it.descripcion||it.articulo||it.cod_art||'(sin descripción)'), clasif:it.centro_costos||'', imp});
         ren.push([id, nro, im.cuenta_cod||'', imp, '', fecha, leyenda, '', '', 'No', '']);
         // auxiliares de ese renglón
         if(im.eerr){ const c=EERR_COD[im.eerr]||''; aux.push([id,nro,'02','EERR',c,im.eerr,100,imp,leyenda]); }               // Aux 02 EERR (obligatorio)
@@ -6469,8 +6480,10 @@ function asientoTangoSheets(ogs, opByOg){
       if(ajuste){
         nro++;
         const leyendaAjuste=_leyRenglon(o, null, opByOgLey);
-        ren.push([id, nro, CUENTA_SMALL_BALANCE.cod, ajuste, '', fecha, leyendaAjuste, '', '', 'No', '']);
-        const c=EERR_COD['K) ESTRUCTURA']||''; aux.push([id,nro,'02','EERR',c,'K) ESTRUCTURA',100,ajuste,leyendaAjuste]);
+        // Pagó de más → DEBE; pagó de menos → HABER con importe positivo (Tango no acepta Debe negativo).
+        if(ajuste>0) ren.push([id, nro, CUENTA_SMALL_BALANCE.cod, ajuste, '', fecha, leyendaAjuste, '', '', 'No', '']);
+        else ren.push([id, nro, CUENTA_SMALL_BALANCE.cod, '', -ajuste, fecha, leyendaAjuste, '', '', 'No', '']);
+        const c=EERR_COD['K) ESTRUCTURA']||''; aux.push([id,nro,'02','EERR',c,'K) ESTRUCTURA',100,Math.abs(ajuste),leyendaAjuste]);
       }
       // contrapartida de caja (según lo efectivamente pagado en esta OP, no el total de la OG) → al HABER
       const tot=aMonPago(ogTotal(o)*pct/100);
@@ -6481,13 +6494,14 @@ function asientoTangoSheets(ogs, opByOg){
       if(monCode==='DOL' && tcUsado){ cot.push([id,'DOL','COTIZACIÓN',tcUsado,'No','']); }
     });
   });
-  return {cab,ren,cot,aux};
+  return {cab,ren,cot,aux,faltan};
 }
 function exportAsientoTango(ogId){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
   const ogs = ogId!=null ? [ogById(ogId)] : (mem.ogs||[]).filter(o=>!o.anulada).filter(ogxPass);
   if(!ogs.length){ toast('No hay OG para exportar.'); return; }
   const s=asientoTangoSheets(ogs);
+  if(_asientoBloqueaSinCuenta(s)) return;
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.cab), 'Asientos contables');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.ren), 'Renglones');
