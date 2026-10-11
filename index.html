@@ -6411,6 +6411,13 @@ function auxDescLookup(tipoCod, cod){
     const f=CONTA_DB.auxopc[tipoCod].find(x=>x.cod===cod); if(f) return f.desc; } }catch(e){}
   return '';
 }
+// Fecha para los Excel de asientos (Tango): se escribe como N° de serie de Excel exacto + formato dd/mm/yyyy.
+// Con un Date de JS, SheetJS 0.18.5 en hora de Argentina la guardaba como el día ANTERIOR 23:59:12
+// (20/07 → 19/07) y Tango tomaba el día anterior.
+function _xlsFecha(iso){
+  const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); if(!m) return iso||'';
+  return { t:'n', v:(Date.UTC(+m[1],+m[2]-1,+m[3])-Date.UTC(1899,11,30))/86400000, z:'dd/mm/yyyy' };
+}
 function asientoTangoSheets(ogs, opByOg){
   const cabH=['Identificador','Fecha de asiento','Clase de asiento','Código de tipo de asiento','Estado','Código de moneda','Concepto','Observaciones','SOLP','OG','BONOS','Eliminar','ROW_VERSION'];
   const renH=['Identificador','Nro.','Código de cuenta','Debe','Haber','Fecha de origen','Leyenda','Importe de la unidad adicional','Cantidad','Eliminar','ROW_VERSION'];
@@ -6436,7 +6443,8 @@ function asientoTangoSheets(ogs, opByOg){
       // Convierte un monto expresado en monAgree a la moneda real del asiento (monPago). Sin TC: mejor esfuerzo, no convierte.
       const aMonPago=m=>{ if(monAgree===monPago||!tcUsado) return m; return monAgree==='USD'? m*tcUsado : m/tcUsado; };
       const ajuste=aMonPago(ajusteAgree);
-      let fecha=o.fecha||''; try{ if(/^\d{4}-\d{2}-\d{2}/.test(o.fecha)) fecha=new Date(o.fecha+'T00:00:00'); }catch(e){}
+      // Fecha del asiento = fecha del PAGO de esta OP (no la de la OG). Sin pago puntual (preview desde "Ver imputación"), la de la OG.
+      const fecha=_xlsFecha((pago&&pago.fecha)||o.fecha);
       const concepto=_leyCaja(o,opByOgLey);   // Concepto cabecera: OP - COD PROV - OG (mismo estilo que la leyenda)
       cab.push([id, fecha, ASIENTO_CLASE, ASIENTO_TIPO_CN, ASIENTO_ESTADO_DEF, monCode, concepto, '', (o.solp!=null?o.solp:''), (o.numero||''), '', 'No', '']);
       // renglones de gasto (uno por renglón de la OG, prorrateado por el % efectivamente pagado en esta OP, sin contar el redondeo) → al DEBE
@@ -7030,7 +7038,7 @@ function asientoReposicionSheets(ing){
   const auxH=['Identificador','Nro. renglón','Código tipo auxiliar','Tipo auxiliar','Código auxiliar','Descripción auxiliar','Porcentaje','Importe','Leyenda'];
   const id='REP-'+(ing.id||'');
   const mon=ing.moneda==='USD'?'USD':'ARS'; const monCode=mon==='USD'?'DOL':'PES';
-  let fecha=ing.fecha||''; try{ if(/^\d{4}-\d{2}-\d{2}/.test(ing.fecha)) fecha=new Date(ing.fecha+'T00:00:00'); }catch(e){}
+  const fecha=_xlsFecha(ing.fecha);
   const dest=CAJAS[mon], orig=CAJAS_CONF[mon]; const imp=+ing.importe||0;
   const ley=('Reposición '+dest.nombre+' desde '+orig.nombre+(ing.observaciones?(' - '+ing.observaciones):'')).slice(0,60);
   const cab=[cabH,[id,fecha,ASIENTO_CLASE,ASIENTO_TIPO_CN,ASIENTO_ESTADO_DEF,monCode,'Reposición de fondos a caja PROY','','','','','No','']];
