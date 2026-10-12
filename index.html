@@ -4348,6 +4348,9 @@ function _auxDeRegla(cod, idx){
   const rl=clasifRule(cod)||{}; const a=rl.aux||'none';
   const map={proyecto:'03', modulo:'04', bsuso:'05', mueble:'06', herram:'07', rodado:'08'};
   const g=map[a]; if(!g) return 'Sin auxiliar';
+  if(rl.aux_cod){ const AC=String(rl.aux_cod).toUpperCase().trim(), AS=AC.replace(/^\d+\)\s*/,'');
+    const ok=((idx&&idx[AC])||[]).includes(g) || ((idx&&idx[AS])||[]).includes(g);
+    return g+' · '+rl.aux_cod+(ok?'':' ⚠ falta alta'); }
   if(a==='modulo') return '04 · según serie del módulo';
   const K=String(cod||'').toUpperCase().trim();
   const existe=((idx&&idx[K])||[]).includes(g);
@@ -4389,7 +4392,8 @@ function impCalc(it){
     aux03:'', aux04:'', aux05:'', aux06:'', aux07:'', aux08:''
   };
   const slot=AUX_SLOT[rule.aux];
-  if(slot==='aux04') out.aux04=(it.modulos||[]).join(' | ');
+  if(slot && rule.aux_cod) out[slot]=rule.aux_cod;   // código de auxiliar fijo de la clasificación (ej. IF4430 → 04 A00008)
+  else if(slot==='aux04') out.aux04=(it.modulos||[]).join(' | ');
   else if(slot) out[slot]=cod;   // proyecto / rodado / herram / mueble / bs de uso = el código de clasificación del renglón
   return out;
 }
@@ -9522,11 +9526,13 @@ function paintDic(){
       +rows.map(r=>{ const si=String(r.habil_comp||'').toLowerCase()==='si';
         const gs=idxAuxCod[String(r.cod||'').trim().toUpperCase()]||[];
         const auxTxt=_auxDeRegla(r.cod, idxAuxCod);
-        const auxVal=(clasifRule(r.cod)||{}).aux||'none';
+        const auxVal=(clasifRule(r.cod)||{}).aux||'none', auxCodVal=(clasifRule(r.cod)||{}).aux_cod||'';
         const auxCell=ROLE.admin
           ? '<td><select style="font-size:11px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;max-width:210px" onchange="setClasifAux(\''+esc(r.cod)+'\',this.value)">'
               +CLASIF_AUX_OPCIONES.map(o=>'<option value="'+o[0]+'"'+(o[0]===auxVal?' selected':'')+'>'+esc(o[1])+'</option>').join('')
-              +'</select>'+(auxTxt.includes('falta alta')?'<div style="font-size:10px;color:#b3261e;margin-top:2px">⚠ '+esc(auxTxt)+'</div>':'')+'</td>'
+              +'</select>'
+              +(auxVal!=='none'?'<input data-cod="'+esc(r.cod)+'" value="'+esc(auxCodVal?auxCodVal+(auxDescLookup(AUX_TIPO_NUM[auxVal],auxCodVal)?' — '+auxDescLookup(AUX_TIPO_NUM[auxVal],auxCodVal):''):'')+'" placeholder="'+(auxVal==='modulo'?'código fijo (vacío = serie del módulo)':'código fijo (vacío = el de la clasificación)')+'" autocomplete="off" onfocus="comboClasifAuxCod(this)" oninput="comboClasifAuxCod(this)" onblur="clasifAuxCodBlur(this)" title="Código del auxiliar en Tango, si no es igual al de la clasificación (ej. IF4430 → A00008)" style="display:block;margin-top:4px;width:100%;max-width:210px;font-size:11px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px">':'')
+              +(auxTxt.includes('falta alta')?'<div style="font-size:10px;color:#b3261e;margin-top:2px">⚠ '+esc(auxTxt)+'</div>':'')+'</td>'
           : '<td style="font-size:11.5px;color:var(--muted)">'+esc(auxTxt)+'</td>';
         const catVal=r.categoria||'';
         const catCell=ROLE.admin
@@ -9547,9 +9553,7 @@ function paintDic(){
         const cfVal=r.cuenta_forzada||'';
         const cfCurLabel=cfVal?esc(cfVal+' - '+(( (CONTA_DB.cuentas||[]).find(c=>String(c.cod)===String(cfVal))||{}).desc||'')):'— según artículo —';
         const cfCell=ROLE.admin
-          ? '<td><select style="font-size:11px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;max-width:210px" data-cod="'+esc(r.cod)+'" data-cur="'+esc(cfVal)+'" onfocus="_lazyFillCtaSelect(this)" onchange="setClasifCtaForz(\''+esc(r.cod)+'\',this.value)">'
-              +'<option value="'+esc(cfVal)+'" selected>'+cfCurLabel+'</option>'
-              +'</select></td>'
+          ? '<td><input data-cod="'+esc(r.cod)+'" value="'+(cfVal?cfCurLabel:'')+'" placeholder="— según artículo — (escribí código o nombre)" autocomplete="off" onfocus="comboClasifCta(this)" oninput="comboClasifCta(this)" onblur="clasifCtaBlur(this)" style="width:100%;max-width:230px;font-size:11px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px"></td>'
           : '<td style="font-size:11px;color:var(--muted)">'+esc(_ctaLabel(cfVal)||'—')+'</td>';
         const cell=ROLE.admin?'<td style="text-align:center"><input type="checkbox" '+(si?'checked':'')+' onclick="toggleHabilClasif(\''+esc(r.cod)+'\')"></td>'
                               :'<td style="font-size:11.5px;color:'+(si?'inherit':'var(--muted)')+'">'+(si?'Sí':'No')+'</td>';
@@ -9662,7 +9666,8 @@ function _clasifFaltaAlta(){
   const base=(DIC_CLASIF_TODOS?CLASIF_ALL:CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si'));
   return base.filter(r=>_auxDeRegla(r.cod, idx).includes('falta alta')).map(r=>{
     const g=_auxDeRegla(r.cod, idx).slice(0,2);
-    return {tipo:g, tipoNom:NOM[g]||'', cod:r.cod, desc:r.desc||'', categoria:r.categoria||'', habil:r.habil_comp||''};
+    const ac=(clasifRule(r.cod)||{}).aux_cod||'';
+    return {tipo:g, tipoNom:NOM[g]||'', cod:ac||r.cod, desc:(ac?r.cod+' — ':'')+(r.desc||''), categoria:r.categoria||'', habil:r.habil_comp||''};
   }).sort((a,b)=>(a.tipo+a.cod).localeCompare(b.tipo+b.cod,'es',{numeric:true}));
 }
 function exportClasifFaltaAlta(){
@@ -9739,6 +9744,7 @@ window.setClasifCategoria=setClasifCategoria;
 async function _upsertClasifRule(K){
   const rl=CLASIF_RULES[K]||{};
   const body={codigo:K, eerr:rl.eerr||null, cuenta_cod:rl.cuenta||null, aux:rl.aux||'none', nqnable:!!rl.nqnable, migrado:!!rl.migrado};
+  if(rl.aux_cod!==undefined) body.aux_cod=rl.aux_cod||null;   // solo si se tocó: así no falla si la columna todavía no existe
   await sbFetch('/compras_clasif_renglon',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(body)});
 }
 async function setClasifEERR(cod, val){
@@ -9763,11 +9769,54 @@ async function setClasifAux(cod, val){
   if(!ROLE.admin){ toast('Solo un administrador puede cambiar el auxiliar.'); return; }
   const K=String(cod||'').toUpperCase().trim();
   const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
-  CLASIF_RULES[K]={...prev, aux:val||'none'};
+  CLASIF_RULES[K]={...prev, aux:val||'none', aux_cod:(prev.aux===(val||'none')?(prev.aux_cod||''):'')};   // otro tipo de auxiliar: el código fijo deja de valer
   if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/clasif_renglon/i.test(String(e.message||e))?'Falta crear la tabla clasif_renglon en Supabase (te paso el SQL).':'No se pudo guardar el auxiliar: '+(e.message||e)); paintDic(); return; } }
   paintDic();
 }
 window.setClasifAux=setClasifAux;
+// Buscadores de Clasificación de renglón (mismo combobox que la OG)
+const AUX_TIPO_NUM={proyecto:'3', modulo:'4', bsuso:'5', mueble:'6', herram:'7', rodado:'8'};
+function comboClasifCta(inp){
+  const q=_syncFold(inp.value);
+  const src=(CONTA_DB.cuentas||[]).filter(c=>String(c.habil||'').toLowerCase()!=='no');
+  const items=[{code:'',name:'según artículo (sin cuenta forzada)'}].concat(
+    (q?src.filter(c=>_syncFold(c.cod+' '+(c.desc||'')).includes(q)):src).slice(0,80).map(c=>({code:String(c.cod), name:c.desc||''})));
+  comboShow(inp, items, it=>{ inp.dataset.picked='1'; inp.value=it.code?it.code+' - '+it.name:''; setClasifCtaForz(inp.dataset.cod, it.code); });
+}
+window.comboClasifCta=comboClasifCta;
+// Si se borró el texto a mano, vuelve a "según artículo"; si quedó escrito algo sin elegir de la lista, se descarta.
+function clasifCtaBlur(inp){
+  comboHideDelayed();
+  setTimeout(()=>{ if(inp.dataset.picked==='1'){ inp.dataset.picked=''; return; }
+    const cur=(clasifRule(inp.dataset.cod)||{}).cuenta||'';
+    if(!inp.value.trim() && cur) setClasifCtaForz(inp.dataset.cod, ''); else paintDic(); },180);
+}
+window.clasifCtaBlur=clasifCtaBlur;
+function comboClasifAuxCod(inp){
+  const rl=clasifRule(inp.dataset.cod)||{}; const tipo=AUX_TIPO_NUM[rl.aux]; if(!tipo) return;
+  const q=_syncFold(inp.value);
+  const src=(CONTA_DB.auxopc&&CONTA_DB.auxopc[tipo])||[];
+  const items=[{code:'',name:rl.aux==='modulo'?'sin código fijo (usa la serie del módulo)':'sin código fijo (usa el de la clasificación)'}].concat(
+    (q?src.filter(o=>_syncFold(o.cod+' '+(o.desc||'')).includes(q)):src).slice(0,80).map(o=>({code:String(o.cod), name:o.desc||''})));
+  comboShow(inp, items, it=>{ inp.dataset.picked='1'; setClasifAuxCod(inp.dataset.cod, it.code); });
+}
+window.comboClasifAuxCod=comboClasifAuxCod;
+function clasifAuxCodBlur(inp){
+  comboHideDelayed();
+  setTimeout(()=>{ if(inp.dataset.picked==='1'){ inp.dataset.picked=''; return; }
+    const cur=(clasifRule(inp.dataset.cod)||{}).aux_cod||'';
+    if(!inp.value.trim() && cur) setClasifAuxCod(inp.dataset.cod, ''); else paintDic(); },180);
+}
+window.clasifAuxCodBlur=clasifAuxCodBlur;
+async function setClasifAuxCod(cod, val){
+  if(!ROLE.admin){ toast('Solo un administrador puede cambiar el auxiliar.'); return; }
+  const K=String(cod||'').toUpperCase().trim();
+  const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
+  CLASIF_RULES[K]={...prev, aux_cod:val||''};
+  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/aux_cod/i.test(String(e.message||e))?'Falta la columna aux_cod en Supabase: corré sql/2026-10_clasif_aux_cod.sql.':'No se pudo guardar el código de auxiliar: '+(e.message||e)); paintDic(); return; } }
+  toast(val?('Auxiliar fijo: '+val):'Sin código fijo de auxiliar'); paintDic();
+}
+window.setClasifAuxCod=setClasifAuxCod;
 function clasifLimpiarTodo(){ DIC_COL_FILTRO.clasif={}; DIC_SORT.clasif=null; DIC_CLASIF_AUXGRUPO='Todos'; DIC_SEARCH=''; renderDic(); }
 window.clasifLimpiarTodo=clasifLimpiarTodo;
 
@@ -11973,9 +12022,9 @@ async function reloadDicts(background){
       }catch(e){} })(),
       // Reglas del motor de asiento por clasificación (Supabase pisa la semilla embebida; un vacío no pisa)
       (async()=>{ try{
-        const cr=await sbFetch('/compras_clasif_renglon?select=codigo,eerr,cuenta_cod,aux,nqnable,migrado');
+        const cr=await sbFetch('/compras_clasif_renglon?select=*');   // select=* : aux_cod es opcional (sql/2026-10_clasif_aux_cod.sql)
         if(cr&&cr.length){ let n=0; cr.forEach(r=>{ const cod=String(r.codigo||'').toUpperCase().trim();
-          if(cod && r.eerr){ CLASIF_RULES[cod]={eerr:r.eerr, cuenta:r.cuenta_cod||null, aux:r.aux||'none', nqnable:!!r.nqnable, migrado:!!r.migrado}; n++; } });
+          if(cod && r.eerr){ CLASIF_RULES[cod]={eerr:r.eerr, cuenta:r.cuenta_cod||null, aux:r.aux||'none', nqnable:!!r.nqnable, migrado:!!r.migrado, aux_cod:r.aux_cod||''}; n++; } });
           window.__clasifRulesN=n; }
       }catch(e){ /* si la tabla no tiene las columnas del motor, queda la semilla embebida */ } })(),
       // Combo de clasificación de renglón (lista seleccionable con "habilitado para compras") — Supabase pisa la semilla embebida
