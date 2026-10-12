@@ -9741,6 +9741,15 @@ async function setClasifCategoria(cod, val){
   paintDic();
 }
 window.setClasifCategoria=setClasifCategoria;
+// Mensaje de error al guardar una regla de clasificación: muestra el error real (antes cualquier error que
+// mencionara la tabla se mostraba como "Falta crear la tabla", y confundía).
+function _clasifErrMsg(e, que){
+  const m=String((e&&e.message)||e||'');
+  if(/schema cache/i.test(m) && /aux_cod/i.test(m)) return 'Supabase todavía no reconoce la columna aux_cod. En el SQL Editor corré:  notify pgrst, \'reload schema\';  y volvé a intentar.';
+  if(/42P01|relation .* does not exist/i.test(m)) return 'Falta crear la tabla compras_clasif_renglon en Supabase.';
+  if(/42501|row-level security|permission denied/i.test(m)) return 'Sin permiso para guardar reglas de clasificación (RLS de compras_clasif_renglon): '+m;
+  return 'No se pudo guardar '+que+': '+m;
+}
 async function _upsertClasifRule(K){
   const rl=CLASIF_RULES[K]||{};
   const body={codigo:K, eerr:rl.eerr||null, cuenta_cod:rl.cuenta||null, aux:rl.aux||'none', nqnable:!!rl.nqnable, migrado:!!rl.migrado};
@@ -9752,7 +9761,7 @@ async function setClasifEERR(cod, val){
   const K=String(cod||'').toUpperCase().trim();
   const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
   CLASIF_RULES[K]={...prev, eerr:val||''};
-  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/clasif_renglon/i.test(String(e.message||e))?'Falta crear la tabla clasif_renglon en Supabase (te paso el SQL).':'No se pudo guardar el EERR: '+(e.message||e)); paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(_clasifErrMsg(e,'el EERR')); paintDic(); return; } }
   paintDic();
 }
 window.setClasifEERR=setClasifEERR;
@@ -9761,7 +9770,7 @@ async function setClasifCtaForz(cod, val){
   const K=String(cod||'').toUpperCase().trim();
   const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
   CLASIF_RULES[K]={...prev, cuenta:val||null};
-  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/clasif_renglon/i.test(String(e.message||e))?'Falta crear la tabla clasif_renglon en Supabase (te paso el SQL).':'No se pudo guardar la cuenta: '+(e.message||e)); paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(_clasifErrMsg(e,'la cuenta')); paintDic(); return; } }
   paintDic();
 }
 window.setClasifCtaForz=setClasifCtaForz;
@@ -9770,7 +9779,7 @@ async function setClasifAux(cod, val){
   const K=String(cod||'').toUpperCase().trim();
   const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
   CLASIF_RULES[K]={...prev, aux:val||'none', aux_cod:(prev.aux===(val||'none')?(prev.aux_cod||''):'')};   // otro tipo de auxiliar: el código fijo deja de valer
-  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/clasif_renglon/i.test(String(e.message||e))?'Falta crear la tabla clasif_renglon en Supabase (te paso el SQL).':'No se pudo guardar el auxiliar: '+(e.message||e)); paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(_clasifErrMsg(e,'el auxiliar')); paintDic(); return; } }
   paintDic();
 }
 window.setClasifAux=setClasifAux;
@@ -9813,7 +9822,7 @@ async function setClasifAuxCod(cod, val){
   const K=String(cod||'').toUpperCase().trim();
   const prev=CLASIF_RULES[K]?{...CLASIF_RULES[K]}:{...clasifRule(cod)};
   CLASIF_RULES[K]={...prev, aux_cod:val||''};
-  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(/aux_cod/i.test(String(e.message||e))?'Falta la columna aux_cod en Supabase: corré sql/2026-10_clasif_aux_cod.sql.':'No se pudo guardar el código de auxiliar: '+(e.message||e)); paintDic(); return; } }
+  if(!DEMO_MODE){ try{ await _upsertClasifRule(K); }catch(e){ CLASIF_RULES[K]=prev; toast(_clasifErrMsg(e,'el código de auxiliar')); paintDic(); return; } }
   toast(val?('Auxiliar fijo: '+val):'Sin código fijo de auxiliar'); paintDic();
 }
 window.setClasifAuxCod=setClasifAuxCod;
