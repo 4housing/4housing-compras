@@ -9754,7 +9754,9 @@ async function _upsertClasifRule(K){
   const rl=CLASIF_RULES[K]||{};
   const body={codigo:K, eerr:rl.eerr||null, cuenta_cod:rl.cuenta||null, aux:rl.aux||'none', nqnable:!!rl.nqnable, migrado:!!rl.migrado};
   if(rl.aux_cod!==undefined) body.aux_cod=rl.aux_cod||null;   // solo si se tocó: así no falla si la columna todavía no existe
-  await sbFetch('/compras_clasif_renglon',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(body)});
+  // on_conflict=codigo: la tabla tiene un id propio y "codigo" único; sin esto el upsert intentaba INSERTAR
+  // otra fila con el mismo código y fallaba (23505) al editar una regla ya guardada.
+  await sbFetch('/compras_clasif_renglon?on_conflict=codigo',{method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(body)});
 }
 async function setClasifEERR(cod, val){
   if(!ROLE.admin){ toast('Solo un administrador puede cambiar el EERR.'); return; }
