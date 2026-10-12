@@ -7413,7 +7413,7 @@ function comboClasRen(i){
   const src=CLASIF_RENGLON;
   const items=(q?src.filter(c=>((c.codigo||'')+' '+(c.desc||'')).toLowerCase().includes(q)):src).slice(0,80)
     .map(c=>({code:c.codigo, name:c.desc||''}));
-  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; OG_ITEMS[i].centro_costos=it.code; });
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; OG_ITEMS[i].centro_costos=it.code; _ogEstrucModuloToast(i); });
 }
 window.comboClasRen=comboClasRen;
 function comboDeposito(i){
@@ -7469,6 +7469,18 @@ function ogFechaChanged(){
 window.ogFechaChanged=ogFechaChanged;
 function ogUsarTcSugerido(v){ const el=document.getElementById('og_tc'); if(el) el.value=v; }
 window.ogUsarTcSugerido=ogUsarTcSugerido;
+// Aviso: renglón clasificado como Estructura (ESTRUC / ESTNQN) con un artículo que imputa a una cuenta "Módulo…" (124xxxxx).
+// Casi siempre es un error: un gasto de estructura no va a la cuenta de un módulo (si es mantenimiento, va MANBSU/MANMOD/etc.).
+function _ogEstrucModulo(it){
+  const cc=String((it&&it.centro_costos)||'').toUpperCase().trim();
+  if(!(clasifFamilia(cc)==='ESTRUC' || cc==='ESTNQN')) return false;
+  return /^124/.test(String(imputacion(it).cuenta_cod||''));
+}
+function _ogEstrucModuloToast(i){
+  const it=OG_ITEMS[i]; if(!it || !_ogEstrucModulo(it)) return;
+  const im=imputacion(it);
+  toast('⚠ Renglón '+(i+1)+': clasificado '+it.centro_costos+' (Estructura) pero el artículo imputa a '+im.cuenta_cod+' '+(im.cuenta||'')+' (cuenta de módulo). Si es mantenimiento, usá la clasificación de mantenimiento que corresponda.');
+}
 function ogSetCodDirect(i, code){
   OG_ITEMS[i].cod_art=code;
   const a=(typeof DIC!=='undefined'?DIC.articulos:[]).find(x=>x.codigo===code);
@@ -7476,6 +7488,7 @@ function ogSetCodDirect(i, code){
   const inp=document.getElementById('ogart_'+i); if(inp) inp.value=code;
   const box=document.getElementById('ogItemsBox'); const tr=box&&box.querySelectorAll('tbody tr')[i];
   if(tr && a){ const artInput=tr.children[1]?.querySelector('input'); if(artInput) artInput.value=a.descripcion; }
+  _ogEstrucModuloToast(i);
 }
 window.ogSetCodDirect=ogSetCodDirect;
 function ogSetClasif(i, val){
@@ -7538,6 +7551,8 @@ async function saveOG(id){
     alert('Estos renglones no tienen un artículo del Diccionario:\n\n'+faltantes.join('\n')+'\n\nAgregalos en Diccionario → Artículos, o sincronizalos desde Tango, y elegilos de la lista antes de guardar.');
     return;
   }
+  const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if(!it._locked && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
+  if(estMod.length && !confirm('⚠ Estos renglones están clasificados como ESTRUCTURA pero el artículo imputa a una cuenta de MÓDULO (124…):\n\n'+estMod.join('\n')+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU) o el artículo.\n\n¿Guardar igual?')) return;
   const items=OG_ITEMS.filter(it=>(it.cod_art||'').trim()||(it.articulo||'').trim()||it.precio_unit)
     .map(it=>({cod_art:it.cod_art||'',articulo:it.articulo||'',hito:it.hito||'',cert_modo:(it.cert_modo==='unid'?'unid':'pct'),centro_costos:it.centro_costos||'',modulos:(it.modulos||[]).slice(0,5),cant:+it.cant||0,um:it.um||'UNI',precio_unit:+it.precio_unit||0,fecha_entrega:it.fecha_entrega||'',deposito:it.deposito||'',bonif_pct:+it.bonif_pct||0,imp:it.imp||{}}));
   const gv=id=>document.getElementById(id).value;
