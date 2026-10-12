@@ -7983,10 +7983,7 @@ function exportDicTab(){
   } else if(DIC_TAB==='clasif'){
     const idxAuxCod=_clasifCodigoAGrupos(); _clasifApplyRules();
     let rows=(DIC_CLASIF_TODOS?CLASIF_ALL:CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si'));
-    if(DIC_CLASIF_AUXGRUPO!=='Todos'){
-      rows=rows.filter(r=>{ const gs=idxAuxCod[String(r.cod||'').trim().toUpperCase()]||[];
-        return DIC_CLASIF_AUXGRUPO==='Sin auxiliar'?gs.length===0:gs.includes(DIC_CLASIF_AUXGRUPO); });
-    }
+    if(DIC_CLASIF_AUXGRUPO!=='Todos') rows=rows.filter(r=>_clasifPasaGrupo(r, idxAuxCod));
     if(q) rows=rows.filter(r=>((r.cod||'')+' '+(r.desc||'')).toLowerCase().includes(q));
     rows=rows.filter(r=>dicRowPass('clasif',r));
     rows = DIC_SORT.clasif ? dicApplySort('clasif', rows) : rows.slice().sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true}));
@@ -9503,12 +9500,7 @@ function paintDic(){
     const idxAuxCod=_clasifCodigoAGrupos();
     _clasifApplyRules();
     let rows=(DIC_CLASIF_TODOS?CLASIF_ALL:CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si'));
-    if(DIC_CLASIF_AUXGRUPO!=='Todos'){
-      rows=rows.filter(r=>{
-        const gs=idxAuxCod[String(r.cod||'').trim().toUpperCase()]||[];
-        return DIC_CLASIF_AUXGRUPO==='Sin auxiliar'?gs.length===0:gs.includes(DIC_CLASIF_AUXGRUPO);
-      });
-    }
+    if(DIC_CLASIF_AUXGRUPO!=='Todos') rows=rows.filter(r=>_clasifPasaGrupo(r, idxAuxCod));
     if(q) rows=rows.filter(r=>((r.cod||'')+' '+(r.desc||'')).toLowerCase().includes(q));
     rows=rows.filter(r=>dicRowPass('clasif',r));
     rows = DIC_SORT.clasif ? dicApplySort('clasif', rows) : rows.slice().sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true}));
@@ -9517,13 +9509,15 @@ function paintDic(){
     const hayFiltro = Object.keys(DIC_COL_FILTRO.clasif).length || DIC_CLASIF_AUXGRUPO!=='Todos' || !!q;
     const limpiarClasBtn=hayFiltro?'<button class="btn ghost sm" onclick="clasifLimpiarTodo()">Limpiar filtros</button>':'';
     const filtroBtn='<button class="btn ghost sm" onclick="setDicClasifTodos('+(!DIC_CLASIF_TODOS)+')">'+(DIC_CLASIF_TODOS?'Mostrar solo habilitados':'Mostrar todos (incluye inhabilitados)')+'</button>';
-    const gruposDisponibles=['Todos','02','03','04','05','06','07','08','Sin auxiliar'];
+    const gruposDisponibles=['Todos','02','03','04','05','06','07','08','Sin auxiliar','Falta alta'];
     const grupoSel='<select style="font-size:12.5px;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px" onchange="setDicClasifAuxgrupo(this.value)">'
-      +gruposDisponibles.map(g=>'<option'+(g===DIC_CLASIF_AUXGRUPO?' selected':'')+'>'+(g==='Todos'?'Todos los auxiliares':g==='Sin auxiliar'?'Sin auxiliar (solo EERR)':'Aux '+g)+'</option>').join('')+'</select>';
+      +gruposDisponibles.map(g=>'<option value="'+g+'"'+(g===DIC_CLASIF_AUXGRUPO?' selected':'')+'>'+(g==='Todos'?'Todos los auxiliares':g==='Sin auxiliar'?'Sin auxiliar (solo EERR)':g==='Falta alta'?'⚠ Falta alta en Tango':'Aux '+g)+'</option>').join('')+'</select>';
+    const nFalta=_clasifFaltaAlta().length;
+    const faltaBtn=nFalta?'<button class="btn ghost sm" style="color:#b3261e;border-color:#e8b4ad" onclick="exportClasifFaltaAlta()" title="Excel con los auxiliares que hay que dar de alta en Tango">Pendientes de alta en Tango ('+nFalta+')</button>':'';
     const habilCol=ROLE.admin?'<th style="text-align:center;width:80px">Habil.</th>':'<th style="width:60px">Habil.</th>';
     const clasifTag=CLASIF_FROM_SUPABASE?'':demoTag;
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Clasificación de renglón</h3><span class="meta">'+rows.length+' de '+CLASIF_ALL.length+'</span>'+clasifTag
-      +'<span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center">'+limpiarClasBtn+grupoSel+filtroBtn+importClasBtn+syncClasBtn+'</span></div>'
+      +'<span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center">'+limpiarClasBtn+faltaBtn+grupoSel+filtroBtn+importClasBtn+syncClasBtn+'</span></div>'
       +'<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('clasif','Código','cod')+dicTh('clasif','Descripción','desc')+dicTh('clasif','Categoría','categoria')+dicTh('clasif','EERR (Aux 02)','eerr')+'<th>Auxiliar</th>'+dicTh('clasif','Cuenta forzada','cuenta_forzada')+habilCol+'</tr></thead><tbody>'
       +rows.map(r=>{ const si=String(r.habil_comp||'').toLowerCase()==='si';
         const gs=idxAuxCod[String(r.cod||'').trim().toUpperCase()]||[];
@@ -9654,6 +9648,32 @@ window.setDicSeriesArt=setDicSeriesArt;
 function setDicModulosArt(v){ DIC_MODULOS_ART=v; paintDic(); }
 window.setDicModulosArt=setDicModulosArt;
 function setDicClasifAuxgrupo(v){ DIC_CLASIF_AUXGRUPO=v; paintDic(); }
+// Filtro "Auxiliar" de Clasificación de renglón: grupo 02..08, "Sin auxiliar" o "Falta alta" (el auxiliar que va a usar
+// la app para esa clasificación no existe todavía en los auxiliares de Tango).
+function _clasifPasaGrupo(r, idx){
+  if(DIC_CLASIF_AUXGRUPO==='Falta alta') return _auxDeRegla(r.cod, idx).includes('falta alta');
+  const gs=idx[String(r.cod||'').trim().toUpperCase()]||[];
+  return DIC_CLASIF_AUXGRUPO==='Sin auxiliar'?gs.length===0:gs.includes(DIC_CLASIF_AUXGRUPO);
+}
+// Lo que hay que dar de alta en Tango: por cada clasificación (habilitada, o todas si "Mostrar todos"), el auxiliar que le falta.
+function _clasifFaltaAlta(){
+  const idx=_clasifCodigoAGrupos(); _clasifApplyRules();
+  const NOM={'03':'INSTRUCTIVO DE FABRICACION','05':'MANTENIMIENTO BS DE USO','06':'MUEBLES Y UTILES','07':'HERRAMIENTAS','08':'RODADOS'};
+  const base=(DIC_CLASIF_TODOS?CLASIF_ALL:CLASIF_ALL.filter(r=>String(r.habil_comp||'').toLowerCase()==='si'));
+  return base.filter(r=>_auxDeRegla(r.cod, idx).includes('falta alta')).map(r=>{
+    const g=_auxDeRegla(r.cod, idx).slice(0,2);
+    return {tipo:g, tipoNom:NOM[g]||'', cod:r.cod, desc:r.desc||'', categoria:r.categoria||'', habil:r.habil_comp||''};
+  }).sort((a,b)=>(a.tipo+a.cod).localeCompare(b.tipo+b.cod,'es',{numeric:true}));
+}
+function exportClasifFaltaAlta(){
+  if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
+  const L=_clasifFaltaAlta(); if(!L.length){ toast('No hay auxiliares pendientes de alta.'); return; }
+  const aoa=[['Tipo de auxiliar','Nombre del tipo','Código a dar de alta','Descripción','Categoría (app)','Habilitado para Compras'], ...L.map(x=>[x.tipo,x.tipoNom,x.cod,x.desc,x.categoria,x.habil])];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Pendientes de alta');
+  XLSX.writeFile(wb,'Auxiliares_pendientes_alta_Tango_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  toast(L.length+' auxiliares pendientes de alta exportados');
+}
+window.exportClasifFaltaAlta=exportClasifFaltaAlta;
 window.setDicClasifAuxgrupo=setDicClasifAuxgrupo;
 function auxFilter(code){
   const inp=document.getElementById('auxq_'+code), box=document.getElementById('auxlist_'+code);
