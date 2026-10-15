@@ -3661,11 +3661,18 @@ function _gpThNum(ns, label, col, k){ return _gpTh(ns,label,col,k).replace('<th 
    Vínculo = número de obra (ej. 4317) que aparece en el nombre/código del proyecto GP y en la
    Clasificación de la OG. No toca compras_gp_oc (el import de Tango): conviven como dos canales. */
 function _obraNums(s){ const m=String(s||'').match(/\d{3,}/g); return m||[]; }
+// N° de obra de una OG: la clasificación puede estar en el encabezado (clasif_og) o en
+// la de cada renglón (centro_costos, que es la "Clasificación" que se ve en la grilla).
+function _ogObraNums(o){
+  let nums=_obraNums(o.clasif_og);
+  (o.items||[]).forEach(it=>{ nums=nums.concat(_obraNums(it.centro_costos)); });
+  return nums;
+}
 function gpOGsDelProyecto(p){
   if(!p) return [];
   const keys=new Set(_obraNums(p.codigo).concat(_obraNums(p.nombre)));
   if(!keys.size) return [];
-  const match=(mem.ogs||[]).filter(o=> !o.anulada && _obraNums(o.clasif_og).some(n=>keys.has(n)) );
+  const match=(mem.ogs||[]).filter(o=> !o.anulada && _ogObraNums(o).some(n=>keys.has(n)) );
   // Blindaje contra doble conteo: si una OG quedó cargada dos veces (mismo N°), se cuenta una
   // sola vez (se queda la de id más alto). Las OGs sin N° se dejan tal cual (cada una es única).
   const byNum={};
