@@ -5629,7 +5629,11 @@ function _spfAgrupar(){
   });
   return Object.values(g).sort((a,b)=>String(b.fecha_ingreso||'').localeCompare(String(a.fecha_ingreso||'')));
 }
-function _spfMoneda(m){ return /extranj/i.test(m||'')?'USD':'ARS'; }
+// Los importes del reporte "Pendientes de facturar" de Tango vienen SIEMPRE en pesos, también en las OC en moneda
+// extranjera (confirmado por Micaela, oct 2026); y la FAC de esas OC se carga en pesos. La moneda de la OC solo se informa.
+function _spfMoneda(m){ return 'ARS'; }
+function _spfOCenUSD(m){ return /extranj/i.test(m||''); }
+function _spfTagUSD(m){ return _spfOCenUSD(m)?' <span class="badge b-azul" title="OC en moneda extranjera: el importe del informe de Tango está en pesos" style="font-size:10px">OC en US$</span>':''; }
 function _spfDifiere(s){ return s.neto_oc!=null && s.neto_oc!=='' && Math.abs((+s.monto||0)-(+s.neto_oc||0))>1; }
 function pendFacturarView(){
   const todos=_spfAgrupar();
@@ -5671,7 +5675,7 @@ function pendFacturarView(){
       +'<td>'+fmtDate(o.fecha_ingreso)+'</td>'
       +'<td style="font-size:11px">'+esc(o.comprador||'')+'</td>'
       +'<td style="font-size:11px">'+esc(o.clasif_desc||o.clasif_cod||'—')+'</td>'
-      +'<td style="text-align:right;white-space:nowrap">'+_spMoney(o.pend,mon)+'<div style="font-size:10.5px;color:var(--muted)">de '+_spMoney(o.total,mon)+'</div></td>'
+      +'<td style="text-align:right;white-space:nowrap">'+_spMoney(o.pend,mon)+_spfTagUSD(o.moneda)+'<div style="font-size:10.5px;color:var(--muted)">de '+_spMoney(o.total,mon)+'</div></td>'
       +'<td style="font-size:11px">'+esc(o.estado||'')+'</td>'
       +'<td style="font-size:11.5px">'+(facs||'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td>'+(puede?'<button class="btn ghost sm" onclick="openAdjuntarFac('+k+')">Adjuntar FAC</button>':'')+'</td></tr>';
@@ -5692,7 +5696,7 @@ function openAdjuntarFac(k){
   const body='<div style="font-size:12.5px;line-height:1.7;margin-bottom:10px">'
     +'<strong>OC:</strong> '+esc(o.oc_numero)+' &nbsp; <strong>Proveedor:</strong> '+esc(o.proveedor_cod||'')+' '+esc(_spProvNombre(o.proveedor_cod))+'<br>'
     +'<strong>Auxiliar:</strong> '+esc(o.clasif_desc||o.clasif_cod||'—')+' &nbsp; <strong>Comprador:</strong> '+esc(o.comprador||'—')+'<br>'
-    +'<strong>Pendiente de facturar (sin impuestos):</strong> '+_spMoney(o.pend,mon)+'</div>'
+    +'<strong>Pendiente de facturar (sin impuestos):</strong> '+_spMoney(o.pend,mon)+_spfTagUSD(o.moneda)+(_spfOCenUSD(o.moneda)?'<div style="font-size:11.5px;color:var(--muted)">OC en dólares: el pendiente está en pesos (así lo informa Tango) y el neto de la FAC se carga en pesos.</div>':'')+'</div>'
     +'<div class="frow c2"><div class="field"><label>N° de factura *</label><input id="spf_nro" type="text" placeholder="Ej. A0000700005352" onblur="spfNroMsg('+k+')"><div id="spfNro" style="font-size:11px;margin-top:3px"></div></div>'
     +'<div class="field"><label>Neto de la FAC sin IVA ('+(mon==='USD'?'US$':'$')+') *</label><input id="spf_neto" type="number" step="0.01" oninput="spfDifMsg('+k+')"></div></div>'
     +'<div class="field"><label>Factura (PDF) *</label><input id="spf_file" type="file" accept="application/pdf,image/*"></div>'
