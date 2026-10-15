@@ -2676,7 +2676,7 @@ window.renderPanol=renderPanol;
    Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
    Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
    ================================================================ */
-const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], charts:{}, filtroSeccion:'' };
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], charts:{}, filtroSeccion:'' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
 function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
@@ -2707,17 +2707,24 @@ async function gpLoadLista(){
 }
 async function gpLoadProyecto(id){
   GP.proyecto=(GP.proyectos||[]).find(p=>String(p.id)===String(id))||null;
-  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; GP.traslados=[]; return; }
+  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; GP.traslados=[]; GP.solp=[]; return; }
   const codq = GP.proyecto.codigo ? ('/compras_gp_traslados_mo?select=*&codigo=eq.'+encodeURIComponent(GP.proyecto.codigo)+'&order=creado_en.desc') : null;
-  const [pres, oc, map, imp, rep, tras] = await Promise.all([
+  // SOLP de la obra de este proyecto (match por N° de obra, como las OGs): canal aparte, read-only.
+  const onums = _obraNums(GP.proyecto.codigo).concat(_obraNums(GP.proyecto.nombre));
+  const onset = new Set(onums);
+  const solpq = onums.length ? ('/compras_solp_items?select=*&or=('+onums.map(n=>'obra_cod.ilike.*'+n+'*').join(',')+')&order=solp.desc') : null;
+  const [pres, oc, map, imp, rep, tras, solp] = await Promise.all([
     sbFetch('/compras_gp_presupuesto?select=*&proyecto_id=eq.'+id+'&order=orden.asc'),
     sbFetchAll('/compras_gp_oc?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_mapeo?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc'),
     sbFetch('/compras_gp_reparto?select=*&proyecto_id=eq.'+id),
-    codq ? sbFetch(codq).catch(()=>[]) : Promise.resolve([])
+    codq ? sbFetch(codq).catch(()=>[]) : Promise.resolve([]),
+    solpq ? sbFetchAll(solpq).catch(()=>[]) : Promise.resolve([])
   ]);
   GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[]; GP.reparto=rep||[]; GP.traslados=tras||[];
+  // precisión: el ilike puede traer de más (ej. 4317 vs 14317) → filtrar por N° exacto del obra_cod
+  GP.solp=(solp||[]).filter(s=> _obraNums(s.obra_cod).some(n=>onset.has(n)));
 }
 
 async function renderProyectos(){
@@ -3695,6 +3702,29 @@ function gpRenderOGsCard(p){
     +(resumen?'<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Por sección: '+resumen+'</div>':'')+'</div>';
 }
 
+// Abrir una SOLP desde GP (asegura que el catálogo de SOLP esté cargado antes del form).
+function gpAbrirSolp(id){ (async()=>{ try{ if(!(SOLP.rows&&SOLP.rows.length)) await solpLoad(); }catch(_){ } openSolpForm(id); })(); }
+window.gpAbrirSolp=gpAbrirSolp;
+// SOLP de la obra del proyecto (canal aparte, read-only). Match por N° de obra (ver gpLoadProyecto).
+function gpRenderSolpCard(p){
+  const list=(GP.solp||[]);
+  const head='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">SOLP del proyecto</h3>'
+    +'<span class="meta">Solicitudes de pedido de la obra · se vinculan por N° de obra · canal aparte</span>'
+    +(list.length?'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpSolpTbl\')">Auto-ajustar columnas</button>':'')+'</div>';
+  if(!list.length) return head+'<div style="padding:14px;color:var(--muted);font-size:12.5px">No hay SOLP para la obra de este proyecto (se vinculan por el N° de obra).</div></div>';
+  const abiertas=list.filter(s=>!SOLP_CLOSED.has(s.estado)).length;
+  const rows=list.map(s=>'<tr style="cursor:pointer" onclick="gpAbrirSolp('+s.id+')">'
+    +'<td>'+esc(s.obra_cod||'')+'</td><td>'+esc(s.solp!=null?s.solp:'')+'</td>'
+    +'<td>'+esc(s.estado||'')+'</td><td>'+esc(s.rubro||'')+'</td>'
+    +'<td>'+esc(s.gestiona||'')+'</td><td>'+fmtDate(s.f_necesidad)+'</td>'
+    +'<td>'+esc(s.proveedor_cod||'')+'</td><td>'+esc(s.num_oc||'')+'</td><td>'+esc(s.num_og||'')+'</td></tr>').join('');
+  return head
+    +'<div style="font-size:12px;color:var(--muted);padding:0 14px 8px">'+list.length+' SOLP · '+abiertas+' abiertas</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table id="gpSolpTbl" class="grid" style="font-size:11.5px"><thead><tr>'
+      +'<th>Obra</th><th>SOLP</th><th>Estado</th><th>Rubro</th><th>Comprador</th><th>F. Nec.</th><th>Prov.</th><th>OC</th><th>OG</th></tr></thead><tbody>'
+      +rows+'</tbody></table></div></div>';
+}
+
 function gpRenderTablero(){
   const p=GP.proyecto; const ag=gpAgregado();
   const dir=esDireccion();            // estructura (crear/editar/costeo/rubros/eliminar) = solo dirección
@@ -3727,6 +3757,8 @@ function gpRenderTablero(){
   const trasKpi=(Math.abs(trasNeto)>0.5)?('<div class="kpi"><div class="kpi-label">Presupuesto vigente (c/ traslados)</div><div class="kpi-value">'+gpMoney(ag.tot.presAr+trasNeto)+'</div><div class="kpi-sub">'+(trasNeto>0?'+':'')+gpMoney(trasNeto)+' trasladado neto</div></div>'):'';
   const ogComprometido=gpOGsDelProyecto(p).reduce((a,o)=>a+ogTotal(o),0);
   const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprometido (OGs)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">órdenes de gasto de la app · ver abajo</div></div>'):'';
+  const solpAb=(GP.solp||[]).filter(s=>!SOLP_CLOSED.has(s.estado)).length;
+  const solpKpi=((GP.solp||[]).length)?('<div class="kpi"><div class="kpi-label">SOLP del proyecto</div><div class="kpi-value">'+GP.solp.length+'</div><div class="kpi-sub">'+solpAb+' abiertas · ver abajo</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
@@ -3800,7 +3832,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+ogKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+ogKpi+solpKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
@@ -3822,6 +3854,7 @@ function gpRenderTablero(){
       +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>'
     +gpRenderOGsCard(p)
+    +gpRenderSolpCard(p)
     +gpRenderTrasladosCard();
 
   gpDrawCharts(ag);
