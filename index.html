@@ -148,6 +148,9 @@ table.grid.grid-fixed th{white-space:normal!important;line-height:1.3;}
    a 100% del contenedor, así las columnas quedan pegadas y el cuadro se achica junto con ellas. */
 .tbl-compact table.grid{width:auto;}
 .tbl-compact table.grid th,.tbl-compact table.grid td{padding-left:10px;padding-right:10px;}
+/* Tabla angosta (Pagos a realizar): títulos en 2 renglones, menos relleno, para que entre sin scroll horizontal */
+table.grid.tbl-angosta th{white-space:normal;letter-spacing:.03em;padding:6px 6px;line-height:1.25;}
+table.grid.tbl-angosta td{padding:6px 6px;}
 /* El wrapper también se achica al contenido (si no, el tirador de resize queda flotando lejos de la
    tabla, en el borde de la card en vez de en el borde real de la tabla angosta). Seguro acá porque
    la tabla ya tiene un ancho explícito (width:auto de arriba), sin la dependencia circular que
@@ -411,6 +414,7 @@ function closeModal(){ document.getElementById('modalBg').classList.remove('open
 document.getElementById('modalBg').onclick=e=>{ if(e.target.id==='modalBg') closeModal(); };
 window.closeModal=closeModal;
 
+function fmtDateCorta(v){ if(!v) return '—'; const p=String(v).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0].slice(2):v; }   // dd/mm/aa
 function fmtDate(v){ if(!v) return '—'; const p=String(v).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v; }
 function fmtMoney(v){ return (v==null||v==='')?'—':'$'+(+v||0).toLocaleString('es-AR'); }
 /* Antigüedad a partir de un AAAAMM (ej. '201905' -> '6 años 2 m'). */
@@ -5751,7 +5755,7 @@ function pagosRealizarView(){
   const rows=(DIC.pagos_realizar||[]).slice().sort((a,b)=>String(a.fecha_emision||'').localeCompare(String(b.fecha_emision||'')));
   SPR_ROWS=rows;
   const puede=puedeCrearSolicitudPago();
-  const pedirBtn=puede?'<button class="btn sm" style="margin-left:auto" onclick="openSprPedirPago()">Pedir pago de las tildadas (<span id="sprSelCount">0</span>)</button>':'';
+  const pedirBtn=puede?'<button class="btn sm" style="margin-left:auto;white-space:nowrap" onclick="openSprPedirPago()">Pedir pago de las tildadas (<span id="sprSelCount">0</span>)</button>':'';
   const header='<div class="card-h"><h3>Pagos a realizar</h3><span class="meta">Reporte de Tango con el Auxiliar, la OC, el Remito y el Comprador de cada factura (del Informe OC, por proveedor + N° de comprobante). Tildá las facturas y pedí el pago, con un comentario si hace falta. '+esc(_spUltimaImport('pagos_realizar'))+'</span>'+pedirBtn+'</div>';
   if(!rows.length) return '<div class="card">'+header+'<div class="empty" style="padding:20px">Todavía no hay datos: Administración y Finanzas carga el reporte "Pagos a realizar" desde su app.</div></div>';
   // Solicitud ya existente para cada factura (misma clave que compras_clave_fac en SQL)
@@ -5802,7 +5806,7 @@ function pagosRealizarView(){
       : (puede?'<input type="checkbox" class="sprsel" value="'+rows.indexOf(r)+'" onchange="sprSelCount()" title="Tildar para pedir el pago">':'<span style="color:var(--muted)">—</span>');
     return '<tr data-q="'+esc(q)+'">'
       +'<td style="text-align:center">'+celSol+'</td>'
-      +'<td>'+fmtDate(r.fecha_emision)+'</td><td>'+fmtDate(r.fecha_contable)+'</td><td>'+esc(r.tipo_comprobante||'')+'</td>'
+      +'<td style="white-space:nowrap">'+fmtDateCorta(r.fecha_emision)+'</td><td style="white-space:nowrap">'+fmtDateCorta(r.fecha_contable)+'</td><td>'+esc(r.tipo_comprobante||'')+'</td>'
       +'<td title="'+esc(_spProvNombre(r.proveedor_cod))+'"><strong>'+esc(r.proveedor_cod||'')+'</strong></td>'
       +'<td>'+esc(r.comprobante_numero||'')+'</td>'
       +'<td style="text-align:right;white-space:nowrap">'+fmtNum(r.total_pend_cte,2)+'</td>'
@@ -5817,8 +5821,8 @@ function pagosRealizarView(){
   const avisoMias = SPR_SOLO_MIAS && !visibles.length ? '<div class="empty" style="padding:14px 20px">No hay facturas de OC tuyas ('+esc(MI_NOMBRE)+')'+(xlfHasAny('spr')?' con los filtros actuales':'')+'. El comprador sale del Informe OC: si no coincide con tu nombre tal cual figura ahí, no aparece.</div>' : '';
   return '<div class="card">'+header+(aviso?'<div style="padding:10px 14px 0">'+aviso+'</div>':'')
     +_spTools('sprTabla','spr','Buscar proveedor, comprobante, auxiliar, OC, remito o comprador…', btnMias)
-    +'<table class="grid" id="sprTabla" style="font-size:12.5px"><thead><tr>'+_spTh('spr','Pago','sol','sol')+_spTh('spr','Fecha de emisión','__fecha__','fe')+_spTh('spr','Fecha contable','fc','fc')+_spTh('spr','Tipo de comprobante','tipo','tipo')+_spTh('spr','Cód. proveedor','prov','prov')
-    +_spTh('spr','Nro. Comprobante','nro','nro')+_spTh('spr','Total Pendiente (CTE)',null,'tot')+_spTh('spr','Auxiliar','aux','aux')+_spTh('spr','Orden de compra','oc','oc')+_spTh('spr','Remito','rem','rem')+_spTh('spr','Comprador','comp','comp')+'</tr></thead>'
+    +'<table class="grid tbl-angosta" id="sprTabla" style="font-size:12px"><thead><tr>'+_spTh('spr','Pago','sol','sol')+_spTh('spr','Emisión','__fecha__','fe')+_spTh('spr','F. contable','fc','fc')+_spTh('spr','Tipo','tipo','tipo')+_spTh('spr','Proveedor','prov','prov')
+    +_spTh('spr','Comprobante','nro','nro')+_spTh('spr','Pendiente',null,'tot')+_spTh('spr','Aux.','aux','aux')+_spTh('spr','OC','oc','oc')+_spTh('spr','Remito','rem','rem')+_spTh('spr','Comprador','comp','comp')+'</tr></thead>'
     +'<tbody>'+filas+'</tbody>'
     +'<tfoot><tr><td colspan="6" style="text-align:right;font-weight:700">Total ('+visibles.length+(visibles.length!==rows.length?' de '+rows.length:'')+')</td><td style="text-align:right;font-weight:700;white-space:nowrap">'+fmtNum(total,2)+'</td><td colspan="4"></td></tr></tfoot></table>'+avisoMias+'</div>';
 }
