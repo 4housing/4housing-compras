@@ -4414,11 +4414,14 @@ window.setComprasTab=setComprasTab;
 function comprasTabs(){
   return '<div class="mtabs" style="margin-bottom:12px">'
     +'<button class="mtab'+(COMPRAS_TAB==='ogs'?' active':'')+'" onclick="setComprasTab(\'ogs\')">Órdenes de gasto</button>'
-    +'<button class="mtab'+(COMPRAS_TAB==='resumen'?' active':'')+'" onclick="setComprasTab(\'resumen\')">Resumen</button></div>';
+    +'<button class="mtab'+(COMPRAS_TAB==='resumen'?' active':'')+'" onclick="setComprasTab(\'resumen\')">Resumen</button>'
+    +'<button class="mtab'+(COMPRAS_TAB==='graficos'?' active':'')+'" onclick="setComprasTab(\'graficos\')">Gráficos</button></div>';
 }
 /* ---- Filtro tipo Excel del Resumen (clasif por renglón, prov y OG por OG) ---- */
 function resColVal(o,col){
   if(col==='prov') return o.proveedor_cod||'(sin proveedor)';
+  if(col==='estado') return ogEstado(o);
+  if(col==='comp') return o.comprador?ogxName(o.comprador):'(sin comprador)';
   if(col==='og') return o.numero?('OG '+o.numero):'(sin N°)';
   return '';
 }
@@ -4461,44 +4464,145 @@ function resFilterClear(col){ delete RES_FILTRO[col]; closeResFilter(); renderCo
 function resFilterClearAll(){ RES_FILTRO={}; renderCompras(); }
 window.openResFilter=openResFilter; window.resFilterSearch=resFilterSearch; window.resFilterToggleAll=resFilterToggleAll; window.resFilterApply=resFilterApply; window.resFilterClear=resFilterClear; window.resFilterClearAll=resFilterClearAll;
 
+// ---- Resumen por OG y Gráficos: comparten filtros (▾ por columna) y buscador ----
+let RES_Q=''; const RES_SORT={};
+function _resMontos(o){
+  const mon=ogMonedaCode(o); const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
+  const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
+  const noCert=Math.max(0,total-cert-cerrado), certNoLib=Math.max(0,cert-lib), libNoPag=Math.max(0,lib-pag);
+  const aARS = mon==='USD' ? (tc!=null?(x=>x*tc):null) : (x=>x);   // conversión a pesos con el TC de la OG (null = no se puede)
+  const aUSD = mon==='USD' ? (x=>x) : (tc!=null?(x=>x/tc):null);
+  return {mon, tc, total, cert, lib, pag, cerrado, noCert, certNoLib, libNoPag, porPagar:Math.max(0,cert-pag), aARS, aUSD,
+    tARS:aARS?aARS(total):null, tUSD:aUSD?aUSD(total):null};
+}
+function _resQPass(o){
+  if(!RES_Q) return true;
+  const q=_syncFold(RES_Q);
+  const prov=(DIC.proveedores||[]).find(p=>p.codigo===o.proveedor_cod)||{};
+  return _syncFold([o.numero,o.clasif_og,clasifDesc(o.clasif_og),o.proveedor_cod,prov.razon,prov.comercial,o.comprador,ogEstado(o),
+    (o.items||[]).map(it=>it.centro_costos+' '+(it.articulo||'')).join(' ')].join(' ')).includes(q);
+}
+function _resOGs(ogsAll){ return (ogsAll||[]).filter(o=>!o.anulada).filter(resPass).filter(_resQPass); }
+function resBuscar(v){ RES_Q=v||''; window.__resFocus=true; renderCompras(); }
+window.resBuscar=resBuscar;
+function _resRefocus(){ if(!window.__resFocus) return; window.__resFocus=false; const el=document.getElementById('resBusca'); if(el){ el.focus(); const n=el.value.length; el.setSelectionRange(n,n); } }
+function resSort(ev,k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.resfbtn,.col-resizer')) return;
+  RES_SORT.k===k ? (RES_SORT.dir=-RES_SORT.dir) : (RES_SORT.k=k, RES_SORT.dir=1);
+  renderCompras();
+}
+window.resSort=resSort;
+function resLimpiarTodo(){ RES_FILTRO={}; RES_Q=''; delete RES_SORT.k; renderCompras(); }
+window.resLimpiarTodo=resLimpiarTodo;
+function _resHay(){ return ['clasif','prov','og','estado','comp'].some(resFilterActive) || !!RES_Q; }
+function _resBarra(placeholder, conAutofit){
+  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px">'
+    +'<input id="resBusca" type="search" value="'+esc(RES_Q)+'" placeholder="'+esc(placeholder)+'" oninput="resBuscar(this.value)" style="flex:1;min-width:220px;max-width:420px">'
+    +(_resHay()?'<button class="btn ghost sm" style="margin-left:auto" onclick="resLimpiarTodo()">Limpiar filtros</button>':'')
+    +(conAutofit?'<button class="btn ghost sm" style="'+(_resHay()?'':'margin-left:auto')+'" onclick="tblAutofit(\'#resTabla\')">Auto-ajustar columnas</button>':'')
+    +'</div>';
+}
 function comprasResumenView(ogsAll){
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  let ogs=(ogsAll||[]).filter(o=>!o.anulada).filter(resPass);
-  ogs.sort((a,b)=>String(a.numero||'').localeCompare(String(b.numero||''),'es',{numeric:true}));
+  let ogs=_resOGs(ogsAll).map(o=>({o, m:_resMontos(o)}));
+  const pc=(r,x)=>r.m.total?x/r.m.total*100:0;
+  const claves={clasif:r=>r.o.clasif_og||'', prov:r=>r.o.proveedor_cod||'', og:r=>+r.o.numero||r.o.numero, comp:r=>r.o.comprador?ogxName(r.o.comprador):'', estado:r=>ogEstado(r.o),
+    ars:r=>r.m.tARS, usd:r=>r.m.tUSD, nocert:r=>pc(r,r.m.noCert), certnolib:r=>pc(r,r.m.certNoLib), libnopag:r=>pc(r,r.m.libNoPag), pag:r=>pc(r,r.m.pag), cerr:r=>pc(r,r.m.cerrado)};
+  const fn=claves[RES_SORT.k];
+  ogs = fn ? ogs.slice().sort((x,y)=>{ const a=fn(x), b=fn(y); if(a==null||a==='') return 1; if(b==null||b==='') return -1;
+      return ((typeof a==='number'&&typeof b==='number')?a-b:String(a).localeCompare(String(b),'es',{numeric:true}))*RES_SORT.dir; })
+    : ogs.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true}));
   let totARS=0, totUSD=0;
   const pf=v=>v.toFixed(1).replace('.0','')+'%';
-  const rows=ogs.map(o=>{
-    const mon=ogMonedaCode(o); const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
-    const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
-    const noCert=Math.max(0,total-cert-cerrado), certNoLib=Math.max(0,cert-lib), libNoPag=Math.max(0,lib-pag);
-    const p=x=>total?x/total*100:0;
-    let tARS,tUSD;
-    if(mon==='USD'){ tUSD=total; tARS= tc!=null? total*tc : null; } else { tARS=total; tUSD= tc!=null? total/tc : null; }
-    if(tARS!=null) totARS+=tARS; if(tUSD!=null) totUSD+=tUSD;
+  const rows=ogs.map(r=>{ const o=r.o, m=r.m;
+    if(m.tARS!=null) totARS+=m.tARS; if(m.tUSD!=null) totUSD+=m.tUSD;
     return '<tr>'
       +'<td>'+(o.clasif_og?esc(o.clasif_og):'—')+'</td>'
       +'<td style="font-size:11px">'+esc(o.proveedor_cod||'')+'</td>'
       +'<td><strong>'+esc(o.numero||'—')+'</strong></td>'
-      +'<td style="text-align:right">'+(tARS!=null?'$ '+fmt2(tARS):'—')+'</td>'
-      +'<td style="text-align:right">'+(tUSD!=null?'US$ '+fmt2(tUSD):'—')+'</td>'
-      +'<td style="text-align:right">'+pf(p(noCert))+'</td>'
-      +'<td style="text-align:right">'+pf(p(certNoLib))+'</td>'
-      +'<td style="text-align:right">'+pf(p(libNoPag))+'</td>'
-      +'<td style="text-align:right">'+pf(p(pag))+'</td>'
-      +'<td style="text-align:right">'+(cerrado?pf(p(cerrado)):'—')+'</td></tr>';
-  }).join('') || '<tr><td colspan="10" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
-  const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="3" style="text-align:right">Total mostrado</td>'
+      +'<td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
+      +'<td style="font-size:11px">'+esc(ogEstado(o))+'</td>'
+      +'<td style="text-align:right">'+(m.tARS!=null?'$ '+fmt2(m.tARS):'—')+'</td>'
+      +'<td style="text-align:right">'+(m.tUSD!=null?'US$ '+fmt2(m.tUSD):'—')+'</td>'
+      +'<td style="text-align:right">'+pf(pc(r,m.noCert))+'</td>'
+      +'<td style="text-align:right">'+pf(pc(r,m.certNoLib))+'</td>'
+      +'<td style="text-align:right">'+pf(pc(r,m.libNoPag))+'</td>'
+      +'<td style="text-align:right">'+pf(pc(r,m.pag))+'</td>'
+      +'<td style="text-align:right">'+(m.cerrado?pf(pc(r,m.cerrado)):'—')+'</td></tr>';
+  }).join('') || '<tr><td colspan="12" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
+  const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="5" style="text-align:right">Total mostrado ('+ogs.length+' OG)</td>'
     +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td><td colspan="5"></td></tr>';
-  const th=(label,col)=>'<th style="white-space:nowrap">'+label+(col?' <button class="resfbtn" onclick="openResFilter(\''+col+'\',event)" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(resFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button>':'')+'</th>';
-  const hay=['clasif','prov','og'].some(resFilterActive);
-  const limpiar=hay?'<button class="btn ghost sm" style="margin-left:auto" onclick="resFilterClearAll()">Limpiar filtros</button>':'';
-  return '<div class="card"><div class="card-h"><h3>Resumen por OG</h3><span class="meta">Filtrá por Clasificación (por renglón), Proveedor u OG. Totales con el TC de cada OG.</span>'+limpiar+'</div>'
-    +'<table class="grid" style="font-size:12px"><thead><tr>'
-    +th('Clasificación','clasif')+th('Proveedor','prov')+th('OG','og')
-    +'<th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th>'
-    +'<th style="text-align:right">% pend. cert.</th><th style="text-align:right">% cert. no lib.</th><th style="text-align:right">% lib. no pag.</th><th style="text-align:right">% pagado</th><th style="text-align:right">% Cerrado</th>'
+  const fl=k=>RES_SORT.k===k?(RES_SORT.dir===1?' ▲':' ▼'):'';
+  const th=(label,col,k,der)=>'<th style="white-space:nowrap;cursor:pointer'+(der?';text-align:right':'')+'" title="Ordenar" onclick="resSort(event,\''+k+'\')">'+label+fl(k)
+    +(col?' <button class="resfbtn" onclick="openResFilter(\''+col+'\',event)" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(resFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button>':'')+'</th>';
+  return '<div class="card"><div class="card-h"><h3>Resumen por OG</h3><span class="meta">Filtrá con ▾ (Clasificación por renglón, Proveedor, OG, Comprador, Estado) o con el buscador; clic en el título ordena. Totales con el TC de cada OG.</span></div>'
+    +_resBarra('Buscar OG, proveedor, clasificación, comprador…', true)
+    +'<table class="grid" id="resTabla" style="font-size:12px"><thead><tr>'
+    +th('Clasificación','clasif','clasif')+th('Proveedor','prov','prov')+th('OG','og','og')+th('Comprador','comp','comp')+th('Estado','estado','estado')
+    +th('Total ARS',null,'ars',1)+th('Total USD',null,'usd',1)
+    +th('% pend. cert.',null,'nocert',1)+th('% cert. no lib.',null,'certnolib',1)+th('% lib. no pag.',null,'libnopag',1)+th('% pagado',null,'pag',1)+th('% Cerrado',null,'cerr',1)
     +'</tr></thead><tbody>'+rows+foot+'</tbody></table></div>';
 }
+// ---- Gráficos: por proyecto (clasificación de la OG), en pesos con el TC de cada OG ----
+const RES_GCOL={pag:'#3f7d46', ppag:'#b8861f', ncert:'#2f6fd0'};   // validados con dataviz/validate_palette.js (light)
+let RES_CHART=null, RES_GDATA=null;
+function _resPorProyecto(ogsAll){
+  const g={}; let sinTC=0;
+  _resOGs(ogsAll).forEach(o=>{ const m=_resMontos(o);
+    if(!m.aARS){ sinTC++; return; }
+    const k=o.clasif_og||'(sin clasificación)';
+    const x=(g[k]=g[k]||{proy:k, desc:clasifDesc(k), n:0, total:0, pag:0, ppag:0, ncert:0, cerr:0});
+    x.n++; x.total+=m.aARS(m.total); x.pag+=m.aARS(m.pag); x.ppag+=m.aARS(m.porPagar); x.ncert+=m.aARS(m.noCert); x.cerr+=m.aARS(m.cerrado);
+  });
+  return {rows:Object.values(g).sort((a,b)=>b.total-a.total), sinTC};
+}
+function comprasGraficosView(ogsAll){
+  const d=_resPorProyecto(ogsAll); RES_GDATA=d;
+  const f0=x=>'$ '+Math.round(+x||0).toLocaleString('es-AR');
+  const T=d.rows.reduce((a,r)=>({n:a.n+r.n,total:a.total+r.total,pag:a.pag+r.pag,ppag:a.ppag+r.ppag,ncert:a.ncert+r.ncert}),{n:0,total:0,pag:0,ppag:0,ncert:0});
+  const pct=x=>T.total?' ('+(x/T.total*100).toFixed(1).replace('.0','')+'%)':'';
+  const tile=(lbl,val,sub,col)=>'<div style="flex:1;min-width:170px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px">'
+    +'<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">'+(col?'<span style="width:10px;height:10px;border-radius:3px;background:'+col+'"></span>':'')+esc(lbl)+'</div>'
+    +'<div style="font-size:20px;font-weight:700;color:var(--ink);margin-top:4px">'+val+'</div><div style="font-size:11.5px;color:var(--muted)">'+sub+'</div></div>';
+  const tiles='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 14px 12px">'
+    +tile('OGs',T.n.toLocaleString('es-AR'),f0(T.total)+' en total')
+    +tile('Pagado',f0(T.pag),pct(T.pag).replace(/[()]/g,'').trim()+' del total',RES_GCOL.pag)
+    +tile('Por pagar',f0(T.ppag),pct(T.ppag).replace(/[()]/g,'').trim()+' · certificado, sin pagar',RES_GCOL.ppag)
+    +tile('Sin certificar',f0(T.ncert),pct(T.ncert).replace(/[()]/g,'').trim()+' del total',RES_GCOL.ncert)+'</div>';
+  const MAXB=25, nBarras=Math.min(d.rows.length, MAXB+(d.rows.length>MAXB?1:0));
+  const alto=Math.max(160, nBarras*30+60);
+  const tabla='<table class="grid" id="resTablaProy" style="font-size:12px;margin-top:6px"><thead><tr><th>Proyecto</th><th style="text-align:right">OGs</th><th style="text-align:right">Total</th><th style="text-align:right">Pagado</th><th style="text-align:right">Por pagar</th><th style="text-align:right">Sin certificar</th><th style="text-align:right">Cerrado c/saldo</th></tr></thead><tbody>'
+    +d.rows.map(r=>'<tr><td><strong>'+esc(r.proy)+'</strong> <span style="color:var(--muted);font-size:11px">'+esc(r.desc&&r.desc!==r.proy?r.desc:'')+'</span></td><td style="text-align:right">'+r.n+'</td><td style="text-align:right">'+f0(r.total)+'</td><td style="text-align:right">'+f0(r.pag)+'</td><td style="text-align:right">'+f0(r.ppag)+'</td><td style="text-align:right">'+f0(r.ncert)+'</td><td style="text-align:right">'+(r.cerr?f0(r.cerr):'—')+'</td></tr>').join('')
+    +'</tbody></table>';
+  return '<div class="card"><div class="card-h"><h3>Gráficos por proyecto</h3><span class="meta">Total de las OG por proyecto (clasificación de la OG) y cuánto está pagado, por pagar (certificado sin pagar) y sin certificar. En pesos, con el TC de cada OG. Usa los mismos filtros y buscador que el Resumen.</span></div>'
+    +_resBarra('Buscar OG, proveedor, proyecto, comprador…', false)
+    +(d.rows.length?tiles
+      +'<div style="margin:0 14px"><div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink);margin-bottom:6px">'
+        +[['Pagado','pag'],['Por pagar','ppag'],['Sin certificar','ncert']].map(([l,k])=>'<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:'+RES_GCOL[k]+'"></span>'+l+'</span>').join('')+'</div>'
+      +'<div style="position:relative;height:'+alto+'px"><canvas id="resChart" role="img" aria-label="Barras apiladas por proyecto: pagado, por pagar y sin certificar"></canvas></div>'
+      +(d.rows.length>MAXB?'<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Se muestran los '+MAXB+' proyectos de mayor monto; el resto está sumado en "Otros". La tabla de abajo tiene todos.</div>':'')
+      +(d.sinTC?'<div style="font-size:11.5px;color:#b3261e;margin-top:4px">'+d.sinTC+' OG en dólares sin TC cargado no se pueden pasar a pesos y no están incluidas.</div>':'')
+      +'</div><div style="padding:6px 14px 14px">'+tabla+'</div>'
+      :'<div class="empty" style="padding:20px">Ninguna OG coincide con los filtros.</div>')
+    +'</div>';
+}
+function resDibujarGrafico(){
+  const el=document.getElementById('resChart'); if(RES_CHART){ try{ RES_CHART.destroy(); }catch(e){} RES_CHART=null; }
+  if(!el || typeof Chart==='undefined' || !RES_GDATA) return;
+  const MAXB=25; let rows=RES_GDATA.rows.slice(0,MAXB);
+  if(RES_GDATA.rows.length>MAXB){ const o=RES_GDATA.rows.slice(MAXB).reduce((a,r)=>({proy:'Otros',n:a.n+r.n,total:a.total+r.total,pag:a.pag+r.pag,ppag:a.ppag+r.ppag,ncert:a.ncert+r.ncert}),{proy:'Otros',n:0,total:0,pag:0,ppag:0,ncert:0}); rows=rows.concat([o]); }
+  const f0=x=>'$ '+Math.round(+x||0).toLocaleString('es-AR');
+  const ds=(lbl,k)=>({label:lbl, data:rows.map(r=>r[k]>0.5?r[k]:null), backgroundColor:RES_GCOL[k], borderColor:'#ffffff', borderWidth:{right:2}, borderSkipped:false, borderRadius:4, barThickness:16});
+  RES_CHART=new Chart(el,{type:'bar',
+    data:{labels:rows.map(r=>r.proy), datasets:[ds('Pagado','pag'),ds('Por pagar','ppag'),ds('Sin certificar','ncert')]},
+    options:{indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{legend:{display:false}, datalabels:{display:false},
+        tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+f0(c.raw)+(rows[c.dataIndex].total?' ('+(c.raw/rows[c.dataIndex].total*100).toFixed(1).replace('.0','')+'%)':''),
+          footer:it=>{ const r=rows[it[0].dataIndex]; return 'Total: '+f0(r.total)+' · '+r.n+' OG'; }}}},
+      scales:{x:{stacked:true, grid:{color:'#ecebe4'}, ticks:{color:'#94917f', callback:v=>'$ '+(Math.abs(v)>=1e6?(v/1e6).toLocaleString('es-AR',{maximumFractionDigits:1})+' M':Math.round(v).toLocaleString('es-AR'))}},
+              y:{stacked:true, grid:{display:false}, ticks:{color:'#2b2b26', autoSkip:false, font:{size:11.5}}}}}});
+}
+window.resDibujarGrafico=resDibujarGrafico;
 
 /* ===== Filtro tipo Excel para la lista de Órdenes de gasto ===== */
 let OGX={};  // { field: [valores permitidos] }
@@ -4576,7 +4680,8 @@ async function renderCompras(){
   try{ ogsAll = (mem.ogs||[]).slice(); }
   catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
 
-  if(COMPRAS_TAB==='resumen'){ C().innerHTML=comprasTabs()+comprasResumenView(ogsAll); return; }
+  if(COMPRAS_TAB==='resumen'){ C().innerHTML=comprasTabs()+comprasResumenView(ogsAll); _resRefocus(); return; }
+  if(COMPRAS_TAB==='graficos'){ C().innerHTML=comprasTabs()+comprasGraficosView(ogsAll); _resRefocus(); resDibujarGrafico(); return; }
 
   // Filtro tipo Excel por columnas + filtro por indicador (KPI) + buscador de texto
   let ogs=ogsAll.filter(o=>ogxPass(o)&&kpiPass(o)&&ogBuscaPass(o));
