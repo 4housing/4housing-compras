@@ -4710,6 +4710,10 @@ function ogxToggleAll(ck){ document.querySelectorAll('#ogxList .ogxitem').forEac
 function ogxApply(f){ const all=[...document.querySelectorAll('#ogxList .ogxchk')]; const chk=all.filter(c=>c.checked).map(c=>c.value); if(chk.length===all.length){ delete OGX[f]; } else { OGX[f]=chk; } ogxClose(); renderCompras(); }
 function ogxClear(f){ delete OGX[f]; ogxClose(); renderCompras(); }
 function ogxClearAll(){ OGX={}; renderCompras(); }
+// Botón "Con pendientes": atajo del filtro ▾ de la columna Pendiente (OGX.pendiente).
+function _ogConPendOn(){ return !!(OGX.pendiente && OGX.pendiente.length===1 && OGX.pendiente[0]==='Con pendientes'); }
+function toggleOGConPend(){ if(_ogConPendOn()) delete OGX.pendiente; else OGX.pendiente=['Con pendientes']; renderCompras(); }
+window.toggleOGConPend=toggleOGConPend;
 function clearAllFiltersCompras(){ OGX={}; KPI_FILTER=null; OG_BUSCA=''; renderCompras(); }
 window.ogxOpen=ogxOpen; window.ogxSearch=ogxSearch; window.ogxToggleAll=ogxToggleAll; window.ogxApply=ogxApply; window.ogxClear=ogxClear; window.ogxClearAll=ogxClearAll; window.clearAllFiltersCompras=clearAllFiltersCompras;
 
@@ -4758,6 +4762,7 @@ async function renderCompras(){
   const filtros='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
       +'<input id="ogBusca" type="text" value="'+esc(OG_BUSCA)+'" oninput="setOGBusca(this.value)" placeholder="Buscar N° OG, proveedor, detalle, clasificación…" style="flex:1;min-width:200px;max-width:340px;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px">'
       +selCol('estado','Estado')+selCol('comprador','Comprador')+selCol('proveedor','Proveedor')
+      +(()=>{ const on=_ogConPendOn(); return '<button class="btn sm'+(on?'':' ghost')+'" onclick="toggleOGConPend()" title="Mostrar solo las OG que todavía tienen algo por certificar o por pagar">'+(on?'✓ ':'')+'Con pendientes</button>'; })()
       +((hayFiltroOG||OG_BUSCA)?'<button class="btn ghost sm" onclick="clearAllFiltersCompras()">Limpiar filtros</button>':'')
       +'<span style="font-size:11.5px;color:var(--muted);margin-left:auto">'+ogs.length+' de '+ogsAll.length+' OG</span></div>'
     +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
