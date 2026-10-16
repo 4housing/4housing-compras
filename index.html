@@ -3587,8 +3587,14 @@ async function gpGuardarReparto(){
   const el=document.getElementById('repCalc');
   if(sum>total+1){ if(el) el.innerHTML='<span style="color:#b0584f">El reparto ($'+fmtNum(sum,0)+') supera el total del renglón ($'+fmtNum(total,0)+').</span>'; return; }
   try{
-    await sbFetch('/compras_gp_reparto?proyecto_id=eq.'+pid+gpFirmaEq(firma),{method:'DELETE',prefer:'return=minimal'});
-    if(allocs.length){ await sbFetch('/compras_gp_reparto',{method:'POST',prefer:'return=minimal',body:JSON.stringify(allocs.map(a=>({proyecto_id:pid, firma, seccion:a.seccion, monto:a.monto})))}); }
+    // Borrar los repartos previos de este renglón POR ID (confiable; el filtro por "firma" en la
+    // URL fallaba por el encoding del separador § → quedaban viejos y el alta chocaba con la
+    // clave única proyecto_id+firma+seccion). Además se borra también por firma como respaldo.
+    const oldIds=(GP.reparto||[]).filter(r=>r.firma===firma).map(r=>r.id).filter(x=>x!=null);
+    if(oldIds.length){ await sbFetch('/compras_gp_reparto?id=in.('+oldIds.join(',')+')',{method:'DELETE',prefer:'return=minimal'}); }
+    try{ await sbFetch('/compras_gp_reparto?proyecto_id=eq.'+pid+gpFirmaEq(firma),{method:'DELETE',prefer:'return=minimal'}); }catch(_){ }
+    // Upsert por la clave única: si quedara algún reparto viejo, se actualiza en vez de dar 409.
+    if(allocs.length){ await sbFetch('/compras_gp_reparto?on_conflict=proyecto_id,firma,seccion',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(allocs.map(a=>({proyecto_id:pid, firma, seccion:a.seccion, monto:a.monto})))}); }
     closeModal(); toast('Reparto guardado'); renderProyectos();
   }catch(e){ if(el) el.innerHTML='<span style="color:#b0584f">No se pudo guardar: '+esc(e.message||e)+'</span>'; }
 }
