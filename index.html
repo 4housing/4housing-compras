@@ -4714,6 +4714,11 @@ function ogxClearAll(){ OGX={}; renderCompras(); }
 function _ogConPendOn(){ return !!(OGX.pendiente && OGX.pendiente.length===1 && OGX.pendiente[0]==='Con pendientes'); }
 function toggleOGConPend(){ if(_ogConPendOn()) delete OGX.pendiente; else OGX.pendiente=['Con pendientes']; renderCompras(); }
 window.toggleOGConPend=toggleOGConPend;
+// Botón "Solo mis OG": atajo del filtro de Comprador (OGX.comprador) con el usuario logueado.
+function _ogMiNombreVal(){ const yo=_syncFold(MI_NOMBRE); return (mem.ogs||[]).map(o=>o.comprador).find(c=>c && _syncFold(c)===yo) || MI_NOMBRE; }
+function _ogMiasOn(){ return !!(MI_NOMBRE && OGX.comprador && OGX.comprador.length===1 && _syncFold(OGX.comprador[0])===_syncFold(MI_NOMBRE)); }
+function toggleOGMias(){ if(_ogMiasOn()) delete OGX.comprador; else OGX.comprador=[_ogMiNombreVal()]; renderCompras(); }
+window.toggleOGMias=toggleOGMias;
 function clearAllFiltersCompras(){ OGX={}; KPI_FILTER=null; OG_BUSCA=''; renderCompras(); }
 window.ogxOpen=ogxOpen; window.ogxSearch=ogxSearch; window.ogxToggleAll=ogxToggleAll; window.ogxApply=ogxApply; window.ogxClear=ogxClear; window.ogxClearAll=ogxClearAll; window.clearAllFiltersCompras=clearAllFiltersCompras;
 
@@ -4762,6 +4767,8 @@ async function renderCompras(){
   const filtros='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
       +'<input id="ogBusca" type="text" value="'+esc(OG_BUSCA)+'" oninput="setOGBusca(this.value)" placeholder="Buscar N° OG, proveedor, detalle, clasificación…" style="flex:1;min-width:200px;max-width:340px;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px">'
       +selCol('estado','Estado')+selCol('comprador','Comprador')+selCol('proveedor','Proveedor')
+      +(()=>{ if(!MI_NOMBRE) return '<button class="btn ghost sm" disabled title="Tu usuario no tiene un nombre de comprador asociado en Usuarios autorizados">Solo mis OG</button>';
+          const on=_ogMiasOn(); return '<button class="btn sm'+(on?'':' ghost')+'" onclick="toggleOGMias()" title="Mostrar solo las OG donde el comprador sos vos ('+esc(MI_NOMBRE)+')">'+(on?'✓ ':'')+'Solo mis OG</button>'; })()
       +(()=>{ const on=_ogConPendOn(); return '<button class="btn sm'+(on?'':' ghost')+'" onclick="toggleOGConPend()" title="Mostrar solo las OG que todavía tienen algo por certificar o por pagar">'+(on?'✓ ':'')+'Con pendientes</button>'; })()
       +((hayFiltroOG||OG_BUSCA)?'<button class="btn ghost sm" onclick="clearAllFiltersCompras()">Limpiar filtros</button>':'')
       +'<span style="font-size:11.5px;color:var(--muted);margin-left:auto">'+ogs.length+' de '+ogsAll.length+' OG</span></div>'
