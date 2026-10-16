@@ -6059,7 +6059,7 @@ function proyectadoView(){
       if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
       return '';
     } });
-  const items=allItems.filter(x=>xlfPass('proy',x));
+  const items=allItems.filter(x=>xlfPass('proy',x) && _tesMia(x.o));
   // Agrupa por OG + semana de pago para no mostrar un renglón de la OG por fila: si varios renglones
   // de la misma OG caen en la misma fecha estimada, se muestran juntos.
   const grupos={};
@@ -6126,11 +6126,21 @@ function proyectadoView(){
       +'<td style="text-align:right">'+(b.lp?mfmt(mon,b.lp):'—')+'</td>'
       +'<td style="text-align:right">'+mfmt(mon,t)+'</td></tr>';
   }).join('');
-  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ (la fecha de pago se puede filtrar por rango) — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
+  const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ (la fecha de pago se puede filtrar por rango) — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+_tesMiasBtn('margin-left:8px')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Comprador','comp')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+xlfTh('proy','Fecha est. pago','__fecha__')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
   return resumen+detalle+proyeccionSemanalHtml(items);
 }
 window.proyectadoView=proyectadoView;
+// "Solo mis OG" (Proyectado y Pagos pendientes, un mismo interruptor): OGs cuyo comprador es el usuario logueado.
+// o.comprador y MI_NOMBRE salen de la misma lista (compras_usuarios_autorizados.nombre).
+let TES_SOLO_MIAS=false;
+function _tesMia(o){ if(!TES_SOLO_MIAS || !MI_NOMBRE) return true; const yo=_syncFold(MI_NOMBRE); return !!yo && _syncFold(o&&o.comprador)===yo; }
+function _tesMiasBtn(st){
+  if(!MI_NOMBRE){ TES_SOLO_MIAS=false; return '<button class="btn ghost sm" style="'+(st||'')+'" disabled title="Tu usuario no tiene un nombre de comprador asociado en Usuarios autorizados">Solo mis OG</button>'; }
+  return '<button class="btn sm'+(TES_SOLO_MIAS?'':' ghost')+'" style="'+(st||'')+'" onclick="tesToggleMias()" title="Mostrar solo las OG donde el comprador sos vos ('+esc(MI_NOMBRE)+')">'+(TES_SOLO_MIAS?'✓ ':'')+'Solo mis OG</button>';
+}
+function tesToggleMias(){ TES_SOLO_MIAS=!TES_SOLO_MIAS; renderTesoreria(); }
+window.tesToggleMias=tesToggleMias;
 let PROY_DETAIL=[];
 function exportProyectadoExcel(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
@@ -6410,7 +6420,7 @@ function colaView(colaAll){
       if(col==='lugar') return ogLugarPago(o)||'(sin lugar)';
       return '';
     } });
-  const cola=colaAll.filter(o=>xlfPass('cola',o));
+  const cola=colaAll.filter(o=>xlfPass('cola',o) && _tesMia(o));
   const demoTag=DEMO_MODE?'<span class="demo-tag">DATOS DE EJEMPLO</span>':'';
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   // Tinte de fila según de qué caja sale la plata (no la moneda pactada): así el tesorero distingue de un vistazo.
@@ -6449,7 +6459,7 @@ function colaView(colaAll){
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
       +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
   }).join('') || '<tr><td colspan="15" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
-  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
+  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span>'+_tesMiasBtn('margin-left:auto')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Comprador','comp')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+xlfTh('cola','Lugar de pago','lugar')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div id="colaTotalBar" style="padding:14px 20px;border-top:1px solid var(--line);background:#f8f7f1;font-size:13px">'+colaTotalBarInner()+'</div></div>';
 }
