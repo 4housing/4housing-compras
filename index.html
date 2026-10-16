@@ -6072,7 +6072,14 @@ function proyectadoView(){
   const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
   detail.forEach(d=>{ tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp; });
   const totalUSD=tot.USD.sc+tot.USD.cl+tot.USD.lp, totalARS=tot.ARS.sc+tot.ARS.cl+tot.ARS.lp;
-  if(!detail.length) return '<div class="card"><div class="empty">'+(xlfHasAny('proy')?'Ninguna OG coincide con los filtros.':'No hay OG con saldo pendiente de pago.')+'</div>'+(xlfHasAny('proy')?'<div style="padding:0 16px 16px"><button class="btn ghost sm" onclick="xlfClearAll(\'proy\')">Limpiar filtros</button></div>':'')+'</div>';
+  if(!detail.length){
+    // Si el vacío viene de un filtro ("Solo mis OG" o ▾), mostrar cómo sacarlo: si no, el botón desaparece y no hay forma de volver.
+    const mias=TES_SOLO_MIAS && !!MI_NOMBRE, filt=xlfHasAny('proy');
+    const msg = mias ? 'No tenés OG con saldo pendiente como comprador ('+esc(MI_NOMBRE)+')'+(filt?' con los filtros actuales':'')+'.'
+      : (filt?'Ninguna OG coincide con los filtros.':'No hay OG con saldo pendiente de pago.');
+    const btns=(mias?_tesMiasBtn(''):'')+(filt?'<button class="btn ghost sm" style="margin-left:8px" onclick="xlfClearAll(\'proy\')">Limpiar filtros</button>':'');
+    return '<div class="card"><div class="empty">'+msg+'</div>'+(btns?'<div style="padding:0 16px 16px;text-align:center">'+btns+'</div>':'')+'</div>';
+  }
   const COL={sc:'#c9c49f', cl:'#5f7a4e', lp:'#37432c'};   // colores de las 3 situaciones
   // Torta SVG dibujada a mano (sin librería). Devuelve '' si no hay total.
   function donut(sc,cl,lp){
