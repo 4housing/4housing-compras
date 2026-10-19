@@ -7671,17 +7671,28 @@ function ogFechaChanged(){
 window.ogFechaChanged=ogFechaChanged;
 function ogUsarTcSugerido(v){ const el=document.getElementById('og_tc'); if(el) el.value=v; }
 window.ogUsarTcSugerido=ogUsarTcSugerido;
-// Aviso: renglón clasificado como Estructura (ESTRUC / ESTNQN) con un artículo que imputa a una cuenta "Módulo…" (124xxxxx).
-// Casi siempre es un error: un gasto de estructura no va a la cuenta de un módulo (si es mantenimiento, va MANBSU/MANMOD/etc.).
+// Regla "lo accesorio sigue a lo principal": un renglón de Estructura (ESTRUC / ESTNQN) no puede usar un artículo que
+// imputa a una cuenta SOLO de proyectos. No se deduce de los auxiliares (p.ej. 52000019 Logística Personal también
+// admite el 03 y sí vale para estructura), así que la lista es fija; ampliarla acá si aparecen otras.
+const CUENTAS_SOLO_PROYECTO={ prefijos:['124'], cuentas:['55000006'] };   // 124xxxxx Módulo… · 55000006 Gastos de Transporte
+const CUENTAS_ALT_ESTRUC=['55000007','52000005','52000019','52000002'];   // Mensajería · Gs varios Taller · Logística Personal · Movilidad Combustible
+function _ctaSoloProyecto(c){ c=String(c||''); return CUENTAS_SOLO_PROYECTO.cuentas.includes(c) || CUENTAS_SOLO_PROYECTO.prefijos.some(p=>c.startsWith(p)); }
 function _ogEstrucModulo(it){
   const cc=String((it&&it.centro_costos)||'').toUpperCase().trim();
   if(!(clasifFamilia(cc)==='ESTRUC' || cc==='ESTNQN')) return false;
-  return /^124/.test(String(imputacion(it).cuenta_cod||''));
+  return _ctaSoloProyecto(imputacion(it).cuenta_cod);
+}
+// Texto con las alternativas: cuentas sugeridas y, si hay, algunos artículos del Diccionario que imputan a cada una.
+function _estrucAlternativas(){
+  const arts=(typeof DIC!=='undefined'&&DIC.articulos)||[];
+  return CUENTAS_ALT_ESTRUC.map(c=>{ const nom=cuentaDescLookup(c)||((arts.find(a=>a.cuenta_cod===c)||{}).cuenta)||'';
+    const ej=arts.filter(a=>a.cuenta_cod===c).slice(0,3).map(a=>a.codigo+' '+a.descripcion);
+    return '• '+c+' '+nom+(ej.length?' (ej.: '+ej.join(' · ')+')':''); }).join('\n');
 }
 function _ogEstrucModuloToast(i){
   const it=OG_ITEMS[i]; if(!it || !_ogEstrucModulo(it)) return;
   const im=imputacion(it);
-  toast('⚠ Renglón '+(i+1)+': clasificado '+it.centro_costos+' (Estructura) pero el artículo imputa a '+im.cuenta_cod+' '+(im.cuenta||'')+' (cuenta de módulo). Si es mantenimiento, usá la clasificación de mantenimiento que corresponda.');
+  toast('⚠ Renglón '+(i+1)+': el artículo '+(it.cod_art||'')+' imputa a '+im.cuenta_cod+' '+(im.cuenta||'')+', que es de proyectos: no corresponde para '+it.centro_costos+' (Estructura). Elegí un artículo alternativo (mensajería, gastos varios taller, logística personal, movilidad combustible) o, si es mantenimiento, la clasificación de mantenimiento.');
 }
 function ogSetCodDirect(i, code){
   OG_ITEMS[i].cod_art=code;
@@ -7754,7 +7765,7 @@ async function saveOG(id){
     return;
   }
   const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if(!it._locked && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
-  if(estMod.length && !confirm('⚠ Estos renglones están clasificados como ESTRUCTURA pero el artículo imputa a una cuenta de MÓDULO (124…):\n\n'+estMod.join('\n')+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU) o el artículo.\n\n¿Guardar igual?')) return;
+  if(estMod.length){ alert('No se puede guardar: estos renglones son de ESTRUCTURA pero el artículo imputa a una cuenta de PROYECTOS (lo accesorio sigue a lo principal):\n\n'+estMod.join('\n')+'\n\nCambiá el artículo por uno que corresponda a estructura, por ejemplo:\n'+_estrucAlternativas()+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU).'); return; }
   const items=OG_ITEMS.filter(it=>(it.cod_art||'').trim()||(it.articulo||'').trim()||it.precio_unit)
     .map(it=>({cod_art:it.cod_art||'',articulo:it.articulo||'',hito:it.hito||'',cert_modo:(it.cert_modo==='unid'?'unid':'pct'),centro_costos:it.centro_costos||'',modulos:(it.modulos||[]).slice(0,5),cant:+it.cant||0,um:it.um||'UNI',precio_unit:+it.precio_unit||0,fecha_entrega:it.fecha_entrega||'',deposito:it.deposito||'',bonif_pct:+it.bonif_pct||0,imp:it.imp||{}}));
   const gv=id=>document.getElementById(id).value;
