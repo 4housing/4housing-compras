@@ -3648,7 +3648,13 @@ function gpAgregado(){
   // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD/externo se netean; 'desglosada' la representan sus hijos)
   const tot=filas.filter(f=>f.ambito==='compras').reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
   const totFuera=filas.filter(f=>f.ambito==='mod'||f.ambito==='externo').reduce((a,f)=>({mod:a.mod+(f.ambito==='mod'?f.presAr:0), ext:a.ext+(f.ambito==='externo'?f.presAr:0), compMod:a.compMod+(f.ambito==='mod'?f.comp:0), compExt:a.compExt+(f.ambito==='externo'?f.comp:0)}),{mod:0,ext:0,compMod:0,compExt:0});
-  return {filas, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
+  // Agrupar el desglose: cada sub-rubro va JUSTO DEBAJO de su sección madre (desglose_de),
+  // sin importar el 'orden' con que se guardó (las filas de desglose caían al final).
+  const _kids={}; filas.forEach(f=>{ if(f.desglose_de){ const k=gpNorm(f.desglose_de); (_kids[k]=_kids[k]||[]).push(f); } });
+  const filasOrd=[];
+  filas.forEach(f=>{ if(f.desglose_de) return; filasOrd.push(f); const ks=_kids[gpNorm(f.seccion)]; if(ks){ ks.forEach(x=>filasOrd.push(x)); delete _kids[gpNorm(f.seccion)]; } });
+  Object.keys(_kids).forEach(k=>_kids[k].forEach(x=>filasOrd.push(x)));   // huérfanos (madre no encontrada) al final
+  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
 }
 
 // Orden por columna para las tablas de Gestión de Proyectos (reusa SP_SORT/_spTh/_spOrdenar,
