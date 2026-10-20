@@ -5202,13 +5202,16 @@ function exportAsientoSelTango(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
   const sel=_selPagosToOgs(); if(!sel){ toast('Tildá al menos una OP.'); return; }
   if(!sel.ogs.length){ toast('No se encontró la OG de las OP tildadas.'); return; }
-  const s=asientoTangoSheets(sel.ogs, sel.opByOg); if(_asientoBloqueaSinCuenta(s)) return; const wb=XLSX.utils.book_new();
+  const s=asientoTangoSheets(sel.ogs, sel.opByOg); if(_asientoBloqueaSinCuenta(s)) return;
+  _asientoAvisoEstruc(s, ()=>{
+  const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.cab),'Asientos contables');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.ren),'Renglones');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.cot),'Cotizaciones');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s.aux),'Auxiliares');
   XLSX.writeFile(wb,'Asiento_Tango_OPs_'+new Date().toISOString().slice(0,10)+'.xlsx');
   toast('Asiento (Tango) de '+sel.ogs.length+' OG generado');
+  });
 }
 function exportAsientoSelCaja(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
@@ -6630,12 +6633,23 @@ function _asientoBloqueaSinCuenta(s){
     '<button class="btn" onclick="closeModal()">Entendido</button>', 'wide');
   return true;
 }
+// Aviso (no bloquea): renglones de Estructura que imputan a una cuenta de proyectos. Suele pasar con OG ya certificadas
+// (no se pueden editar), así que se puede exportar igual y corregir la cuenta en Tango.
+function _asientoAvisoEstruc(s, seguir){
+  if(!s||!s.estrucProy||!s.estrucProy.length){ seguir(); return; }
+  window.__asientoSeguir=()=>{ closeModal(); seguir(); };
+  const filas=s.estrucProy.map(f=>'<tr><td>OG '+esc(f.og)+'</td><td>'+(f.op!==''?'OP '+esc(f.op):'—')+'</td><td>'+esc(f.nro)+'</td><td>'+esc(f.item)+'</td><td>'+esc(f.clasif)+'</td><td>'+esc(f.cuenta+' '+f.cuentaNom)+'</td><td style="text-align:right">'+fmtNum(f.imp,2)+'</td></tr>').join('');
+  openModal('Atención: renglones de Estructura con cuenta de proyectos',
+    '<p style="margin:0 0 10px;font-size:13.5px;line-height:1.5">Estos renglones están clasificados como <strong>Estructura</strong> pero el artículo imputa a una cuenta de <strong>proyectos</strong> (lo accesorio sigue a lo principal). Si exportás igual, corregí la cuenta en Tango antes de registrar (por ejemplo a Mensajería, Gs varios Taller, Logística Personal o Movilidad Combustible).</p>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>OP</th><th>Renglón</th><th>Ítem</th><th>Clasif.</th><th>Cuenta</th><th>Importe</th></tr></thead><tbody>'+filas+'</tbody></table>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="__asientoSeguir()">Exportar igual</button>', 'wide');
+}
 function asientoTangoSheets(ogs, opByOg){
   const cabH=['Identificador','Fecha de asiento','Clase de asiento','Código de tipo de asiento','Estado','Código de moneda','Concepto','Observaciones','SOLP','OG','BONOS','Eliminar','ROW_VERSION'];
   const renH=['Identificador','Nro.','Código de cuenta','Debe','Haber','Fecha de origen','Leyenda','Importe de la unidad adicional','Cantidad','Eliminar','ROW_VERSION'];
   const cotH=['Identificador','Código de moneda','Código de tipo de cotización','Cotización','Eliminar','ROW_VERSION'];
   const auxH=['Identificador','Nro. renglón','Código tipo auxiliar','Tipo auxiliar','Código auxiliar','Descripción auxiliar','Porcentaje','Importe','Leyenda'];
-  const cab=[cabH], ren=[renH], cot=[cotH], aux=[auxH], faltan=[];   // faltan: renglones sin cuenta (no se puede exportar así)
+  const cab=[cabH], ren=[renH], cot=[cotH], aux=[auxH], faltan=[], estrucProy=[];   // estrucProy: renglones de Estructura con cuenta de proyectos (aviso)   // faltan: renglones sin cuenta (no se puede exportar así)
   ogs.forEach(o=>{
     const pagosOG=(opByOg&&opByOg[o.id])||[null];               // [null] = sin pago puntual, se toma el 100% de la OG (preview desde "Ver imputación")
     const multi=pagosOG.length>1;                                 // 2+ pagos de la MISMA OG seleccionados juntos: hay que separarlos en asientos distintos
@@ -6665,6 +6679,7 @@ function asientoTangoSheets(ogs, opByOg){
         const im=imputacion(it); const imp=aMonPago(itemTotal(it)*pctGasto/100);
         nro++;
         const leyenda=_leyRenglon(o,it,opByOgLey);
+        if(_ogEstrucModulo(it)) estrucProy.push({og:o.numero||o.id, op:(pago&&pago.op_numero!=null)?pago.op_numero:'', nro, item:(it.articulo||it.descripcion||it.cod_art||''), clasif:it.centro_costos||'', cuenta:im.cuenta_cod, cuentaNom:im.cuenta||cuentaDescLookup(im.cuenta_cod)||'', imp});
         if(!String(im.cuenta_cod||'').trim()) faltan.push({og:o.numero||o.id, op:(pago&&pago.op_numero!=null)?pago.op_numero:'', nro, item:(it.descripcion||it.articulo||it.cod_art||'(sin descripción)'), clasif:it.centro_costos||'', imp});
         ren.push([id, nro, im.cuenta_cod||'', imp, '', fecha, leyenda, '', '', 'No', '']);
         // auxiliares de ese renglón
@@ -6696,7 +6711,7 @@ function asientoTangoSheets(ogs, opByOg){
       if(monCode==='DOL' && tcUsado){ cot.push([id,'DOL','COTIZACIÓN',tcUsado,'No','']); }
     });
   });
-  return {cab,ren,cot,aux,faltan};
+  return {cab,ren,cot,aux,faltan,estrucProy};
 }
 function exportAsientoTango(ogId){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
@@ -6704,6 +6719,7 @@ function exportAsientoTango(ogId){
   if(!ogs.length){ toast('No hay OG para exportar.'); return; }
   const s=asientoTangoSheets(ogs);
   if(_asientoBloqueaSinCuenta(s)) return;
+  _asientoAvisoEstruc(s, ()=>{
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.cab), 'Asientos contables');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.ren), 'Renglones');
@@ -6712,6 +6728,7 @@ function exportAsientoTango(ogId){
   const suf = ogId!=null ? ('OG_'+(ogs[0].numero||'')) : new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, 'Asiento_Tango_'+suf+'.xlsx');
   toast('Asiento (formato Tango) generado');
+  });
 }
 window.asientoTangoSheets=asientoTangoSheets; window.exportAsientoTango=exportAsientoTango;
 
