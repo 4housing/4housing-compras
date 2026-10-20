@@ -10584,6 +10584,14 @@ function openSolpForm(id){
   if(id==null) solpFormRenumerar();
 }
 window.openSolpForm=openSolpForm;
+// Doble clic en una fila de SOLP: abre el ítem (sin ir hasta el lápiz al final del renglón).
+// Se ignora si el doble clic cae en un botón, link o control (filtros, ajuste de columnas).
+function solpDblAbrir(ev, id){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('button,a,input,select,textarea,.col-resizer')) return;
+  try{ const sel=window.getSelection&&window.getSelection(); if(sel) sel.removeAllRanges(); }catch(e){}   // el doble clic selecciona texto
+  openSolpForm(id);
+}
+window.solpDblAbrir=solpDblAbrir;
 let SOLP_FORM_PROVS=[];
 function solpProvChips(){
   return SOLP_FORM_PROVS.map((p,i)=>'<span class="solp-tag">'+esc(p.code)+(p.name?' — '+esc(p.name):'')+'<button onclick="solpProvQuitar('+i+')" aria-label="Quitar">×</button></span>').join('') || '<span style="font-size:12px;color:var(--muted)">Sin proveedor</span>';
@@ -10930,7 +10938,7 @@ async function renderSolp(){
       + solpAbTh('Obra','obra')+solpAbTh('SOLP','solp')+solpAbTh('Comprador','comprador')+solpAbTh('Estado','estado')+solpAbTh('Rubro','rubro')+solpAbTh('Ingreso','ingreso')+solpAbTh('Necesidad','necesidad')+solpAbTh('Ítems','items')+solpAbTh('Estado gral.','vencida')+(puedeEditar?'<th></th>':'')+'</tr></thead><tbody>'
     + (abiertas.length? abiertas.slice(0,LIM).map(r=>{ const s=r._s, it=r._it;
       const accion=puedeEditar? '<td><div class="row-actions">'+it.map(x=>'<button class="iconbtn" title="Editar ítem" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button>').join('')+'</div></td>' : '';
-      return '<tr><td>'+esc(r.obra)+'</td><td style="text-align:right"><strong>'+r.solp+'</strong></td>'+tdT(r.comprador)+tdT(r.estado)+tdT(r.rubro)+'<td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+r.items+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('') : '<tr><td colspan="'+(9+(puedeEditar?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
+      return '<tr'+(puedeEditar&&it.length===1?' ondblclick="solpDblAbrir(event,'+it[0].id+')" title="Doble clic para abrir el ítem" style="cursor:pointer"':'')+'><td>'+esc(r.obra)+'</td><td style="text-align:right"><strong>'+r.solp+'</strong></td>'+tdT(r.comprador)+tdT(r.estado)+tdT(r.rubro)+'<td>'+solpDMY(s.fi)+'</td><td>'+(s.fn?solpDMY(s.fn):'<span style="color:var(--muted)">sin fecha</span>')+'</td><td style="text-align:right">'+r.items+'</td><td>'+(s.late?'<span class="badge" style="color:'+SOLP_COL.late+';background:#f6e6e3">Vencida</span>':'<span class="badge" style="color:#9a7019;background:#f5ecd6">Abierta</span>')+'</td>'+accion+'</tr>'; }).join('') : '<tr><td colspan="'+(9+(puedeEditar?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(abiertas.length>LIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+LIM+' de '+abiertas.length+'. Filtrá para ver el resto.</div>':'')
     : '<div class="empty">No hay SOLP abiertas con estos filtros.</div>';
 
@@ -10962,7 +10970,7 @@ async function renderSolp(){
   const detalleHtml = !rows.length ? '<div class="empty">No hay ítems con estos filtros.</div>' : '<div class="dic-scroll"><table class="grid solp-full"><thead><tr>'
       + DET_COLS.map(c=>solpTh(c[0],c[1])).join('')+(canEditOG()?'<th></th>':'')+'</tr></thead><tbody>'
     + (detOrd.length? detOrd.slice(0,DLIM).map(x=>{ const r=detRow(x);
-        return '<tr>'+td(r[0],'trunc')+td(r[1])+'<td style="white-space:nowrap">'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[15],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+'<td class="trunc" title="'+esc(x.proveedor||'')+'">'+esc(x.proveedor_cod||'—')+'</td>'+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
+        return '<tr'+(canEditOG()?' ondblclick="solpDblAbrir(event,'+x.id+')" title="Doble clic para abrir el ítem" style="cursor:pointer"':'')+'>'+td(r[0],'trunc')+td(r[1])+'<td style="white-space:nowrap">'+solpEstadoBadge(x.estado)+'</td>'+td(r[3])+td(r[4],'trunc')+td(r[15],'trunc')+td(r[5])+td(r[6])+td(r[7])+td(r[8])+'<td class="trunc" title="'+esc(x.proveedor||'')+'">'+esc(x.proveedor_cod||'—')+'</td>'+td(r[10],'trunc')+td(r[11],'trunc')+'<td>'+atiempoBadge(x.pedido_a_tiempo)+'</td>'+td(r[13],'trunc')+td(r[14],'trunc')+td(r[16],'trunc')+(canEditOG()?'<td><button class="iconbtn" title="Editar" onclick="openSolpForm('+x.id+')">'+ICO.edit+'</button></td>':'')+'</tr>'; }).join('') : '<tr><td colspan="'+(DET_COLS.length+(canEditOG()?1:0))+'" style="text-align:center;color:var(--muted)">Ningún ítem coincide con los filtros de columna.</td></tr>')
     + '</tbody></table></div>'+(detOrd.length>DLIM?'<div style="padding:10px 16px;font-size:12px;color:var(--muted)">Se muestran '+DLIM+' de '+nf(detOrd.length)+'. Filtrá para ver el resto (o exportá a Excel para tener todo).</div>':'');
 
   const resumenHtml = '<div class="kpi-grid solp-kpis">'
