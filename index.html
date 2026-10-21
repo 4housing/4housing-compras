@@ -8615,9 +8615,9 @@ async function syncProvAnalizar(){
     });
     const enAppNoTango=Object.keys(app).filter(c=>!tango[c]).map(c=>app[c]);
     // Origen: los que están en el export quedan como Tango; los que no, se pueden marcar como Manual (opcional)
-    const hayOrigen=PROV_CON_ORIGEN;
-    const marcarTango=hayOrigen?Object.keys(app).filter(c=>tango[c] && app[c].origen!=='tango').map(c=>app[c].codigo):[];
-    const sinOrigenNoTango=hayOrigen?enAppNoTango.filter(a=>!a.origen).map(a=>a.codigo):[];
+    // No depende de PROV_CON_ORIGEN: si la página se cargó antes de crear la columna, igual se intenta (y si falla, se avisa)
+    const marcarTango=Object.keys(app).filter(c=>tango[c] && app[c].origen!=='tango').map(c=>app[c].codigo);
+    const sinOrigenNoTango=enAppNoTango.filter(a=>!a.origen).map(a=>a.codigo);
     SYNC_PROV={nuevos, modificados, enAppNoTango, marcarTango, sinOrigenNoTango, totTango:Object.keys(tango).length};
     msg.style.color='var(--muted)';
     msg.textContent='Tango: '+SYNC_PROV.totTango+' proveedores · App: '+DIC.proveedores.length+' proveedores.';
@@ -8670,13 +8670,16 @@ async function syncProvAplicar(){
   const CAMPOS=['razon','comercial','cuit','domicilio','cod_postal','provincia_cod','provincia','actividad','iva','tel','tel2','movil','email','web'];
   try{
     if(nuevos.length){
-      const conOrigen=PROV_CON_ORIGEN;   // columna origen ya creada
+      const conOrigen=true;   // las altas desde Tango van siempre con origen Tango (si la columna no existe, reintenta sin ella)
       const payload=nuevos.map(t=>({codigo:t.codigo, ...(conOrigen?{origen:'tango'}:{}), razon:t.razon, comercial:t.comercial||t.razon, cuit:t.cuit, provincia_cod:t.provincia_cod, provincia:t.provincia, actividad:t.actividad, iva:t.iva, domicilio:t.domicilio, cod_postal:t.cod_postal, tel:t.tel, tel2:t.tel2, movil:t.movil, email:t.email, web:t.web}));
       if(!DEMO_MODE){
         try{ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
-        catch(colErr){ /* columnas nuevas (domicilio/cod_postal/tel2) aún no creadas en Supabase: reintento sin ellas */
+        catch(colErr0){ /* columna origen aún no creada: reintento sin ella */
+          try{ const sinOrigen=payload.map(({origen,...rest})=>rest); for(let i=0;i<sinOrigen.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(sinOrigen.slice(i,i+500))}); } }
+          catch(colErr){ /* columnas nuevas (domicilio/cod_postal/tel2) aún no creadas en Supabase: reintento sin ellas */
           const payloadClasico=payload.map(({domicilio,cod_postal,tel2,origen,...rest})=>rest);
           for(let i=0;i<payloadClasico.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payloadClasico.slice(i,i+500))}); }
+          }
         }
       }
       payload.forEach(p=>{ if(!DIC.proveedores.some(x=>_syncNorm(x.codigo)===p.codigo)) DIC.proveedores.push({codigo:p.codigo, ...(conOrigen?{origen:'tango', creado_por:'', creado_en:'', origen_lbl:'Tango'}:{}), razon:p.razon, comercial:p.comercial||p.razon, cuit:p.cuit, tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod, provincia:p.provincia, actividad:p.actividad, iva:p.iva, domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}); });
@@ -8707,11 +8710,12 @@ async function syncProvAplicar(){
         const set=new Set(lote); DIC.proveedores.forEach(x=>{ if(set.has(x.codigo)){ x.origen=origen; x.origen_lbl=_provOrigenLbl(origen); } });
       }
     };
-    await marcar(marcarTango,'tango');
-    await marcar(marcarManual,'manual');
+    let errOrigen='';
+    try{ await marcar(marcarTango,'tango'); await marcar(marcarManual,'manual'); }
+    catch(eo){ errOrigen=' — OJO: no se pudo marcar el origen ('+(eo.message||eo)+'). Recargá con Ctrl+F5 y volvé a sincronizar.'; }
     DIC.proveedores.sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
     closeModal();
-    toast('Listo: '+nuevos.length+' creados, '+okMod+' actualizados'+(marcarTango.length||marcarManual.length?', origen marcado en '+(marcarTango.length+marcarManual.length):'')+(DEMO_MODE?' (demo)':''));
+    toast('Listo: '+nuevos.length+' creados, '+okMod+' actualizados'+(marcarTango.length||marcarManual.length?', origen marcado en '+(marcarTango.length+marcarManual.length):'')+(DEMO_MODE?' (demo)':'')+errOrigen);
     renderDic();
   }catch(e){
     if(btn){ btn.disabled=false; btn.textContent='Aplicar cambios'; }
