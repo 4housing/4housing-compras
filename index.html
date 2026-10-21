@@ -8284,15 +8284,61 @@ async function guardarNuevoProv(){
   if(!cod||!razon){ toast('Código y razón social son obligatorios.'); return; }
   if(DIC.proveedores.some(p=>p.codigo.toLowerCase()===cod.toLowerCase())){ toast('Ya existe un proveedor con ese código.'); return; }
   const obj={ codigo:cod, razon:razon, comercial:g('np_com')||razon, cuit:g('np_cuit'), tel:g('np_tel'), movil:'', email:g('np_email'), web:'', domicilio:g('np_dom'), cod_postal:g('np_cp'), tel2:g('np_tel2') };
+  const alta={ origen:'manual', creado_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', creado_en:new Date().toISOString() };
   if(!DEMO_MODE){
-    try{ await sbFetch('/compras_proveedores',{method:'POST',body:JSON.stringify(obj)}); }
-    catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
+    try{ await sbFetch('/compras_proveedores',{method:'POST',body:JSON.stringify(Object.assign({},obj,alta))}); }
+    catch(e){
+      // origen/creado_* aún no creados (sql/2026-10_proveedores_origen.sql): guardo como antes
+      try{ await sbFetch('/compras_proveedores',{method:'POST',body:JSON.stringify(obj)}); PROV_CON_ORIGEN=false; alta.origen=''; alta.creado_por=''; alta.creado_en=''; }
+      catch(e2){ toast('No se pudo guardar: '+(e2.message||e2)); return; }
+    }
   }
+  Object.assign(obj, alta, {origen_lbl:_provOrigenLbl(alta.origen)});
   DIC.proveedores.push(obj);
   DIC.proveedores.sort((a,b)=>a.codigo.localeCompare(b.codigo));
   closeModal(); toast('Proveedor agregado'); renderDic();
 }
 window.guardarNuevoProv=guardarNuevoProv;
+
+/* ===== Proveedores: origen (Tango / Manual) y eliminar los cargados a mano =====
+   Ver sql/2026-10_proveedores_origen.sql. Se elimina solo si es carga manual y no se usó en ninguna OG
+   (ni en una solicitud de pago); la función del SQL vuelve a validar todo antes de borrar. */
+let PROV_CON_ORIGEN=false;   // true cuando compras_proveedores ya tiene la columna origen (se detecta al cargar)
+function _provOrigenLbl(o){ return o==='tango'?'Tango':(o==='manual'?'Manual':'Sin dato'); }
+function _provUsos(cod){
+  const c=String(cod||'').trim().toUpperCase();
+  const m=x=>String(x||'').trim().toUpperCase()===c;
+  return { ogs:(mem.ogs||[]).filter(o=>m(o.proveedor_cod)), sps:(mem.solicitudes_pago||[]).filter(s=>m(s.proveedor_cod)) };
+}
+function askDelProv(cod){
+  const p=(DIC.proveedores||[]).find(x=>x.codigo===cod); if(!p) return;
+  if(p.origen!=='manual'){ toast('Solo se pueden eliminar proveedores cargados a mano.'); return; }
+  const u=_provUsos(cod);
+  if(u.ogs.length||u.sps.length){
+    const nros=u.ogs.slice(0,8).map(o=>o.numero||o.id).join(', ')+(u.ogs.length>8?'…':'');
+    openModal('No se puede eliminar '+esc(cod),
+      '<div style="font-size:13px">'+esc(p.razon||cod)+' ya se usó'
+      +(u.ogs.length?' en <strong>'+u.ogs.length+' OG</strong> ('+esc(nros)+')':'')
+      +(u.sps.length?(u.ogs.length?' y':'')+' en <strong>'+u.sps.length+' solicitud(es) de pago</strong>':'')
+      +'. Solo se pueden eliminar proveedores que no se usaron.</div>',
+      '<button class="btn" onclick="closeModal()">Entendido</button>');
+    return;
+  }
+  openModal('Eliminar proveedor',
+    '<div style="font-size:13px;margin-bottom:8px">Vas a eliminar <strong>'+esc(cod)+'</strong> — '+esc(p.razon||'')+'.</div>'
+    +'<div style="font-size:12px;color:var(--muted)">Cargado a mano'+(p.creado_por||p.creado_en?' por '+_spCuando({autor:p.creado_por, fecha:p.creado_en}):'')+'. No se usó en ninguna OG. No se puede deshacer.</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" style="background:#b3261e;border-color:#b3261e" onclick="confirmDelProv(\''+esc(cod).replace(/'/g,"\\'")+'\')">Eliminar</button>');
+}
+async function confirmDelProv(cod){
+  const p=(DIC.proveedores||[]).find(x=>x.codigo===cod); if(!p||p.origen!=='manual') return;
+  if(!DEMO_MODE){
+    try{ await sbFetch('/rpc/compras_eliminar_proveedor',{method:'POST',body:JSON.stringify({p_codigo:cod})}); }
+    catch(e){ toast('No se pudo eliminar: '+(e&&e.message?e.message:e)); return; }
+  }
+  DIC.proveedores=DIC.proveedores.filter(x=>x.codigo!==cod);
+  closeModal(); toast('Proveedor '+cod+' eliminado'); renderDic();
+}
+window.askDelProv=askDelProv; window.confirmDelProv=confirmDelProv;
 
 /* ===== Editar costo de referencia de un artículo (a mano) ===== */
 function openEditarCostoArt(codigo){
@@ -8568,7 +8614,11 @@ async function syncProvAnalizar(){
       if(diffs.length) modificados.push({t, diffs});
     });
     const enAppNoTango=Object.keys(app).filter(c=>!tango[c]).map(c=>app[c]);
-    SYNC_PROV={nuevos, modificados, enAppNoTango, totTango:Object.keys(tango).length};
+    // Origen: los que están en el export quedan como Tango; los que no, se pueden marcar como Manual (opcional)
+    const hayOrigen=PROV_CON_ORIGEN;
+    const marcarTango=hayOrigen?Object.keys(app).filter(c=>tango[c] && app[c].origen!=='tango').map(c=>app[c].codigo):[];
+    const sinOrigenNoTango=hayOrigen?enAppNoTango.filter(a=>!a.origen).map(a=>a.codigo):[];
+    SYNC_PROV={nuevos, modificados, enAppNoTango, marcarTango, sinOrigenNoTango, totTango:Object.keys(tango).length};
     msg.style.color='var(--muted)';
     msg.textContent='Tango: '+SYNC_PROV.totTango+' proveedores · App: '+DIC.proveedores.length+' proveedores.';
     renderSyncProvReport();
@@ -8584,6 +8634,7 @@ function renderSyncProvReport(){
     + b(R.nuevos.length,'nuevos','b-verde')
     + b(R.modificados.length,'modificados','b-ambar')
     + b(R.enAppNoTango.length,'en app / no en Tango','b-gris')
+    + (R.marcarTango.length?b(R.marcarTango.length,'a marcar origen Tango','b-gris'):'')
     + '</div>';
   h+=_syncSection('Nuevos — hay que crearlos', R.nuevos.length,
      '<table class="grid"><thead><tr><th>Código</th><th>Razón social</th><th>CUIT</th><th>Domicilio</th><th>Provincia</th><th>IVA</th></tr></thead><tbody>'
@@ -8597,32 +8648,38 @@ function renderSyncProvReport(){
      '<table class="grid"><thead><tr><th>Código</th><th>Razón social</th></tr></thead><tbody>'
      + R.enAppNoTango.slice(0,400).map(a=>'<tr><td><strong>'+esc(a.codigo)+'</strong></td><td>'+esc(a.razon||a.comercial||'—')+'</td></tr>').join('')
      + '</tbody></table>'+_syncMore(R.enAppNoTango.length,400), false);
+  if(R.sinOrigenNoTango.length) h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-top:10px;cursor:pointer"><input type="checkbox" id="syncpMarcarManual" style="margin-top:2px">'
+    +'<span>Marcar como <strong>Manual</strong> los '+R.sinOrigenNoTango.length+' de arriba que no tienen origen. <span style="color:var(--muted)">Ojo: si alguno se dio de baja en Tango también figura acá; marcado como Manual se podría eliminar (si no tiene OG).</span></span></label>';
   box.innerHTML=h;
-  const canApply=R.nuevos.length||R.modificados.length;
+  const canApply=R.nuevos.length||R.modificados.length||R.marcarTango.length||R.sinOrigenNoTango.length;
   document.getElementById('modalFoot').innerHTML='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
-    +'<button class="btn" id="syncpAplicarBtn" onclick="syncProvAplicar()"'+(canApply?'':' disabled')+'>Aplicar ('+R.nuevos.length+' crear · '+R.modificados.length+' actualizar)</button>';
+    +'<button class="btn" id="syncpAplicarBtn" onclick="syncProvAplicar()"'+(canApply?'':' disabled')+'>Aplicar ('+R.nuevos.length+' crear · '+R.modificados.length+' actualizar'+(R.marcarTango.length?' · '+R.marcarTango.length+' origen Tango':'')+')</button>';
 }
 window.renderSyncProvReport=renderSyncProvReport;
 
 async function syncProvAplicar(){
   if(!ROLE.admin){ toast('Solo un administrador puede aplicar cambios.'); return; }
   if(!SYNC_PROV) return;
-  const {nuevos, modificados}=SYNC_PROV;
-  if(!nuevos.length && !modificados.length){ toast('No hay cambios para aplicar.'); return; }
-  if(!confirm('Se van a CREAR '+nuevos.length+' proveedor(es) y ACTUALIZAR '+modificados.length+' en Supabase.'+(DEMO_MODE?' (Estás en modo demo: solo cambia en memoria.)':'')+'\n¿Confirmás?')) return;
+  const {nuevos, modificados, marcarTango}=SYNC_PROV;
+  const ckMan=document.getElementById('syncpMarcarManual');
+  const marcarManual=(ckMan&&ckMan.checked)?SYNC_PROV.sinOrigenNoTango:[];
+  if(!nuevos.length && !modificados.length && !marcarTango.length && !marcarManual.length){ toast('No hay cambios para aplicar.'); return; }
+  if(!confirm('Se van a CREAR '+nuevos.length+' proveedor(es) y ACTUALIZAR '+modificados.length+' en Supabase.'
+    +(marcarTango.length?'\nOrigen: '+marcarTango.length+' quedan como Tango.':'')+(marcarManual.length?'\nOrigen: '+marcarManual.length+' quedan como Manual.':'')+(DEMO_MODE?' (Estás en modo demo: solo cambia en memoria.)':'')+'\n¿Confirmás?')) return;
   const btn=document.getElementById('syncpAplicarBtn'); if(btn){ btn.disabled=true; btn.textContent='Aplicando…'; }
   const CAMPOS=['razon','comercial','cuit','domicilio','cod_postal','provincia_cod','provincia','actividad','iva','tel','tel2','movil','email','web'];
   try{
     if(nuevos.length){
-      const payload=nuevos.map(t=>({codigo:t.codigo, razon:t.razon, comercial:t.comercial||t.razon, cuit:t.cuit, provincia_cod:t.provincia_cod, provincia:t.provincia, actividad:t.actividad, iva:t.iva, domicilio:t.domicilio, cod_postal:t.cod_postal, tel:t.tel, tel2:t.tel2, movil:t.movil, email:t.email, web:t.web}));
+      const conOrigen=PROV_CON_ORIGEN;   // columna origen ya creada
+      const payload=nuevos.map(t=>({codigo:t.codigo, ...(conOrigen?{origen:'tango'}:{}), razon:t.razon, comercial:t.comercial||t.razon, cuit:t.cuit, provincia_cod:t.provincia_cod, provincia:t.provincia, actividad:t.actividad, iva:t.iva, domicilio:t.domicilio, cod_postal:t.cod_postal, tel:t.tel, tel2:t.tel2, movil:t.movil, email:t.email, web:t.web}));
       if(!DEMO_MODE){
         try{ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
         catch(colErr){ /* columnas nuevas (domicilio/cod_postal/tel2) aún no creadas en Supabase: reintento sin ellas */
-          const payloadClasico=payload.map(({domicilio,cod_postal,tel2,...rest})=>rest);
+          const payloadClasico=payload.map(({domicilio,cod_postal,tel2,origen,...rest})=>rest);
           for(let i=0;i<payloadClasico.length;i+=500){ await sbFetch('/compras_proveedores',{method:'POST', body:JSON.stringify(payloadClasico.slice(i,i+500))}); }
         }
       }
-      payload.forEach(p=>{ if(!DIC.proveedores.some(x=>_syncNorm(x.codigo)===p.codigo)) DIC.proveedores.push({codigo:p.codigo, razon:p.razon, comercial:p.comercial||p.razon, cuit:p.cuit, tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod, provincia:p.provincia, actividad:p.actividad, iva:p.iva, domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}); });
+      payload.forEach(p=>{ if(!DIC.proveedores.some(x=>_syncNorm(x.codigo)===p.codigo)) DIC.proveedores.push({codigo:p.codigo, ...(conOrigen?{origen:'tango', creado_por:'', creado_en:'', origen_lbl:'Tango'}:{}), razon:p.razon, comercial:p.comercial||p.razon, cuit:p.cuit, tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod, provincia:p.provincia, actividad:p.actividad, iva:p.iva, domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}); });
     }
     let okMod=0;
     for(const m of modificados){
@@ -8642,9 +8699,19 @@ async function syncProvAplicar(){
       }
       okMod++;
     }
+    // Origen (sql/2026-10_proveedores_origen.sql): de a 150 códigos por PATCH para no pasarme del largo de URL
+    const marcar=async(cods, origen)=>{
+      for(let i=0;i<cods.length;i+=150){
+        const lote=cods.slice(i,i+150);
+        if(!DEMO_MODE) await sbFetch('/compras_proveedores?codigo=in.('+lote.map(c=>'"'+encodeURIComponent(String(c).replace(/"/g,'\\"'))+'"').join(',')+')',{method:'PATCH', body:JSON.stringify({origen})});
+        const set=new Set(lote); DIC.proveedores.forEach(x=>{ if(set.has(x.codigo)){ x.origen=origen; x.origen_lbl=_provOrigenLbl(origen); } });
+      }
+    };
+    await marcar(marcarTango,'tango');
+    await marcar(marcarManual,'manual');
     DIC.proveedores.sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
     closeModal();
-    toast('Listo: '+nuevos.length+' creados, '+okMod+' actualizados'+(DEMO_MODE?' (demo)':''));
+    toast('Listo: '+nuevos.length+' creados, '+okMod+' actualizados'+(marcarTango.length||marcarManual.length?', origen marcado en '+(marcarTango.length+marcarManual.length):'')+(DEMO_MODE?' (demo)':''));
     renderDic();
   }catch(e){
     if(btn){ btn.disabled=false; btn.textContent='Aplicar cambios'; }
@@ -9596,14 +9663,16 @@ function paintDic(){
     let rows=(DIC.proveedores||[]).filter(r=>dicRowPass('proveedores',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('proveedores', rows);
-    const tbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('proveedores','Código','codigo')+dicTh('proveedores','Razón social / comercial','razon')+dicTh('proveedores','CUIT','cuit')+dicTh('proveedores','Domicilio','domicilio')+dicTh('proveedores','Teléfono','tel')+dicTh('proveedores','Móvil','movil')+dicTh('proveedores','Email','email')+'</tr></thead><tbody>'
+    const tbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('proveedores','Código','codigo')+dicTh('proveedores','Razón social / comercial','razon')+dicTh('proveedores','CUIT','cuit')+dicTh('proveedores','Domicilio','domicilio')+dicTh('proveedores','Teléfono','tel')+dicTh('proveedores','Móvil','movil')+dicTh('proveedores','Email','email')+dicTh('proveedores','Origen','origen_lbl')+'<th></th></tr></thead><tbody>'
       +rows.slice(0,500).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td>'
         +'<td><div style="font-size:12.5px">'+esc(r.razon||'—')+'</div>'+(r.comercial&&r.comercial!==r.razon?'<div style="font-size:11px;color:var(--muted)">'+esc(r.comercial)+'</div>':'')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.cuit||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.domicilio||'—')+(r.cod_postal?' <span style="color:var(--muted)">(CP '+esc(r.cod_postal)+')</span>':'')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.tel||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.movil||'—')+'</td>'
-        +'<td style="font-size:11.5px">'+(r.email?'<a href="mailto:'+esc(r.email)+'">'+esc(r.email)+'</a>':'—')+'</td></tr>').join('')+'</tbody></table></div>'
+        +'<td style="font-size:11.5px">'+(r.email?'<a href="mailto:'+esc(r.email)+'">'+esc(r.email)+'</a>':'—')+'</td>'
+        +'<td style="font-size:11.5px;white-space:nowrap"'+(r.creado_por||r.creado_en?' title="Alta: '+_spCuando({autor:r.creado_por, fecha:r.creado_en})+'"':'')+'>'+(r.origen==='manual'?'<span class="badge b-ambar">Manual</span>':(r.origen==='tango'?'<span class="badge b-gris">Tango</span>':'<span style="color:var(--muted)">Sin dato</span>'))+'</td>'
+        +'<td>'+(r.origen==='manual'?'<button class="btn ghost sm" title="Eliminar (solo cargas manuales sin OG)" onclick="askDelProv(\''+esc(r.codigo).replace(/'/g,"\\'")+'\')">Eliminar</button>':'')+'</td></tr>').join('')+'</tbody></table></div>'
       +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Mostrando 500 de '+rows.length+'. Usá el buscador para filtrar.</div>':'');
     const syncProvBtn=ROLE.admin?'<button class="btn sm" onclick="openSyncProv()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:5px;vertical-align:-2px"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>Sincronizar con Tango</button>':'';
     const limpiarProvBtn=Object.keys(DIC_COL_FILTRO.proveedores).length?'<button class="btn ghost sm" onclick="dicColFilterClearAll(\'proveedores\')">Limpiar filtros</button>':'';
@@ -12214,10 +12283,12 @@ async function reloadDicts(background){
       // Proveedores: si hay lista en Supabase, reemplaza el ejemplo embebido
       (async()=>{ try{
         let provs;
-        try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
+        try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2,origen,creado_por,creado_en&order=codigo.asc'); }
+        catch(colErr0){ /* origen/creado_* aún no creados (sql/2026-10_proveedores_origen.sql) */ try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva,domicilio,cod_postal,tel2&order=codigo.asc'); }
         catch(colErr){ try{ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web,provincia_cod,provincia,actividad,iva&order=codigo.asc'); }
-          catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } }
-        if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||''}));
+          catch(colErr2){ /* columnas nuevas aún no creadas: caigo al select clásico */ provs = await sbFetchAll('/compras_proveedores?select=codigo,razon,comercial,cuit,tel,movil,email,web&order=codigo.asc'); } } }
+        if(provs && provs.length) PROV_CON_ORIGEN=('origen' in provs[0]);
+        if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||'', origen:p.origen||'', creado_por:p.creado_por||'', creado_en:p.creado_en||'', origen_lbl:_provOrigenLbl(p.origen)}));
       }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ } })(),
       // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
       // reciente: si la columna todavía no existe en producción, cae al select clásico.
