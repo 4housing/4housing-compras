@@ -733,6 +733,10 @@ const SCHEMAS = {
     title:'SOLP', sub:'Solicitudes de pedido por obra, comprador y estado (lista de SharePoint Seguimiento Compras 2026)', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/><circle cx="19" cy="6" r="2.2"/></svg>',
   },
+  comparativas: {
+    title:'Comparativas', sub:'Comparación homogénea de 3+ ofertas por material: precio a sin IVA, una moneda, valor contado y por unidad; puntaje guía y decisión del comprador', custom:true,
+    icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="6" y="11" width="3" height="7"/><rect x="11" y="7" width="3" height="11"/><rect x="16" y="13" width="3" height="5"/></svg>',
+  },
   deposito: {
     title:'Depósito', sub:'Stock y control de artículos', table:'deposito',
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>',
@@ -851,7 +855,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
   },
 };
-const ORDER=['proyectos','compras','seguimiento','solp','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
+const ORDER=['proyectos','compras','seguimiento','solp','comparativas','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
 // 'logistica' sale del menú (ahora la cubre la app propia de Logística del portal). Se deja el
 // SCHEMAS y los datos como estaban — no se borra nada, solo deja de estar en ORDER.
 
@@ -1080,6 +1084,7 @@ async function render(view){
   if(view==='compras'){ return renderCompras(); }
   if(view==='seguimiento'){ return renderSeguimiento(); }
   if(view==='solp'){ return renderSolp(); }
+  if(view==='comparativas'){ return renderComparativas(); }
   if(view==='evalprov'){ return renderEvalProv(); }
   if(view==='tesoreria'){ return renderTesoreria(); }
   if(view==='solicitudes'){ return renderSolicitudesPago(); }
@@ -10592,7 +10597,9 @@ function openSolpForm(id){
     +'<div class="frow c2"><div class="field"><label>Cotización solicitada a</label><input id="sp_cotiz" type="text" value="'+esc(cur.cotizacion_solicitada||'')+'"></div>'
     +'<div class="field"><label>Forma de Pago</label><select id="sp_condpago"><option value="">— sin especificar —</option>'+condPagoOpts+'</select></div></div>'
     +'<div id="spMsg2" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
-  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="guardarSolp('+(id!=null?id:'null')+')">Guardar</button>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'
+    +(id!=null?'<button class="btn ghost" onclick="closeModal();go(\'comparativas\');setTimeout(function(){cmpDesdeSolp('+id+')},150)">Crear comparativa</button>':'')
+    +'<button class="btn" onclick="guardarSolp('+(id!=null?id:'null')+')">Guardar</button>';
   openModal(id!=null?'Editar SOLP '+esc(cur.obra_cod||'')+' · '+cur.solp:'Nueva SOLP', body, foot, 'wide');
   SOLP_FORM_PROVS=String(cur.proveedor_cod||'').split(';').map(c=>c.trim()).filter(Boolean).map(c=>{ const p=(DIC.proveedores||[]).find(x=>x.codigo===c); return {code:c, name:p?(p.razon||p.comercial||''):''}; });
   const chipsEl=document.getElementById('sp_provChips'); if(chipsEl) chipsEl.innerHTML=solpProvChips();
@@ -12337,6 +12344,379 @@ function mergeRowInto(arr, row){
   if(i>=0) arr[i]=row; else arr.unshift(row);
   return true;
 }
+
+/* ============================================================================
+   COMPARATIVAS — comparación homogénea de 3+ ofertas por material
+   Normaliza cada oferta a: por unidad de comparación · neto de bonificación ·
+   base SIN IVA · una sola moneda (TC) · valor contado (según condición de pago) ·
+   + flete prorrateado si va aparte. Muestra el más barato, un puntaje guía
+   (precio 60% · plazo 20% · evaluación 20%, editable) y la decisión del comprador
+   (mínimo 3 ofertas + justificación obligatoria).
+   ========================================================================== */
+const CMP = { lista:[], loaded:false, actualId:null, cur:null, ofertas:[], ofertasOrig:[] };
+function cmpUser(){ return (typeof MI_NOMBRE!=='undefined' && MI_NOMBRE) || (AUTH_USER && AUTH_USER.email) || ''; }
+function cmpPuedeEditar(){ try{ return canEditOG(); }catch(_){ return (ROLE && (ROLE.admin||ROLE.comprador)); } }
+function cmpAr(n){ n=+n||0; return '$'+Math.round(n).toLocaleString('es-AR'); }
+function cmpU(n){ n=+n||0; return '$'+n.toLocaleString('es-AR',{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function cmpTcDia(){
+  const a=(DIC.usd_diario_oficial||[]).filter(r=>r.venta!=null && +r.venta>0).slice();
+  if(!a.length) return null;
+  a.sort((x,y)=>(String(x.fecha)<String(y.fecha)?1:-1));
+  return +a[0].venta;
+}
+function cmpResolveProvCod(name){
+  if(!name) return '';
+  const q=String(name).trim().toLowerCase();
+  const p=(DIC.proveedores||[]).find(x=>String(x.razon||'').toLowerCase()===q || String(x.comercial||'').toLowerCase()===q || String(x.codigo||'').toLowerCase()===q);
+  return p?p.codigo:'';
+}
+
+// --- cálculo por oferta (devuelve precio por unidad homogeneizado + total) ---
+function cmpCalcOferta(o, h){
+  const factor=(+o.factor)||1;
+  let p=((+o.precio)||0)/(factor||1);                 // por unidad de comparación
+  p=p*(1-(((+o.bonif_pct)||0)/100));                  // neto de bonificación
+  if(o.iva_incluido) p=p/1.21;                        // a base SIN IVA
+  if((o.moneda||'ARS')==='USD'){ const tc=(+o.tc)||(+h.tc_default)||0; p=p*tc; }  // a ARS
+  const meses=(((+o.cond_pago_dias)||0)/30);
+  const tasa=(((+h.tasa_mensual)||0)/100);            // % mensual -> fracción
+  if(tasa>0 && meses>0) p=p/(1+tasa*meses);           // a valor contado
+  const cant=(+h.cantidad)||0;
+  if(!o.flete_incluido && cant>0) p=p+(((+o.flete)||0)/cant);  // flete prorrateado
+  return { unit:p, total:p*cant };
+}
+// --- puntaje guía (0..1 por oferta) ---
+function cmpScores(ofs, h){
+  const calc=ofs.map(o=>cmpCalcOferta(o,h));
+  const units=calc.map(c=>c.unit);
+  const uValid=units.filter(u=>u>0);
+  const uMin=uValid.length?Math.min(...uValid):0, uMax=uValid.length?Math.max(...uValid):0;
+  const plz=ofs.map(o=>(o.plazo_entrega_dias!=null && o.plazo_entrega_dias!=='')?(+o.plazo_entrega_dias):null);
+  const pValid=plz.filter(v=>v!=null && !isNaN(v));
+  const pMin=pValid.length?Math.min(...pValid):0, pMax=pValid.length?Math.max(...pValid):0;
+  let pp=(+h.peso_precio); if(isNaN(pp)) pp=0.6;
+  let ppl=(+h.peso_plazo); if(isNaN(ppl)) ppl=0.2;
+  let pe=(+h.peso_eval); if(isNaN(pe)) pe=0.2;
+  const sw=pp+ppl+pe || 1;
+  return ofs.map((o,i)=>{
+    const u=units[i];
+    const sPre = (u>0 && uMax>uMin) ? (uMax-u)/(uMax-uMin) : (u>0?1:0);     // menor precio = 1
+    const pv = (o.plazo_entrega_dias!=null && o.plazo_entrega_dias!=='')?(+o.plazo_entrega_dias):null;
+    const sPlz = (pv!=null && pMax>pMin) ? (pMax-pv)/(pMax-pMin) : (pv!=null?1:0); // menor plazo = 1
+    const ev=(o.evaluacion!=null && o.evaluacion!=='')?Math.max(0,Math.min(10,+o.evaluacion)):null;
+    const sEva = ev!=null ? ev/10 : 0.5;                                   // 0..10 -> 0..1 (neutro si vacío)
+    const total=(pp*sPre+ppl*sPlz+pe*sEva)/sw;
+    return { unit:u, totalCost:calc[i].total, score:total, sPre, sPlz, sEva };
+  });
+}
+
+async function renderComparativas(){
+  if(!CMP.loaded){ try{ await cmpLoadLista(); }catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar comparativas: '+esc(e.message)+'</div>'; return; } }
+  if(CMP.actualId!=null) return cmpRenderEditor();
+  return cmpRenderLista();
+}
+async function cmpLoadLista(){
+  const rows=await sbFetchAll('/compras_comparativas?select=*&order=creado_en.desc')||[];
+  CMP.lista=rows; CMP.loaded=true;
+}
+function cmpRenderLista(){
+  const puede=cmpPuedeEditar();
+  const ta=document.getElementById('topActions'); if(ta) ta.innerHTML = puede?'<button class="btn" onclick="cmpNueva()">'+ICO.plus+'Nueva comparativa</button>':'';
+  const list=CMP.lista||[];
+  if(!list.length){
+    C().innerHTML='<div class="card"><div class="empty"><div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:6px">Comparativas</div>'
+      +'Compará 3 o más ofertas por material de forma homogénea (a sin IVA, una moneda, valor contado y por unidad). '+(puede?'Usá <b>Nueva comparativa</b> para empezar.':'Todavía no hay comparativas.')+'</div></div>';
+    return;
+  }
+  const estBadge=e=> e==='decidida'?'<span class="badge b-verde" style="font-size:9.5px">Decidida</span>':'<span class="badge b-gris" style="font-size:9.5px">Abierta</span>';
+  const rows=list.map(c=>{
+    const eleg = c.elegido_oferta_id!=null ? 'Sí' : '—';
+    return '<tr style="cursor:pointer" onclick="cmpAbrir('+c.id+')">'
+      +'<td>'+esc(c.material||'')+'</td>'
+      +'<td style="text-align:center">'+esc(c.codigo||'—')+'</td>'
+      +'<td style="text-align:right">'+esc(c.cantidad!=null?fmtNum(c.cantidad):'')+'</td>'
+      +'<td style="text-align:center">'+esc(c.unidad||'')+'</td>'
+      +'<td style="text-align:center">'+esc(c.solp_num||'—')+'</td>'
+      +'<td style="text-align:center">'+estBadge(c.estado)+'</td>'
+      +'<td style="text-align:center">'+eleg+'</td>'
+      +'<td style="text-align:center">'+fmtDate(c.creado_en)+'</td></tr>';
+  }).join('');
+  C().innerHTML='<div class="card"><div class="card-h"><h3 style="margin:0">Comparativas</h3>'
+    +'<span class="meta">'+list.length+' comparativa'+(list.length===1?'':'s')+'</span>'
+    +'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#cmpListaTbl\')">Auto-ajustar columnas</button></div>'
+    +'<div class="tbl-hscroll"><table id="cmpListaTbl" class="grid"><thead><tr>'
+    +'<th>Material</th><th>Obra</th><th>Cantidad</th><th>Unidad</th><th>SOLP</th><th>Estado</th><th>Elegido</th><th>Creada</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+function cmpNueva(prefill){
+  if(!cmpPuedeEditar()){ toast('No tenés permiso para crear comparativas.'); return; }
+  prefill=prefill||{};
+  const body='<div class="field"><label>Material *</label><input id="cmpn_material" value="'+esc(prefill.material||'')+'" placeholder="Ej. Perfil C 100x50 · chapa C25 · tornillo autoperforante…"></div>'
+    +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="cmpn_cant" type="number" step="any" value="'+esc(prefill.cantidad!=null?prefill.cantidad:'')+'"></div>'
+    +'<div class="field"><label>Unidad de comparación</label><input id="cmpn_unidad" value="'+esc(prefill.unidad||'')+'" placeholder="m · kg · unidad · m²…"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>N° de obra (opcional)</label><input id="cmpn_codigo" value="'+esc(prefill.codigo||'')+'" placeholder="Ej. 4317"></div>'
+    +'<div class="field"><label>N° de SOLP (opcional)</label><input id="cmpn_solp" value="'+esc(prefill.solp_num||'')+'"></div></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Después cargás las ofertas y la app calcula el precio homogeneizado.</div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="cmpCrear('+(prefill.solp_id!=null?prefill.solp_id:'null')+')">Crear</button>';
+  openModal('Nueva comparativa', body, foot);
+}
+async function cmpCrear(solpId){
+  const gv=id=>{ const el=document.getElementById(id); return el?el.value.trim():''; };
+  const material=gv('cmpn_material');
+  if(!material){ toast('Falta el material.'); return; }
+  const payload={
+    material, codigo:gv('cmpn_codigo')||null, solp_num:gv('cmpn_solp')||null,
+    solp_id:(solpId!=null?solpId:null),
+    cantidad:(gv('cmpn_cant')===''?0:+gv('cmpn_cant')), unidad:gv('cmpn_unidad')||null,
+    tasa_mensual:0, tc_default:cmpTcDia(), base_iva:'sin_iva',
+    peso_precio:0.60, peso_plazo:0.20, peso_eval:0.20,
+    estado:'abierta', creado_por:cmpUser()
+  };
+  try{
+    await sbFetch('/compras_comparativas',{method:'POST',body:JSON.stringify(payload),prefer:'return=minimal'});
+    closeModal(); toast('Comparativa creada.');
+    await cmpLoadLista();
+    const nueva=(CMP.lista||[]).find(c=>c.material===material && c.estado==='abierta');
+    if(nueva) return cmpAbrir(nueva.id);
+    renderComparativas();
+  }catch(e){ toast('No se pudo crear: '+e.message); }
+}
+
+async function cmpAbrir(id){
+  CMP.actualId=id;
+  CMP.cur=(CMP.lista||[]).find(c=>String(c.id)===String(id))||null;
+  try{ CMP.ofertas=await sbFetchAll('/compras_comparativa_ofertas?comparativa_id=eq.'+id+'&select=*&order=id.asc')||[]; }
+  catch(e){ CMP.ofertas=[]; }
+  CMP.ofertasOrig=CMP.ofertas.map(o=>o.id);
+  cmpRenderEditor();
+}
+function cmpVolver(){ CMP.actualId=null; CMP.cur=null; CMP.ofertas=[]; renderComparativas(); }
+
+function cmpBlankOferta(){ return { id:null, proveedor:'', presentacion:'', precio:'', factor:1, moneda:'ARS', tc:'', iva_incluido:false, bonif_pct:'', cond_pago_dias:0, plazo_entrega_dias:'', evaluacion:'', flete:'', flete_incluido:true, observaciones:'' }; }
+function cmpAddOferta(){ cmpSync(); CMP.ofertas.push(cmpBlankOferta()); cmpRenderEditor(); }
+function cmpDelOferta(i){ cmpSync(); CMP.ofertas.splice(i,1); cmpRenderEditor(); }
+
+// lee los inputs del DOM hacia CMP.cur + CMP.ofertas (sin re-render)
+function cmpSync(){
+  const gv=id=>{ const el=document.getElementById(id); return el?el.value:''; };
+  const c=CMP.cur; if(!c) return;
+  c.material=gv('cmp_material').trim(); c.codigo=gv('cmp_codigo').trim()||null; c.solp_num=gv('cmp_solpnum').trim()||null;
+  c.cantidad=(gv('cmp_cant')===''?0:+gv('cmp_cant')); c.unidad=gv('cmp_unidad').trim()||null;
+  c.fecha_necesidad=gv('cmp_fnec')||null;
+  c.tasa_mensual=(gv('cmp_tasa')===''?0:+gv('cmp_tasa'));
+  c.tc_default=(gv('cmp_tc')===''?null:+gv('cmp_tc'));
+  c.peso_precio=(gv('cmp_pp')===''?0.6:+gv('cmp_pp')/100);
+  c.peso_plazo=(gv('cmp_ppl')===''?0.2:+gv('cmp_ppl')/100);
+  c.peso_eval=(gv('cmp_pe')===''?0.2:+gv('cmp_pe')/100);
+  CMP.ofertas.forEach((o,i)=>{
+    const g=f=>{ const el=document.getElementById('cmp_of_'+i+'_'+f); return el?el.value:''; };
+    const gb=f=>{ const el=document.getElementById('cmp_of_'+i+'_'+f); return el?!!el.checked:false; };
+    o.proveedor=g('proveedor').trim(); o.presentacion=g('presentacion').trim();
+    o.precio=g('precio'); o.factor=g('factor'); o.moneda=g('moneda')||'ARS'; o.tc=g('tc');
+    o.iva_incluido=gb('iva'); o.bonif_pct=g('bonif'); o.cond_pago_dias=g('cond');
+    o.plazo_entrega_dias=g('plazo'); o.evaluacion=g('eval'); o.flete=g('flete');
+    o.flete_incluido=gb('fletinc'); o.observaciones=g('obs').trim();
+  });
+}
+
+function cmpRenderEditor(){
+  const c=CMP.cur; if(!c){ cmpVolver(); return; }
+  const puede=cmpPuedeEditar();
+  const decidida=(c.estado==='decidida');
+  const ro = (!puede||decidida);   // inputs de carga bloqueados si no hay permiso o ya está decidida
+  const dis = ro?' disabled':'';
+  const ta=document.getElementById('topActions');
+  if(ta) ta.innerHTML='<button class="btn ghost" onclick="cmpVolver()">← Comparativas</button>'
+    +(puede&&!decidida?'<button class="btn ghost" onclick="cmpGuardarTodo()">Guardar</button>':'')
+    +(puede&&decidida?'<button class="btn ghost" onclick="cmpReabrir()">Reabrir</button>':'');
+
+  // datalist de proveedores (una sola vez)
+  const prov=(DIC.proveedores||[]).slice(0,1200).map(p=>'<option value="'+esc(p.razon||p.comercial||p.codigo||'')+'">').join('');
+  const dl='<datalist id="cmpProvDL">'+prov+'</datalist>';
+
+  // cabecera
+  const ppv=Math.round((c.peso_precio!=null?c.peso_precio:0.6)*100);
+  const pplv=Math.round((c.peso_plazo!=null?c.peso_plazo:0.2)*100);
+  const pev=Math.round((c.peso_eval!=null?c.peso_eval:0.2)*100);
+  const head='<div class="card" style="margin-bottom:12px"><div class="card-h"><h3 style="margin:0">'+esc(c.material||'Comparativa')+'</h3>'
+    +(decidida?'<span class="badge b-verde" style="margin-left:8px">Decidida</span>':'<span class="badge b-gris" style="margin-left:8px">Abierta</span>')+'</div>'
+    +'<div style="padding:10px 14px">'
+    +'<div class="frow c3"><div class="field"><label>Material</label><input id="cmp_material" value="'+esc(c.material||'')+'"'+dis+'></div>'
+    +'<div class="field"><label>Cantidad</label><input id="cmp_cant" type="number" step="any" value="'+esc(c.cantidad!=null?c.cantidad:'')+'" oninput="cmpRecalc()"'+dis+'></div>'
+    +'<div class="field"><label>Unidad de comparación</label><input id="cmp_unidad" value="'+esc(c.unidad||'')+'"'+dis+'></div></div>'
+    +'<div class="frow c3"><div class="field"><label>N° de obra</label><input id="cmp_codigo" value="'+esc(c.codigo||'')+'"'+dis+'></div>'
+    +'<div class="field"><label>N° de SOLP</label><input id="cmp_solpnum" value="'+esc(c.solp_num||'')+'"'+dis+'></div>'
+    +'<div class="field"><label>Fecha de necesidad</label><input id="cmp_fnec" type="date" value="'+esc(c.fecha_necesidad||'')+'"'+dis+'></div></div>'
+    +'<div class="frow c3"><div class="field"><label>Tasa financiera mensual (%)</label><input id="cmp_tasa" type="number" step="any" value="'+esc(c.tasa_mensual!=null?c.tasa_mensual:0)+'" oninput="cmpRecalc()"'+dis+'></div>'
+    +'<div class="field"><label>TC por defecto (BNA venta)</label><input id="cmp_tc" type="number" step="any" value="'+esc(c.tc_default!=null?c.tc_default:'')+'" oninput="cmpRecalc()"'+dis+'></div>'
+    +'<div class="field"><label>Base</label><input value="Sin IVA" disabled></div></div>'
+    +'<div class="frow c3"><div class="field"><label>Peso precio (%)</label><input id="cmp_pp" type="number" step="any" value="'+ppv+'" oninput="cmpRecalc()"'+dis+'></div>'
+    +'<div class="field"><label>Peso plazo (%)</label><input id="cmp_ppl" type="number" step="any" value="'+pplv+'" oninput="cmpRecalc()"'+dis+'></div>'
+    +'<div class="field"><label>Peso evaluación (%)</label><input id="cmp_pe" type="number" step="any" value="'+pev+'" oninput="cmpRecalc()"'+dis+'></div></div>'
+    +'<div style="font-size:11px;color:var(--muted)">El puntaje es una guía (menor precio y menor plazo = mejor; evaluación 0–10). La decisión la toma el comprador.</div>'
+    +'</div></div>';
+
+  // tabla de ofertas
+  const inp=(i,f,type,val,extra)=>'<input id="cmp_of_'+i+'_'+f+'" '+(type?'type="'+type+'" ':'')+(type==='number'?'step="any" ':'')+'value="'+esc(val!=null?val:'')+'" oninput="cmpRecalc()" style="width:100%;box-sizing:border-box;padding:3px 5px;font-size:11px;border:1px solid var(--line-strong);border-radius:5px"'+(extra||'')+dis+'>';
+  const chk=(i,f,on)=>'<input id="cmp_of_'+i+'_'+f+'" type="checkbox"'+(on?' checked':'')+' onchange="cmpRecalc()"'+dis+'>';
+  const ofRows=CMP.ofertas.map((o,i)=>{
+    const monSel='<select id="cmp_of_'+i+'_moneda" onchange="cmpRecalc()" style="width:100%;padding:3px;font-size:11px;border:1px solid var(--line-strong);border-radius:5px"'+dis+'>'
+      +['ARS','USD'].map(m=>'<option'+(((o.moneda||'ARS')===m)?' selected':'')+'>'+m+'</option>').join('')+'</select>';
+    return '<tr id="cmp_row_'+i+'">'
+      +'<td style="min-width:150px"><input id="cmp_of_'+i+'_proveedor" list="cmpProvDL" value="'+esc(o.proveedor||'')+'" oninput="cmpRecalc()" style="width:100%;box-sizing:border-box;padding:3px 5px;font-size:11px;border:1px solid var(--line-strong);border-radius:5px"'+dis+'></td>'
+      +'<td style="min-width:120px">'+inp(i,'presentacion',null,o.presentacion)+'</td>'
+      +'<td style="width:90px">'+inp(i,'precio','number',o.precio)+'</td>'
+      +'<td style="width:70px">'+inp(i,'factor','number',o.factor)+'</td>'
+      +'<td style="width:72px">'+monSel+'</td>'
+      +'<td style="width:80px">'+inp(i,'tc','number',o.tc)+'</td>'
+      +'<td style="width:44px;text-align:center">'+chk(i,'iva',o.iva_incluido)+'</td>'
+      +'<td style="width:64px">'+inp(i,'bonif','number',o.bonif_pct)+'</td>'
+      +'<td style="width:70px">'+inp(i,'cond','number',o.cond_pago_dias)+'</td>'
+      +'<td style="width:64px">'+inp(i,'plazo','number',o.plazo_entrega_dias)+'</td>'
+      +'<td style="width:60px">'+inp(i,'eval','number',o.evaluacion)+'</td>'
+      +'<td style="width:80px">'+inp(i,'flete','number',o.flete)+'</td>'
+      +'<td style="width:44px;text-align:center">'+chk(i,'fletinc',o.flete_incluido)+'</td>'
+      +'<td style="width:120px">'+inp(i,'obs',null,o.observaciones)+'</td>'
+      +'<td id="cmp_res_'+i+'_u" style="width:100px;text-align:right;font-weight:700;white-space:nowrap">—</td>'
+      +'<td id="cmp_res_'+i+'_t" style="width:110px;text-align:right;white-space:nowrap">—</td>'
+      +'<td id="cmp_res_'+i+'_s" style="width:60px;text-align:center;font-weight:700">—</td>'
+      +'<td style="width:34px;text-align:center">'+(ro?'':'<a href="#" onclick="cmpDelOferta('+i+');return false" title="Quitar" style="color:#b0584f;text-decoration:none">✕</a>')+'</td>'
+      +'</tr>';
+  }).join('');
+  const thStyle='position:sticky;top:0;background:var(--surface,#fff);z-index:1';
+  const tabla='<div class="card"><div class="card-h"><h3 style="margin:0">Ofertas</h3>'
+    +'<span class="meta">'+CMP.ofertas.length+' oferta'+(CMP.ofertas.length===1?'':'s')+' · el precio homogeneizado se calcula en vivo</span>'
+    +(ro?'':'<button class="btn ghost sm" style="margin-left:auto" onclick="cmpAddOferta()">'+ICO.plus+'Agregar oferta</button>')+'</div>'
+    +'<div class="tbl-hscroll" style="max-height:56vh"><table class="grid" style="font-size:11px;min-width:1500px"><thead><tr style="'+thStyle+'">'
+    +'<th>Proveedor</th><th>Presentación</th><th>Precio</th><th>Factor→unidad</th><th>Moneda</th><th>TC</th><th title="¿El precio ya incluye IVA?">IVA incl.</th><th>Bonif. %</th><th title="Días de la condición de pago (0 = contado)">Cond. pago (días)</th><th>Plazo entrega (días)</th><th title="Evaluación del proveedor 0–10">Eval. (0–10)</th><th>Flete</th><th title="¿El flete ya está incluido en el precio?">Flete incl.</th><th>Observaciones</th>'
+    +'<th style="text-align:right">Homogeneizado / u.</th><th style="text-align:right">Total</th><th style="text-align:center">Puntaje</th><th></th>'
+    +'</tr></thead><tbody>'+(ofRows||'<tr><td colspan="18" style="text-align:center;color:var(--muted);padding:16px">No hay ofertas cargadas todavía.</td></tr>')+'</tbody></table></div>'
+    +'<div style="font-size:11px;color:var(--muted);padding:8px 14px">Homogeneizado = precio ÷ factor, neto de bonificación, a sin IVA, a pesos (TC), a valor contado y con flete prorrateado. Se resalta el más barato y el mejor puntaje.</div></div>';
+
+  C().innerHTML=dl+head+tabla+'<div id="cmpDecision"></div>';
+  cmpRecalc();
+  cmpRenderDecision();
+}
+
+function cmpRecalc(){
+  cmpSync();
+  const c=CMP.cur; if(!c) return;
+  const sc=cmpScores(CMP.ofertas, c);
+  let minU=Infinity, maxScore=-Infinity;
+  sc.forEach(s=>{ if(s.unit>0 && s.unit<minU) minU=s.unit; if(s.score>maxScore) maxScore=s.score; });
+  sc.forEach((s,i)=>{
+    const u=document.getElementById('cmp_res_'+i+'_u');
+    const t=document.getElementById('cmp_res_'+i+'_t');
+    const sv=document.getElementById('cmp_res_'+i+'_s');
+    const row=document.getElementById('cmp_row_'+i);
+    if(u){ u.textContent=s.unit>0?cmpU(s.unit):'—'; u.style.color=(s.unit>0 && Math.abs(s.unit-minU)<1e-6)?'#1c7c4a':'var(--ink)'; }
+    if(t) t.textContent=s.totalCost>0?cmpAr(s.totalCost):'—';
+    if(sv){ sv.textContent=(s.unit>0||s.score>0)?Math.round(s.score*100):'—'; sv.style.color=(s.score>0 && Math.abs(s.score-maxScore)<1e-9)?'#1c7c4a':'var(--ink)'; }
+    if(row) row.style.background=(s.unit>0 && Math.abs(s.unit-minU)<1e-6)?'rgba(28,124,74,0.07)':'';
+  });
+}
+
+function cmpRenderDecision(){
+  const box=document.getElementById('cmpDecision'); if(!box) return;
+  const c=CMP.cur; if(!c) return;
+  const puede=cmpPuedeEditar();
+  const guardadas=CMP.ofertas.filter(o=>o.id!=null);
+  if(c.estado==='decidida'){
+    const el=CMP.ofertas.find(o=>String(o.id)===String(c.elegido_oferta_id));
+    box.innerHTML='<div class="card" style="margin-top:12px;border-left:3px solid #1c7c4a"><div style="padding:14px">'
+      +'<div style="font-weight:700;margin-bottom:6px">Decisión tomada</div>'
+      +'<div style="font-size:13px">Proveedor elegido: <b>'+esc(el?(el.proveedor||'(sin nombre)'):'(oferta no encontrada)')+'</b>'+(el?' · '+cmpU(cmpCalcOferta(el,c).unit)+'/u.':'')+'</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:6px">Justificación: '+esc(c.justificacion||'—')+'</div>'
+      +'<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Por '+esc(c.decidido_por||'—')+' · '+fmtDate(c.decidido_en)+'</div>'
+      +'</div></div>';
+    return;
+  }
+  if(!puede){ box.innerHTML=''; return; }
+  if(guardadas.length<3){
+    box.innerHTML='<div class="card" style="margin-top:12px"><div style="padding:14px;color:var(--muted);font-size:12.5px">Para decidir necesitás al menos <b>3 ofertas guardadas</b>. Cargá las ofertas y tocá <b>Guardar</b> (llevás '+guardadas.length+').</div></div>';
+    return;
+  }
+  const sc=cmpScores(guardadas, c);
+  let best=-Infinity, bestId=null;
+  guardadas.forEach((o,i)=>{ if(sc[i].score>best){ best=sc[i].score; bestId=o.id; } });
+  const opts=guardadas.map((o,i)=>'<option value="'+o.id+'"'+(o.id===bestId?' selected':'')+'>'+esc(o.proveedor||'(sin nombre)')+' · '+cmpU(sc[i].unit)+'/u · puntaje '+Math.round(sc[i].score*100)+'</option>').join('');
+  box.innerHTML='<div class="card" style="margin-top:12px"><div class="card-h"><h3 style="margin:0">Decisión</h3><span class="meta">El sistema sugiere el mejor puntaje; la decisión es del comprador</span></div>'
+    +'<div style="padding:12px 14px">'
+    +'<div class="frow c2"><div class="field"><label>Proveedor elegido</label><select id="cmp_elegido">'+opts+'</select></div>'
+    +'<div class="field"><label>Sugerido por puntaje</label><input value="'+esc((guardadas.find(o=>o.id===bestId)||{}).proveedor||'')+'" disabled></div></div>'
+    +'<div class="field"><label>Justificación *</label><textarea id="cmp_justif" rows="2" placeholder="Por qué se elige esta oferta (precio, plazo, calidad, relación con el proveedor…)">'+esc(c.justificacion||'')+'</textarea></div>'
+    +'<div style="text-align:right;margin-top:8px"><button class="btn" onclick="cmpDecidir()">Guardar decisión</button></div>'
+    +'</div></div>';
+}
+
+async function cmpGuardarTodo(){
+  if(!cmpPuedeEditar()){ toast('Sin permiso.'); return; }
+  cmpSync();
+  const c=CMP.cur;
+  try{
+    // cabecera
+    const cab={ material:c.material||null, codigo:c.codigo||null, solp_num:c.solp_num||null,
+      cantidad:c.cantidad||0, unidad:c.unidad||null, fecha_necesidad:c.fecha_necesidad||null,
+      tasa_mensual:c.tasa_mensual||0, tc_default:c.tc_default,
+      peso_precio:c.peso_precio, peso_plazo:c.peso_plazo, peso_eval:c.peso_eval };
+    await sbFetch('/compras_comparativas?id=eq.'+CMP.actualId,{method:'PATCH',body:JSON.stringify(cab),prefer:'return=minimal'});
+    // ofertas eliminadas
+    const curIds=CMP.ofertas.filter(o=>o.id!=null).map(o=>o.id);
+    const borrar=(CMP.ofertasOrig||[]).filter(id=>!curIds.includes(id));
+    for(const id of borrar){ try{ await sbFetch('/compras_comparativa_ofertas?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){ } }
+    // upsert ofertas
+    for(const o of CMP.ofertas){
+      const calc=cmpCalcOferta(o,c);
+      const pay={ comparativa_id:CMP.actualId, proveedor:o.proveedor||null, proveedor_cod:cmpResolveProvCod(o.proveedor)||null,
+        presentacion:o.presentacion||null, precio:(o.precio===''?0:+o.precio), factor:(o.factor===''?1:+o.factor),
+        moneda:o.moneda||'ARS', tc:(o.tc===''?null:+o.tc), iva_incluido:!!o.iva_incluido,
+        bonif_pct:(o.bonif_pct===''?0:+o.bonif_pct), cond_pago_dias:(o.cond_pago_dias===''?0:+o.cond_pago_dias),
+        plazo_entrega_dias:(o.plazo_entrega_dias===''?null:+o.plazo_entrega_dias),
+        evaluacion:(o.evaluacion===''?null:+o.evaluacion), flete:(o.flete===''?0:+o.flete),
+        flete_incluido:!!o.flete_incluido, observaciones:o.observaciones||null,
+        precio_homogeneizado:(calc.unit>0?calc.unit:null) };
+      if(o.id!=null) await sbFetch('/compras_comparativa_ofertas?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(pay),prefer:'return=minimal'});
+      else await sbFetch('/compras_comparativa_ofertas',{method:'POST',body:JSON.stringify(pay),prefer:'return=minimal'});
+    }
+    toast('Comparativa guardada.');
+    await cmpLoadLista();
+    await cmpAbrir(CMP.actualId);   // recarga ofertas con ids frescos
+  }catch(e){ toast('No se pudo guardar: '+e.message); }
+}
+
+async function cmpDecidir(){
+  const sel=document.getElementById('cmp_elegido'); const jus=document.getElementById('cmp_justif');
+  const elegido=sel?+sel.value:null;
+  const justif=jus?jus.value.trim():'';
+  const guardadas=CMP.ofertas.filter(o=>o.id!=null);
+  if(guardadas.length<3){ toast('Necesitás al menos 3 ofertas guardadas.'); return; }
+  if(!elegido){ toast('Elegí un proveedor.'); return; }
+  if(!justif){ toast('La justificación es obligatoria.'); return; }
+  try{
+    const pay={ elegido_oferta_id:elegido, justificacion:justif, estado:'decidida', decidido_por:cmpUser(), decidido_en:new Date().toISOString() };
+    await sbFetch('/compras_comparativas?id=eq.'+CMP.actualId,{method:'PATCH',body:JSON.stringify(pay),prefer:'return=minimal'});
+    toast('Decisión guardada.');
+    await cmpLoadLista(); await cmpAbrir(CMP.actualId);
+  }catch(e){ toast('No se pudo guardar la decisión: '+e.message); }
+}
+async function cmpReabrir(){
+  if(!cmpPuedeEditar()) return;
+  try{
+    await sbFetch('/compras_comparativas?id=eq.'+CMP.actualId,{method:'PATCH',body:JSON.stringify({estado:'abierta', elegido_oferta_id:null, decidido_por:null, decidido_en:null}),prefer:'return=minimal'});
+    toast('Comparativa reabierta.');
+    await cmpLoadLista(); await cmpAbrir(CMP.actualId);
+  }catch(e){ toast('No se pudo reabrir: '+e.message); }
+}
+
+// crear comparativa desde una SOLP (prefill obra + N° SOLP)
+function cmpDesdeSolp(id){
+  const cur=(SOLP.rows||[]).find(x=>String(x.id)===String(id))||{};
+  cmpNueva({ codigo:cur.obra_cod||'', solp_num:(cur.solp!=null?cur.solp:''), solp_id:cur.id!=null?cur.id:null, material:cur.rubro||'' });
+}
+window.cmpNueva=cmpNueva; window.cmpCrear=cmpCrear; window.cmpAbrir=cmpAbrir; window.cmpVolver=cmpVolver;
+window.cmpAddOferta=cmpAddOferta; window.cmpDelOferta=cmpDelOferta; window.cmpRecalc=cmpRecalc;
+window.cmpGuardarTodo=cmpGuardarTodo; window.cmpDecidir=cmpDecidir; window.cmpReabrir=cmpReabrir; window.cmpDesdeSolp=cmpDesdeSolp;
 
 (async function start(){
   try{ fetchUSD(); }catch(e){}
