@@ -2698,13 +2698,30 @@ function renderPanol(){
       + '</tbody></table></div>'+(saldos.length>500?'<div style="font-size:11px;color:var(--muted);padding:6px 4px">Mostrando 500 de '+saldos.length+'.</div>':'')
     : '<div style="padding:10px 4px;color:var(--muted);font-size:12.5px">Sin saldos importados todavía.</div>';
 
-  const movHead='<th>Fecha</th><th>Depósito</th><th>Artículo</th><th style="text-align:right">Cantidad</th><th>Obra</th><th>Operario</th><th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th><th>Exportado</th>';
-  const movRows = rows.length ? rows.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.cod_deposito)+'</td><td>'+esc(r.cod_articulo)+' · '+esc(artDesc(r.cod_articulo)||'')+'</td>'
+  // Egresos a producción: filtros tipo Excel por columna, buscador y orden por columna
+  xlfRegister('pne',{ rows:()=>rows, onChange:renderPanol, dateVal:r=>String(r.fecha||'').slice(0,10),
+    val:(r,col)=>{
+      if(col==='dep') return r.cod_deposito||'(sin depósito)';
+      if(col==='art') return (r.cod_articulo||'')+' · '+(artDesc(r.cod_articulo)||'');
+      if(col==='cant') return fmtNum(r.cantidad,2)+' '+(r.um||'');
+      if(col==='obra') return r.proyecto_cod||'(sin obra)';
+      if(col==='oper') return r.operario||'(sin operario)';
+      if(col==='tars') return fmtNum(r.total_ars,2);
+      if(col==='tusd') return fmtNum(r.total_usd,2);
+      if(col==='exp') return r.exportado?'Sí':'No';
+      return '';
+    } });
+  if(!SP_SORT.pne) SP_SORT.pne={k:'fecha',dir:-1};
+  const qE=(PANOL_EGQ||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const shown=_spOrdenar('pne', rows.filter(r=>xlfPass('pne',r) && (!qE.length || qE.every(w=>[r.cod_articulo,artDesc(r.cod_articulo),r.proyecto_cod,r.operario,r.cod_deposito].join(' ').toLowerCase().includes(w)))),
+    {fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), dep:r=>r.cod_deposito, art:r=>r.cod_articulo, cant:r=>+r.cantidad||0, obra:r=>r.proyecto_cod, oper:r=>r.operario, tars:r=>+r.total_ars||0, tusd:r=>+r.total_usd||0, exp:r=>r.exportado?1:0});
+  const movHead=_pnTh('Fecha','__fecha__','fecha','pne')+_pnTh('Depósito','dep','dep','pne')+_pnTh('Artículo','art','art','pne')+_pnTh('Cantidad','cant','cant','pne')+_pnTh('Obra','obra','obra','pne')+_pnTh('Operario','oper','oper','pne')+_pnTh('Total ARS','tars','tars','pne')+_pnTh('Total USD','tusd','tusd','pne')+_pnTh('Exportado','exp','exp','pne');
+  const movRows = shown.length ? shown.map(r=>'<tr><td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.cod_deposito)+'</td><td>'+esc(r.cod_articulo)+' · '+esc(artDesc(r.cod_articulo)||'')+'</td>'
       +'<td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.proyecto_cod)+'</td><td>'+esc(r.operario||'')+'</td>'
-      +'<td style="text-align:right">'+fmtNum(r.total_ars,2)+'</td><td style="text-align:right">'+fmtNum(r.total_usd,2)+'</td>'
+      +'<td style="text-align:right">'+panolMon('$',fmtNum(r.total_ars,2))+'</td><td style="text-align:right">'+panolMon('US$',fmtNum(r.total_usd,2))+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
       +'<td><div class="row-actions">'+(r.exportado||panolPeriodoCerrado(+r.periodo)?'':'<button class="iconbtn" title="Editar" onclick="openPanolEgresoForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
-    : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Sin egresos cargados en este período.</td></tr>';
+    : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Sin egresos'+(rows.length?' con esos filtros':' cargados en este período')+'.</td></tr>';
 
   const resumenTbl=(list,label)=>'<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>'+label+'</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th></tr></thead><tbody>'
     +(list.length?list.map(x=>'<tr><td>'+esc(x.cod)+'</td><td style="text-align:right">'+fmtNum(x.cantidad,2)+'</td><td style="text-align:right">'+fmtNum(x.ars,2)+'</td><td style="text-align:right">'+fmtNum(x.usd,2)+'</td></tr>').join('')
@@ -2718,12 +2735,13 @@ function renderPanol(){
       +'<div style="padding:10px 16px 14px">'+saldosTbl+'</div></div>'
 
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px">'
-      +'<h3 style="margin:0">Egresos a producción</h3><span class="meta">Período '+periodoInput+' · '+rows.length+' movimientos · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+'</span>'
-      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" onclick="openPanolSyncPrecios()">Importar costos (Precios)</button>'
+      +'<h3 style="margin:0">Egresos a producción</h3><span class="meta">Período '+periodoInput+' · '+(shown.length!==rows.length?shown.length+' de ':'')+rows.length+' movimientos · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+'</span>'
+      +'<input value="'+esc(PANOL_EGQ)+'" placeholder="Buscar artículo, obra, operario…" onchange="PANOL_EGQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:230px">'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pne').replace('margin-left:auto','')+(PANOL_EGQ?'<button class="btn ghost sm" onclick="PANOL_EGQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolEgr\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="openPanolSyncPrecios()">Importar costos (Precios)</button>'
       +'<button class="btn ghost sm" onclick="panolGenerarEgresoTango()">Generar egreso para Tango'+(pendientesTot?' ('+pendientesTot+')':'')+'</button>'
       +'<button class="btn sm" onclick="openPanolEgresoForm()">'+ICO.plus+'Cargar egreso</button></span></div>'
       +'<div style="font-size:11.5px;color:var(--muted);padding:0 16px 8px">"Generar egreso para Tango" toma todos los movimientos pendientes de exportar (de cualquier período), no solo los de arriba.</div>'
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid"><thead><tr>'+movHead+'<th style="width:80px"></th></tr></thead><tbody>'+movRows+'</tbody></table></div></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid tbl-ajustada" id="tblPanolEgr"><thead><tr>'+movHead+'<th style="width:80px"></th></tr></thead><tbody>'+movRows+'</tbody></table></div></div>'
 
     +'<div class="frow c2">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Valorización por obra</h3><span class="meta">Período seleccionado</span></div><div style="padding:10px 16px 14px">'+resumenTbl(porObra,'Obra')+'</div></div>'
@@ -3069,6 +3087,7 @@ function renderPanolConc(){
     +'</div></div>';
 }
 
+let PANOL_EGQ='';
 let PANOL_TAB='egresos';
 function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
