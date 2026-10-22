@@ -2664,6 +2664,7 @@ function panolResumenPor(rows, key){
 function renderPanol(){
   if(PANOL_TAB==='erog') return renderPanolErog();
   if(PANOL_TAB==='dic') return renderPanolDic();
+  if(PANOL_TAB==='cierres') return renderPanolCierres();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
   const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
@@ -2686,7 +2687,7 @@ function renderPanol(){
       +'<td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.proyecto_cod)+'</td><td>'+esc(r.operario||'')+'</td>'
       +'<td style="text-align:right">'+fmtNum(r.total_ars,2)+'</td><td style="text-align:right">'+fmtNum(r.total_usd,2)+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
-      +'<td><div class="row-actions">'+(r.exportado?'':'<button class="iconbtn" title="Editar" onclick="openPanolEgresoForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
+      +'<td><div class="row-actions">'+(r.exportado||panolPeriodoCerrado(+r.periodo)?'':'<button class="iconbtn" title="Editar" onclick="openPanolEgresoForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
     : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Sin egresos cargados en este período.</td></tr>';
 
   const resumenTbl=(list,label)=>'<div class="tbl-hscroll tbl-compact" style="max-height:220px"><table class="grid" style="font-size:11.5px"><thead><tr><th>'+label+'</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Total ARS</th><th style="text-align:right">Total USD</th></tr></thead><tbody>'
@@ -2730,7 +2731,7 @@ function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('dic','Diccionario pañol')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 const PANOL_DESTINOS_MODULO=['MANMOD','MANTRF','DTM'];    // clasificaciones que piden indicar el módulo / serie (si queda vacío: GENERICO MODULO)
@@ -2824,6 +2825,7 @@ function _pnTh(label, col, k, ns){ return _spTh(ns||'pnl', label, col, k).replac
 function renderPanolErog(){
   if(PANOL_PLAN) return renderPanolPlanilla();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
+  const cerr=panolPeriodoCerrado(PANOL_PERIODO);
   const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO);
   xlfRegister('pnl',{ rows:()=>base, onChange:renderPanol, dateVal:r=>String(r.fecha||'').slice(0,10),
     val:(r,col)=>{
@@ -2858,13 +2860,13 @@ function renderPanolErog(){
       +'<td title="'+esc([r.precio_proveedor,r.precio_oc?('OC '+r.precio_oc):'',r.precio_fecha_ref?fmtDate(r.precio_fecha_ref):''].filter(Boolean).join(' · '))+'">'+esc(r.fuente_precio||'')+'</td>'
       +'<td>'+panolAlertaBadges(r)+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
-      +'<td><div class="row-actions">'+(r.exportado?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
+      +'<td><div class="row-actions">'+(r.exportado||cerr?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
     : '<tr><td colspan="19" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
   const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" para precios por mes.</div>':'')
     +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Erogaciones de materiales</h3>'
-      +'<span class="meta">Período '+periodoInput+' · '+shown.length+' de '+base.length+' · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+(conAlerta?' · <b style="color:#b3261e">'+conAlerta+' con alarma</b>':'')+'</span>'
+      +'<span class="meta">Período '+periodoInput+(cerr?' <span class="badge b-gris">🔒 Cerrado</span>':'')+' · '+shown.length+' de '+base.length+' · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+(conAlerta?' · <b style="color:#b3261e">'+conAlerta+' con alarma</b>':'')+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pnl')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
@@ -2909,6 +2911,7 @@ window.comboPanolArt=comboPanolArt;
 function openPanolErogForm(id){
   const cur=id!=null?(DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)):null;
   if(cur && cur.exportado){ toast('Esta erogación ya se exportó a Tango; no se puede editar.'); return; }
+  if(cur && panolBloqueoCierre(cur.periodo)) return;
   const hoy=new Date().toISOString().slice(0,10), ahora=new Date().toTimeString().slice(0,5);
   const dep0=cur?cur.cod_deposito:PANOL_LAST_DEP;
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
@@ -3012,6 +3015,7 @@ async function guardarPanolErog(id){
   const fecha=g('pe_fecha'), cant=+g('pe_cant')||0, proyecto_cod=g('pn_obra'), cod_deposito=g('pe_dep');
   const ra=panolArtResolver(g('pe_art'));
   if(!fecha){ toast('Elegí una fecha'); return; }
+  if(panolBloqueoCierre((+fecha.slice(0,4))*100+(+fecha.slice(5,7)))) return;
   if(!ra.cod && !ra.libre){ toast('Indicá el artículo'); return; }
   if(!cant){ toast('Ingresá una cantidad'); return; }
   if(!proyecto_cod){ toast('Elegí el destino de la lista (escribí código o nombre)'); return; }
@@ -3038,18 +3042,12 @@ window.guardarPanolErog=guardarPanolErog;
 
 // Vuelve a calcular el precio de las erogaciones del período que no estén exportadas ni tengan precio manual
 async function panolRecalcularPrecios(){
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.fuente_precio!=='Manual' && r.cod_articulo);
   if(!rows.length){ toast('No hay erogaciones para recalcular en este período'); return; }
   let n=0;
-  for(const r of rows){
-    const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
-    const alerta=panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario))||null;
-    const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; }); upd.alerta=alerta;
-    if(DEMO_MODE){ Object.assign(r,upd); n++; continue; }
-    try{ await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); n++; }
-    catch(e){ toast('No se pudo recalcular: '+(e.message||e)); break; }
-  }
-  if(!DEMO_MODE) await reloadDB();
+  try{ n=await panolRecalcRows(rows); if(!DEMO_MODE) await reloadDB(); }
+  catch(e){ toast('No se pudo recalcular: '+(e.message||e)); return; }
   toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
 }
 window.panolRecalcularPrecios=panolRecalcularPrecios;
@@ -3428,6 +3426,7 @@ function openPanolPlanilla(){
 }
 window.openPanolPlanilla=openPanolPlanilla;
 function ppTraerPeriodo(){
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
   const ya=new Set(PANOL_PLAN.rows.filter(r=>r.id).map(r=>String(r.id)));
   const lst=(DIC.panol_egresos||[]).filter(e=>+e.periodo===PANOL_PERIODO && !e.exportado && !ya.has(String(e.id)))
     .sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))||(+a.id)-(+b.id));
@@ -3439,7 +3438,7 @@ window.ppTraerPeriodo=ppTraerPeriodo;
 function ppFila(k){ return PANOL_PLAN.rows.find(r=>r.k===k); }
 function ppCalc(r){
   const errs=[], ra=panolArtResolver(r.art), cant=+r.cant||0, dep=r.dep||PANOL_PLAN.dep;
-  if(!r.fecha) errs.push('falta fecha');
+  if(!r.fecha) errs.push('falta fecha'); else if(panolPeriodoCerrado((+r.fecha.slice(0,4))*100+(+r.fecha.slice(5,7)))) errs.push('período cerrado');
   if(!ra.cod && !ra.libre) errs.push('falta artículo');
   if(!(cant>0)) errs.push('falta cantidad');
   if(!r.destCod) errs.push('elegí el destino de la lista');
@@ -3748,6 +3747,147 @@ async function ppImportarOk(){
   }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
 }
 window.ppImportarOk=ppImportarOk;
+
+/* ===== Cierres de mes (Pañol → Cierres de mes) =====
+   Igual que la hoja "Cierres" del Excel: un mes cerrado congela los precios de sus erogaciones. Las compras nuevas (historial) solo
+   impactan en meses abiertos. Un período sin cierre cargado está Abierto. Cerrar y reabrir: solo administradores; cada movimiento
+   queda en el historial con usuario, fecha y hora. En la base, un trigger (sql/2026-10_panol_cierres.sql) impide tocar un mes
+   cerrado aunque se salte la pantalla; lo único que sigue permitido es marcar una erogación como exportada a Tango. */
+function panolCierre(per){ return (DIC.panol_cierres||[]).find(c=>+c.periodo===+per)||null; }
+function panolPeriodoCerrado(per){ const c=panolCierre(per); return !!(c&&c.estado==='Cerrado'); }
+function panolPerTxt(per){ const s=String(per); return s.slice(0,4)+'-'+s.slice(4,6); }
+function panolBloqueoCierre(per){
+  if(!panolPeriodoCerrado(per)) return false;
+  toast('El período '+panolPerTxt(per)+' está cerrado: los precios están congelados. Un administrador puede reabrirlo en "Cierres de mes".');
+  return true;
+}
+function panolResumenPeriodo(per){
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===+per), al=r=>String(r.alerta||'');
+  return { n:rows.length, ars:rows.reduce((a,r)=>a+(+r.total_ars||0),0), usd:rows.reduce((a,r)=>a+(+r.total_usd||0),0),
+    conAlerta:rows.filter(r=>al(r)).length, sinPrecio:rows.filter(r=>al(r).includes('SIN PRECIO')).length,
+    sinAlta:rows.filter(r=>al(r).includes(PANOL_ALERTA_SIN_ALTA)).length, revisar:rows.filter(r=>/REVISAR|FECHA POSTERIOR/.test(al(r))).length,
+    sinExportar:rows.filter(r=>!r.exportado).length };
+}
+function panolPeriodosCierre(){
+  const s=new Set([panolPeriodoDefault()]);
+  (DIC.panol_egresos||[]).forEach(r=>{ if(r.periodo) s.add(+r.periodo); });
+  (DIC.panol_cierres||[]).forEach(c=>s.add(+c.periodo));
+  return [...s].sort((a,b)=>b-a);
+}
+// Recalcula el precio del mes de las erogaciones dadas (las de precio manual no se tocan; el que llama las filtra)
+async function panolRecalcRows(rows, prog){
+  let n=0;
+  for(let i=0;i<rows.length;i+=10){
+    if(prog) prog(Math.min(i+10,rows.length), rows.length);
+    await Promise.all(rows.slice(i,i+10).map(async r=>{
+      const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
+      const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; });
+      upd.alerta=panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario))||null;
+      if(!DEMO_MODE) await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'});
+      Object.assign(r,upd); n++;
+    }));
+  }
+  return n;
+}
+function renderPanolCierres(){
+  const filas=panolPeriodosCierre().map(per=>({per, c:panolCierre(per), res:panolResumenPeriodo(per)}));
+  const est=f=>f.c&&f.c.estado==='Cerrado'?'Cerrado':'Abierto';
+  const ult=f=>{ const h=(f.c&&f.c.historial)||[]; return h.length?h[h.length-1]:null; };
+  xlfRegister('pcie',{rows:()=>filas, onChange:renderPanol, val:(f,col)=>col==='estado'?est(f):''});
+  if(!SP_SORT.pcie) SP_SORT.pcie={k:'per',dir:-1};
+  const shown=_spOrdenar('pcie', filas.filter(f=>xlfPass('pcie',f)), {per:f=>f.per, estado:est, n:f=>f.res.n, ars:f=>f.res.ars, usd:f=>f.res.usd, alerta:f=>f.res.conAlerta, sp:f=>f.res.sinPrecio, sx:f=>f.res.sinExportar,
+    ult:f=>{ const h=ult(f); return h?String(h.fecha||''):''; }});
+  const rows=shown.length?shown.map(f=>{
+    const cer=est(f)==='Cerrado', h=ult(f), tieneHist=!!(f.c&&(f.c.historial||[]).length);
+    const acc=(ROLE.admin?(cer?'<button class="btn ghost sm" onclick="openPanolReabrir('+f.per+')">Reabrir</button>':'<button class="btn sm" onclick="openPanolCerrar('+f.per+')">Cerrar mes</button>'):'')
+      +(tieneHist?' <button class="btn ghost sm" onclick="openPanolCierreHist('+f.per+')">Historial</button>':'');
+    const num=v=>v?'<span style="color:#b3261e">'+v+'</span>':'0';
+    return '<tr><td><b>'+panolPerTxt(f.per)+'</b></td><td>'+(cer?'<span class="badge b-gris">🔒 Cerrado</span>':'<span class="badge b-verde">Abierto</span>')+'</td>'
+      +'<td style="text-align:right">'+f.res.n+'</td><td style="text-align:right">'+fmtNum(f.res.ars,2)+'</td><td style="text-align:right">'+fmtNum(f.res.usd,2)+'</td>'
+      +'<td style="text-align:right">'+num(f.res.conAlerta)+'</td><td style="text-align:right">'+num(f.res.sinPrecio)+'</td><td style="text-align:right">'+f.res.sinExportar+'</td>'
+      +'<td style="font-size:11.5px">'+(h?esc(h.accion)+' · '+_spCuando({autor:h.por,fecha:h.fecha}):'<span style="color:var(--muted)">—</span>')+'</td>'
+      +'<td style="font-size:11.5px;color:var(--muted)">'+esc((h&&h.comentario)||(f.c&&f.c.comentario)||'')+'</td>'
+      +'<td style="white-space:nowrap">'+acc+'</td></tr>';
+  }).join(''):'<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--muted)">Sin períodos con esos filtros.</td></tr>';
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Cierres de mes</h3><span class="meta">'+shown.length+' de '+filas.length+' períodos</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pcie')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolCierres\')">Auto-ajustar columnas</button></span></div>'
+      +'<div style="font-size:11.5px;color:var(--muted);padding:0 16px 10px">Al cerrar un mes, los precios de sus erogaciones quedan congelados: no se pueden crear, editar ni eliminar erogaciones de ese mes y las compras nuevas solo impactan en meses abiertos. Solo un administrador puede cerrar o reabrir; queda el historial con usuario, fecha y hora.</div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" id="tblPanolCierres"><thead><tr>'
+      +_pnTh('Período',null,'per','pcie')+_pnTh('Estado','estado','estado','pcie')+_pnTh('Erogaciones',null,'n','pcie')+_pnTh('Total ARS',null,'ars','pcie')+_pnTh('Total USD',null,'usd','pcie')
+      +_pnTh('Con alarma',null,'alerta','pcie')+_pnTh('Sin precio',null,'sp','pcie')+_pnTh('Sin exportar a Tango',null,'sx','pcie')+_pnTh('Último movimiento',null,'ult','pcie')+'<th>Comentario</th><th></th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+window.renderPanolCierres=renderPanolCierres;
+function openPanolCerrar(per){
+  if(!ROLE.admin){ toast('Solo un administrador puede cerrar un mes.'); return; }
+  const r=panolResumenPeriodo(per), grave=r.sinPrecio+r.sinAlta;
+  const avisos=[r.sinPrecio?r.sinPrecio+' sin precio':'', r.sinAlta?r.sinAlta+' con artículo sin alta':'', r.revisar?r.revisar+' para revisar (precio o tipo de cambio)':'', r.sinExportar?r.sinExportar+' todavía sin exportar a Tango':''].filter(Boolean);
+  const body='<div style="font-size:14px;line-height:1.7">Vas a cerrar <b>'+panolPerTxt(per)+'</b>: '+r.n+' erogaciones · $ '+fmtNum(r.ars,2)+' ARS · US$ '+fmtNum(r.usd,2)+'.<br>'
+    +'Al cerrar, los precios quedan <b>congelados</b>: no se podrán crear, editar ni eliminar erogaciones de ese mes, y las compras nuevas no lo afectan. Reabrirlo queda registrado.</div>'
+    +(avisos.length?'<div style="margin:12px 0;padding:8px 12px;border-radius:8px;background:'+(grave?'#fdecea':'#fff6e5')+';border:1px solid '+(grave?'#f3b8b1':'#f0d9a8')+';font-size:12.5px"><b>Antes de cerrar (estado actual):</b> '+avisos.join(' · ')+'.'+(grave?' Si cerrás igual, las que no tienen precio quedan valuadas en $0.':'')+'</div>':'')
+    +'<label style="display:flex;gap:8px;align-items:center;margin:12px 0;font-size:13px"><input type="checkbox" id="pc_recalc" checked> Recalcular los precios de todas las erogaciones del mes antes de congelar (las de precio manual no se tocan)</label>'
+    +'<div class="field"><label>Comentario (opcional)</label><input id="pc_coment" type="text"></div>';
+  openModal('Cerrar mes '+panolPerTxt(per), body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="pcOkBtn" onclick="panolCerrarMes('+per+')">'+(grave?'Cerrar igual':'Cerrar mes')+'</button>');
+}
+window.openPanolCerrar=openPanolCerrar;
+async function panolCerrarMes(per){
+  if(!ROLE.admin){ toast('Solo un administrador puede cerrar un mes.'); return; }
+  const btn=document.getElementById('pcOkBtn'); if(btn){ btn.disabled=true; btn.textContent='Cerrando…'; }
+  const recalc=(document.getElementById('pc_recalc')||{}).checked, coment=((document.getElementById('pc_coment')||{}).value||'').trim();
+  try{
+    if(recalc){
+      const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===+per && r.cod_articulo && r.fuente_precio!=='Manual');
+      await panolRecalcRows(rows,(a,b)=>{ if(btn) btn.textContent='Recalculando '+a+' de '+b+'…'; });
+    }
+    const res=panolResumenPeriodo(per), ahora=new Date().toISOString(), por=(AUTH_USER&&AUTH_USER.email)||'demo', prev=panolCierre(per);
+    const hist=((prev&&prev.historial)||[]).concat([{accion:'Cerrado', fecha:ahora, por, comentario:coment, resumen:res}]);
+    const row={periodo:+per, estado:'Cerrado', cerrado_en:ahora, cerrado_por:por, comentario:coment||null, historial:hist};
+    if(DEMO_MODE){ DIC.panol_cierres=DIC.panol_cierres||[]; const i=DIC.panol_cierres.findIndex(c=>+c.periodo===+per); if(i>=0) DIC.panol_cierres[i]=row; else DIC.panol_cierres.push(row); }
+    else{
+      await sbFetch('/compras_panol_cierres',{method:'POST',body:JSON.stringify(row),prefer:'resolution=merge-duplicates,return=minimal'});
+      await reloadDB();
+    }
+    closeModal(); toast('Mes '+panolPerTxt(per)+' cerrado: precios congelados'); renderPanol();
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='Cerrar mes'; }
+    toast('No se pudo cerrar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_cierres.sql?). El mes sigue abierto.');
+    renderPanol();
+  }
+}
+window.panolCerrarMes=panolCerrarMes;
+function openPanolReabrir(per){
+  if(!ROLE.admin){ toast('Solo un administrador puede reabrir un mes.'); return; }
+  openModal('Reabrir mes '+panolPerTxt(per),
+    '<div style="font-size:14px;line-height:1.7">Al reabrir <b>'+panolPerTxt(per)+'</b> se pueden volver a crear, editar y eliminar sus erogaciones y recalcular sus precios. Queda registrado quién lo reabrió y por qué.</div>'
+    +'<div class="field" style="margin-top:12px"><label>Motivo *</label><input id="pc_motivo" type="text" placeholder="Por qué se reabre"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" id="pcOkBtn" onclick="panolReabrirMes('+per+')">Reabrir</button>');
+}
+window.openPanolReabrir=openPanolReabrir;
+async function panolReabrirMes(per){
+  if(!ROLE.admin){ toast('Solo un administrador puede reabrir un mes.'); return; }
+  const motivo=((document.getElementById('pc_motivo')||{}).value||'').trim();
+  if(!motivo){ toast('Indicá el motivo de la reapertura'); return; }
+  const prev=panolCierre(per); if(!prev){ toast('Ese mes no está cerrado'); return; }
+  const ahora=new Date().toISOString(), por=(AUTH_USER&&AUTH_USER.email)||'demo';
+  const hist=(prev.historial||[]).concat([{accion:'Reabierto', fecha:ahora, por, comentario:motivo}]);
+  try{
+    if(DEMO_MODE){ prev.estado='Abierto'; prev.historial=hist; }
+    else{ await sbFetch('/compras_panol_cierres?periodo=eq.'+per,{method:'PATCH',body:JSON.stringify({estado:'Abierto', historial:hist}),prefer:'return=minimal'}); await reloadDB(); }
+  }catch(e){ toast('No se pudo reabrir: '+(e.message||e)); return; }
+  closeModal(); toast('Mes '+panolPerTxt(per)+' reabierto'); renderPanol();
+}
+window.panolReabrirMes=panolReabrirMes;
+function openPanolCierreHist(per){
+  const c=panolCierre(per), h=((c&&c.historial)||[]).slice().reverse();
+  openModal('Historial de '+panolPerTxt(per),
+    h.length?h.map(x=>'<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="badge '+(x.accion==='Cerrado'?'b-gris':'b-verde')+'">'+esc(x.accion)+'</span> '+_spCuando({autor:x.por,fecha:x.fecha})
+      +(x.comentario?'<div style="margin-top:4px">'+esc(x.comentario)+'</div>':'')
+      +(x.resumen?'<div style="margin-top:4px;color:var(--muted);font-size:11.5px">'+x.resumen.n+' erogaciones · $ '+fmtNum(x.resumen.ars,2)+' ARS · US$ '+fmtNum(x.resumen.usd,2)+' · '+x.resumen.conAlerta+' con alarma</div>':'')+'</div>').join(''):'<div style="color:var(--muted)">Sin movimientos.</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>');
+}
+window.openPanolCierreHist=openPanolCierreHist;
 
 /* ---- Importar historial de compras ("Informe APP Costeos" de Tango) ----
    Mismo filtro que el Excel: artículos GC*, con fecha, cantidad > 0, total > 0, cotización > 0 y renglón en
@@ -5045,6 +5185,7 @@ window.gpQuitarFiltro=gpQuitarFiltro;
 function openPanolEgresoForm(id){
   const cur = id!=null ? (DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)) : null;
   if(cur && cur.exportado){ toast('Este egreso ya se exportó a Tango; no se puede editar.'); return; }
+  if(cur && panolBloqueoCierre(cur.periodo)) return;
   const hoy=new Date().toISOString().slice(0,10);
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(cur&&cur.cod_deposito===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
   // Obra: buscador (igual que SOLP). Código en el hidden #pn_obra, texto visible en #pn_obra_q.
@@ -5099,6 +5240,7 @@ async function guardarPanolEgreso(id){
   if(!cantidad){ toast('Ingresá una cantidad'); return; }
   if(!proyecto_cod){ toast('Elegí la obra de la lista (escribí código o nombre)'); return; }
   const periodo=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
+  if(panolBloqueoCierre(periodo)) return;
   const row={ fecha, periodo, cod_deposito, cod_articulo, cantidad, um, proyecto_cod, operario,
     costo_unit_ars, costo_unit_usd, total_ars:+(cantidad*costo_unit_ars).toFixed(2), total_usd:+(cantidad*costo_unit_usd).toFixed(2),
     comentario, exportado:false };
@@ -5117,11 +5259,13 @@ async function guardarPanolEgreso(id){
 window.guardarPanolEgreso=guardarPanolEgreso;
 function askPanolEgresoDel(id){
   const r=(DIC.panol_egresos||[]).find(x=>String(x.id)===String(id)); if(r&&r.exportado){ toast('Ya se exportó a Tango; no se puede eliminar.'); return; }
+  if(r && panolBloqueoCierre(r.periodo)) return;
   openModal('Eliminar egreso','<p style="margin:0;font-size:14px">¿Eliminar este egreso de pañol?</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmPanolEgresoDel('+id+')">Eliminar</button>');
 }
 window.askPanolEgresoDel=askPanolEgresoDel;
 async function confirmPanolEgresoDel(id){
+  { const r0=(DIC.panol_egresos||[]).find(x=>String(x.id)===String(id)); if(r0 && panolBloqueoCierre(r0.periodo)) return; }
   if(!DEMO_MODE){ try{ await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(e){ toast('No se pudo eliminar'); return; } }
   DIC.panol_egresos=(DIC.panol_egresos||[]).filter(r=>String(r.id)!==String(id));
   closeModal(); toast('Eliminado'); renderPanol();
@@ -13490,6 +13634,10 @@ async function reloadDicts(background){
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const ci = await sbFetchAll('/compras_panol_cierres?select=*&order=periodo.asc');
+        if(ci) DIC.panol_cierres = ci;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const um = await sbFetchAll('/compras_unidades_medida?select=*&order=codigo.asc');
