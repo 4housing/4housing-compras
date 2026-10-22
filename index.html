@@ -10378,14 +10378,25 @@ async function sbArtUm(path, method, body, prefer){
   }
   return sbFetch(path, opts(sinUm(body)));
 }
+// Precio del artículo en ARS o USD con tipo de cambio (el último que escribís manda; si cambiás el TC se recalcula el otro)
+function caPx(que){
+  const ars=document.getElementById('ca_ars'), usd=document.getElementById('ca_usd'), tc=document.getElementById('ca_tc'), f=(document.getElementById('ca_fecha')||{}).value||new Date().toISOString().slice(0,10);
+  if(que==='ars'||que==='usd') tc.dataset.ancla=que; if(que==='tc') tc.dataset.manual=1;
+  if(que!=='tc' && !tc.dataset.manual){ const d=panolTcOficial(f); if(d) tc.value=d.toFixed(2); }
+  const t=+tc.value||0; if(!(t>0)) return;
+  if((tc.dataset.ancla||'ars')==='usd'){ const u=+usd.value||0; ars.value=u?+(u*t).toFixed(4):''; }
+  else{ const a=+ars.value||0; usd.value=a?+(a/t).toFixed(8):''; }
+}
+window.caPx=caPx;
 function openEditarCostoArt(codigo){
   if(!ROLE.admin){ toast('Solo un administrador puede editar el costo de referencia.'); return; }
   const a=(DIC.articulos||[]).find(x=>x.codigo===codigo); if(!a) return;
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">'+esc(a.codigo)+' — '+esc(a.descripcion)+'</div>'
-    +'<div class="frow c2"><div class="field"><label>Precio ARS</label><input id="ca_ars" type="number" step="0.01" value="'+(a.costo_ars!=null?a.costo_ars:'')+'"></div>'
-    +'<div class="field"><label>Precio USD</label><input id="ca_usd" type="number" step="0.01" value="'+(a.costo_usd!=null?a.costo_usd:'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Precio ARS (por unidad)</label><input id="ca_ars" type="number" step="any" value="'+(a.costo_ars!=null?a.costo_ars:'')+'" oninput="caPx(\'ars\')"></div>'
+    +'<div class="field"><label>Precio USD (por unidad)</label><input id="ca_usd" type="number" step="any" value="'+(a.costo_usd!=null?a.costo_usd:'')+'" oninput="caPx(\'usd\')"></div></div>'
+    +'<div class="field"><label>Tipo de cambio (ARS por USD)</label><input id="ca_tc" type="number" step="any" value="'+((+a.costo_ars>0&&+a.costo_usd>0)?(a.costo_ars/a.costo_usd).toFixed(2):'')+'" oninput="caPx(\'tc\')"><div id="ca_tcNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px">Cargá el precio en pesos o en dólares: el otro se calcula con el TC de la fecha de referencia (BNA venta), que podés ajustar. El USD se guarda con todos los decimales.</div></div>'
     +'<div class="frow c2"><div class="field"><label>Proveedor ref.</label><input id="ca_prov" type="text" value="'+esc(a.costo_proveedor||'')+'"></div>'
-    +'<div class="field"><label>Fecha ref.</label><input id="ca_fecha" type="date" value="'+esc(a.costo_fecha||'')+'"></div></div>'
+    +'<div class="field"><label>Fecha ref.</label><input id="ca_fecha" type="date" value="'+esc(a.costo_fecha||'')+'" onchange="caPx(\'fecha\')"></div></div>'
     +'<div class="field"><label>Unidad de medida (la que se sugiere al cargar)</label><select id="ca_um"><option value="">— sin asignar —</option>'+panolUmOptionsHtml(a.um||'')+'</select></div>';
   openModal('Editar costo de referencia y U.M.', body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCostoArt(\''+esc(codigo)+'\')">Guardar</button>');
@@ -11743,7 +11754,7 @@ function paintDic(){
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.cuenta_cod||'—')+'</td>'
         +'<td style="font-size:12px">'+esc(r.cuenta||'—')+'</td>'
         +'<td style="text-align:right;font-size:11.5px">'+(r.costo_ars?('$ '+fmtNum(r.costo_ars,2)):'—')+'</td>'
-        +'<td style="text-align:right;font-size:11.5px">'+(r.costo_usd?('US$ '+fmtNum(r.costo_usd,2)):'—')+'</td>'
+        +'<td style="text-align:right;font-size:11.5px">'+(r.costo_usd?('US$ '+fmtNum(r.costo_usd,+r.costo_usd<1?4:2)):'—')+'</td>'
         +'<td style="text-align:right;font-size:11.5px;color:var(--muted)">'+(r._tc?fmtNum(r._tc,2):'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.costo_proveedor||'—')+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+(r.costo_fecha?fmtDate(r.costo_fecha):'—')+'</td>'
