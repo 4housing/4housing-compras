@@ -3705,13 +3705,38 @@ function ppHora(v){
   const m=String(v||'').match(/(\d{1,2}):(\d{2})/); return m?m[1].padStart(2,'0')+':'+m[2]:'';
 }
 // aoa = filas de celdas (con o sin fila de títulos). Devuelve la cantidad de filas agregadas a la planilla.
-function ppImportarAoa(aoa){
+// Formatos que sabe leer (con o sin fila de títulos). Se elige mirando los datos: la columna de fecha tiene que ser fecha y la de cantidad un número.
+const PP_FORMATOS={
+  AR:{lbl:'hoja EROGACIONES, columnas A a R', map:{fecha:4,dest:5,serie:6,galpon:8,proceso:9,solp:10,cod:11,art:12,um:13,cant:14,oper:15,horario:16,coment:17}},
+  ER:{lbl:'hoja EROGACIONES, desde FECHA', map:{fecha:0,dest:1,serie:2,galpon:4,proceso:5,solp:6,cod:7,art:8,um:9,cant:10,oper:11,horario:12,coment:13}},
+  PL:{lbl:'plantilla de la app', map:{fecha:0,horario:1,dest:2,serie:3,proceso:4,galpon:5,solp:6,art:7,cant:8,um:9,oper:10,dep:11,coment:12}}
+};
+let _PP_FMT_LBL='';
+function ppPuntaje(map, filas){
+  if(!filas.length || map.fecha==null || map.cant==null) return 0;
+  let p=0;
+  filas.forEach(f=>{ if(_pnFecha(f[map.fecha])) p++; const c=parseFloat(String(f[map.cant]==null?'':f[map.cant]).replace(',','.')); if(!isNaN(c)&&c>0) p++; });
+  return p/(2*filas.length);
+}
+function ppDetectar(aoa, formato){
+  const H=aoa[0].map(x=>String(x==null?'':x).trim());
+  const datos=aoa.slice(1,26).length?aoa.slice(1,26):aoa.slice(0,1);
+  if((!formato||formato==='auto') && _syncIdx(H,...PP_COLS.art)>=0 && _syncIdx(H,...PP_COLS.cant)>=0){
+    const col={}; Object.keys(PP_COLS).forEach(c=>{ const i=_syncIdx(H,...PP_COLS[c]); if(i>=0) col[c]=i; });
+    if(ppPuntaje(col,datos)>=0.7) return {col, ini:1, lbl:'según los títulos'};   // si los títulos no coinciden con los datos (ej. plantilla con datos de la hoja EROGACIONES) se ignoran
+  }
+  let f=(formato&&formato!=='auto')?formato:null;
+  if(!f){ let mejor=0; ['AR','ER','PL'].forEach(k=>{ const sc=ppPuntaje(PP_FORMATOS[k].map,datos); if(sc>mejor){ mejor=sc; f=k; } }); if(mejor<0.7) f=null; }
+  if(!f) return null;
+  const m=PP_FORMATOS[f].map;
+  return {col:{...m}, ini:_pnFecha(aoa[0][m.fecha])?0:1, lbl:PP_FORMATOS[f].lbl};
+}
+function ppImportarAoa(aoa, formato){
   aoa=aoa.filter(f=>f.some(c=>String(c==null?'':c).trim()!==''));
   if(!aoa.length) return 0;
-  let col={}, ini=0;
-  const H=aoa[0].map(x=>String(x==null?'':x).trim());
-  if(_syncIdx(H,...PP_COLS.art)>=0 && _syncIdx(H,...PP_COLS.cant)>=0){ Object.keys(PP_COLS).forEach(c=>{ const i=_syncIdx(H,...PP_COLS[c]); if(i>=0) col[c]=i; }); ini=1; }
-  else{ Object.keys(PP_COLS).forEach(c=>{ col[c]=['fecha','horario','dest','serie','proceso','galpon','solp','art','cant','um','oper','dep','coment'].indexOf(c); }); }
+  const det=ppDetectar(aoa, formato);
+  if(!det){ _PP_FMT_LBL=''; return 0; }
+  const col=det.col, ini=det.ini; _PP_FMT_LBL=det.lbl;
   const get=(f,c)=>{ const v=col[c]!=null?f[col[c]]:''; return v==null?'':v; };
   const txt=(f,c)=>String(get(f,c)).trim();
   const deps=DIC.depositos||[], gal=DIC.panol_galpones||[];
@@ -3740,16 +3765,18 @@ function ppImportarAoa(aoa){
 }
 function openPpPegar(){
   openModal('Pegar desde Excel',
-    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Copiá las celdas en Excel (con la fila de títulos, o sin ella en el orden de la plantilla) y pegalas acá. Sirve también la hoja EROGACIONES: se toman FECHA, IF, SERIE, GALPON, PROCESO, SOLP, Articulo, U.M., CANTIDAD ENTREGADA, OPERARIO, HORARIO y COMENTARIO. Las filas se agregan a la planilla sin guardarse.</div>'
-    +'<textarea id="pp_pegar" style="width:100%;height:220px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:8px;font-size:12px;font-family:monospace" placeholder="Pegá acá (Ctrl+V)"></textarea>',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Copiá las celdas en Excel (con o sin la fila de títulos) y pegalas acá. El formato se reconoce solo mirando los datos. Sirve la hoja EROGACIONES (desde la columna A o desde FECHA) y la plantilla de la app: se toman FECHA, IF, SERIE, GALPON, PROCESO, SOLP, Articulo, U.M., CANTIDAD ENTREGADA, OPERARIO, HORARIO y COMENTARIO. Las filas se agregan a la planilla sin guardarse.</div>'
+    +'<textarea id="pp_pegar" style="width:100%;height:220px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:8px;font-size:12px;font-family:monospace" placeholder="Pegá acá (Ctrl+V)"></textarea>'
+    +'<div class="field" style="margin-top:10px"><label>Formato de lo que pegás</label><select id="pp_formato"><option value="auto">Reconocerlo solo (recomendado)</option><option value="AR">Hoja EROGACIONES, columnas A a R</option><option value="ER">Hoja EROGACIONES, desde FECHA (columna E)</option><option value="PL">Plantilla de la app</option></select></div>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="ppPegarOk()">Agregar a la planilla</button>','wide');
 }
 window.openPpPegar=openPpPegar;
 function ppPegarOk(){
   const t=(document.getElementById('pp_pegar')||{}).value||'';
   const aoa=t.replace(/\r/g,'').split('\n').map(l=>l.split('\t'));
-  const n=ppImportarAoa(aoa); if(!n){ toast('No encontré filas para agregar'); return; }
-  closeModal(); renderPanol(); toast(n+' filas agregadas a la planilla. Revisalas en rojo y guardá.');
+  const n=ppImportarAoa(aoa, (document.getElementById('pp_formato')||{}).value||'auto');
+  if(!n){ toast(_PP_FMT_LBL===''?'No reconocí el formato: elegilo en la lista "Formato de lo que pegás"':'No encontré filas para agregar'); return; }
+  closeModal(); renderPanol(); toast(n+' filas agregadas ('+_PP_FMT_LBL+'). Revisalas en rojo y guardá.');
 }
 window.ppPegarOk=ppPegarOk;
 function openPpImportar(){
@@ -3771,8 +3798,8 @@ async function ppImportarOk(){
       if(r.length){ const h=r[0].map(x=>String(x).trim()); if(_syncIdx(h,...PP_COLS.art)>=0 && _syncIdx(h,...PP_COLS.cant)>=0){ aoa=r; break; } }
     }
     if(!aoa) throw new Error('No encontré una hoja con columnas ARTÍCULO y CANTIDAD.');
-    const n=ppImportarAoa(aoa); if(!n) throw new Error('No encontré filas con datos.');
-    closeModal(); renderPanol(); toast(n+' filas agregadas a la planilla. Revisalas en rojo y guardá.');
+    const n=ppImportarAoa(aoa); if(!n) throw new Error(_PP_FMT_LBL===''?'No reconocí el formato de las columnas (fecha y cantidad).':'No encontré filas con datos.');
+    closeModal(); renderPanol(); toast(n+' filas agregadas ('+_PP_FMT_LBL+'). Revisalas en rojo y guardá.');
   }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
 }
 window.ppImportarOk=ppImportarOk;
