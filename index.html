@@ -2887,11 +2887,16 @@ function panolErogArt(r){
   if(r.cod_articulo){ const a=(DIC.articulos||[]).find(x=>x.codigo===r.cod_articulo); return r.cod_articulo+' · '+(a?panolArtNombre(a):''); }
   return '⚠ '+(r.articulo_libre||'(sin artículo)');
 }
+// Etiqueta chica para una observación ya aprobada ("✓ REVISAR"); el nombre completo queda en el tooltip
+function panolBadgeOk(x,tip){
+  const c=x==='REVISAR vs TANGO'?'REVISAR':x==='FECHA POSTERIOR AL MES'?'FECHA':x;
+  return '<span class="badge b-gris" style="font-size:9px;padding:1px 6px;white-space:nowrap" title="'+esc(x)+(tip?' · '+tip:'')+'">✓ '+esc(c)+'</span>';
+}
 function panolAlertaBadges(r){
   const pend=panolCsv(r.alerta), ok=panolCsv(r.alerta_ok);
   const tip=ok.length?'Aprobada por '+esc(r.alerta_ok_por||'')+(r.alerta_ok_en?' · '+fmtDate(String(r.alerta_ok_en).slice(0,10)):''):'';
   return (pend.length?pend.map(x=>'<span class="badge b-rojo" title="'+esc(x)+'">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>')
-    +(ok.length?' '+ok.map(x=>'<span class="badge b-gris" title="'+tip+'">✓ '+esc(x)+'</span>').join(' '):'');
+    +(ok.length?' '+ok.map(x=>panolBadgeOk(x,tip)).join(' '):'');
 }
 function panolBtnAprobar(r, cerr){
   if(cerr || !canEditOG() || !panolPendAprobables(r).length) return '';
@@ -3627,7 +3632,7 @@ function ppResHtml(r,c0){
   const tp=panolAuxTipoDe(r.destCod);
   const modGen=tp&&(!r.serie||r.serie===panolAuxDefecto(tp))?'<span class="badge b-ambar" title="Este destino pide auxiliar: indicá el que corresponde">indicá el auxiliar</span> ':'';
   return modGen+(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>')
-    +(c.aprob&&c.aprob.length?' '+c.aprob.map(x=>'<span class="badge b-gris" title="Observación de precio aprobada">✓ '+esc(x)+'</span>').join(' '):'');
+    +(c.aprob&&c.aprob.length?' '+c.aprob.map(x=>panolBadgeOk(x,'Observación de precio aprobada')).join(' '):'');
 }
 function ppPrecioHtml(r,c,campo){
   if(ppVacia(r)||!c.pr) return '';
