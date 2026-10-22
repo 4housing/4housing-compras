@@ -2743,9 +2743,32 @@ let PANOL_LAST_DEP='';
 function panolDestinoPideModulo(cod){ const c=String(cod||'').toUpperCase().trim(); return PANOL_DESTINOS_MODULO.some(d=>c===d||c.startsWith(d+' ')); }
 function panolFinMes(per){ const y=Math.floor(per/100), m=per%100; return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10); }
 // Dólar oficial BNA venta vigente a esa fecha (último dato igual o anterior), como el XLOOKUP -1 del Excel
+// Caché de 1,5 s para listas y mapas que se consultan por cada fila: cargar cientos de filas en la planilla no tiene que recorrer todo de nuevo cada vez
+const _PN_C={};
+function pnCache(key, deps, fn){
+  const now=Date.now(), c=_PN_C[key];
+  if(c && now-c.t<1500 && c.d.length===deps.length && c.d.every((x,i)=>x===deps[i])) return c.v;
+  const v=fn(); _PN_C[key]={t:now, d:deps, v}; return v;
+}
+const _pnNorm=v=>String(v==null?'':v).replace(/\s+/g,' ').trim().toUpperCase();
+function panolArtMaps(){
+  return pnCache('art',[DIC.articulos,(DIC.articulos||[]).length],()=>{
+    const code=new Map(), sin=new Map(), desc=new Map();
+    (DIC.articulos||[]).forEach(x=>{
+      const c=_pnNorm(x.codigo); if(!code.has(c)) code.set(c,x);
+      if(x.sinonimo){ const sn=_pnNorm(x.sinonimo); if(!sin.has(sn)) sin.set(sn,x); }
+      const d=_pnNorm(x.descripcion); if(d && !desc.has(d)) desc.set(d,x);
+    });
+    return {code,sin,desc};
+  });
+}
+function panolArtPorCod(cod){ return panolArtMaps().code.get(_pnNorm(cod))||null; }
+// Dólar oficial BNA venta vigente a esa fecha (último dato igual o anterior; búsqueda binaria sobre la lista ordenada)
 function panolTcOficial(fechaISO){
-  let best=null;
-  (DIC.usd_diario_oficial||[]).forEach(r=>{ if(r.fecha<=fechaISO && (!best||r.fecha>best.fecha)) best=r; });
+  const l=pnCache('tc',[DIC.usd_diario_oficial,(DIC.usd_diario_oficial||[]).length],()=>(DIC.usd_diario_oficial||[]).slice().sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:0));
+  let lo=0, hi=l.length-1, k=-1;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(l[m].fecha<=fechaISO){ k=m; lo=m+1; } else hi=m-1; }
+  const best=k>=0?l[k]:null;
   const v=best&&best.venta!=null&&best.venta!==''?+best.venta:null;
   return v>0?v:null;
 }
@@ -2773,7 +2796,7 @@ function panolPrecioMes(cod, periodo){
   let row=null; lst.forEach(r=>{ if(r.fecha===ref) row=r; });
   const tcImp=row.usd>0?row.ars/row.usd:null, bna=panolTcOficial(row.fecha);
   const desv=(tcImp&&bna)?tcImp/bna-1:null;
-  const art=(DIC.articulos||[]).find(x=>x.codigo===cod);
+  const art=panolArtPorCod(cod);
   const tango=art&&+art.costo_ars>0?+art.costo_ars:null;
   const varT=(row.fuente==='OC'&&tango)?row.ars/tango-1:null;
   let control;
@@ -2886,15 +2909,15 @@ window.renderPanolErog=renderPanolErog;
 /* ---- Alta / edición ---- */
 function panolArtResolver(txt){
   const t=String(txt||'').trim(); if(!t) return {cod:'', libre:''};
-  const first=t.split(/ — | · /)[0].trim().toUpperCase(), T=t.toUpperCase();
-  const arts=DIC.articulos||[];
-  const a=arts.find(x=>String(x.codigo).toUpperCase()===first)
-       || arts.find(x=>x.sinonimo && String(x.sinonimo).toUpperCase()===T)       // ej. "TORNILLO N°14" (se busca por sinónimo, no por descripción)
-       || arts.find(x=>String(x.descripcion||'').toUpperCase()===T);
+  const first=_pnNorm(t.split(/ — | · /)[0]), T=_pnNorm(t);
+  const M=panolArtMaps();
+  const a=M.code.get(first)
+       || M.sin.get(T)       // ej. "TORNILLO N°14" (se busca por sinónimo, no por descripción)
+       || M.desc.get(T);
   return a?{cod:a.codigo, libre:''}:{cod:'', libre:t};
 }
 function panolArtNombre(a){ return a.sinonimo?(a.sinonimo+' · '+(a.descripcion||'')):(a.descripcion||''); }   // el pañol los nombra por el sinónimo (ej. TORNILLO N°14)
-function panolArtTxt(cod){ const a=(DIC.articulos||[]).find(x=>x.codigo===cod); return a?(a.codigo+' — '+panolArtNombre(a)):cod; }
+function panolArtTxt(cod){ const a=panolArtPorCod(cod); return a?(a.codigo+' — '+panolArtNombre(a)):cod; }
 // Selector de artículo: busca por código, descripción o sinónimo (todas las palabras escritas); primero los que empiezan con lo escrito
 function comboPanolArt(qId, after){
   const inp=document.getElementById(qId||'pe_art'); if(!inp) return;
@@ -3055,7 +3078,8 @@ window.panolRecalcularPrecios=panolRecalcularPrecios;
 /* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
 // Opciones de serie/módulo = Auxiliar 04 (Contenedor/Módulo) habilitado. La serie (patente) es la descripción del auxiliar; el Adic. 1
 // (número de referencia) y la descripción salen de Diccionarios → Módulos, cruzados por serie.
-function panolSeriesSrc(){
+function panolSeriesSrc(){ return pnCache('series',[CONTA_DB.auxopc&&CONTA_DB.auxopc['4'],(SERIES_ACTIVAS||[]).length],_panolSeriesSrc0); }
+function _panolSeriesSrc0(){
   const mods=auxModuloIdx();
   const aux=auxOpts('4').filter(o=>String(o.habil||'').toLowerCase()==='si');
   if(aux.length) return aux.map(o=>{ const sp=auxSerieDe(o), m=mods[sp.toUpperCase()]; return {serie:sp, aux:o.cod, adicional_1:m?(m.adicional_1||''):'', descripcion:m?(m.descripcion||''):''}; }).filter(x=>x.serie);
@@ -3172,7 +3196,7 @@ function panolUmResolver(txt){
 // U.M. del artículo: la asignada en el diccionario de artículos (viene del maestro de Tango); si no tiene, la de los saldos de Tango ("U.M. control stock"); si no está ahí, la de su última erogación
 function panolUmSugerida(cod){
   if(!cod) return '';
-  const art=(DIC.articulos||[]).find(x=>x.codigo===cod);
+  const art=panolArtPorCod(cod);
   if(art&&art.um){ const u=panolUmResolver(art.um); if(u) return u; }
   const s=(DIC.stock_saldos||[]).find(x=>x.cod_articulo===cod&&x.um);
   if(s){ const u=panolUmResolver(s.um); if(u) return u; }
@@ -3402,7 +3426,7 @@ const PP_COPIA=['fecha','horario','dest','destCod','serie','serieTxt','proceso',
 const PP_COLS={
   fecha:['FECHA'], horario:['HORA','HORARIO'], dest:['DESTINO (IF / OBRA)','DESTINO','IF','IF/OBRA','OBRA'],
   serie:['SERIE / MÓDULO','SERIE/MODULO','SERIE','MODULO','MÓDULO'], proceso:['PROCESO'], galpon:['GALPÓN','GALPON'], solp:['SOLP'],
-  art:['ARTÍCULO','ARTICULO'], cant:['CANTIDAD','CANTIDAD ENTREGADA'], um:['U.M.','UM','UNIDAD','UNIDAD DE MEDIDA'],
+  cod:['CODIGO TANGO','CÓDIGO TANGO','COD. TANGO','COD TANGO'], art:['ARTÍCULO','ARTICULO'], cant:['CANTIDAD','CANTIDAD ENTREGADA'], um:['U.M.','UM','UNIDAD','UNIDAD DE MEDIDA'],
   oper:['OPERARIO'], dep:['DEPÓSITO','DEPOSITO'], coment:['COMENTARIO','COMENTARIOS']
 };
 function ppNuevaFila(base){
@@ -3457,32 +3481,35 @@ function ppCalc(r){
 }
 function ppVacia(r){ return !r.id && !String(r.art).trim() && !r.cant; }
 function ppEstado(r){ return r.del?'del':(!r.id?'new':(ppSnap(r)!==r.orig?'mod':'')); }
-function ppResHtml(r){
-  const c=ppCalc(r);
+function ppResHtml(r,c0){
   if(ppVacia(r)) return '';
+  const c=c0||ppCalc(r);
   if(c.errs.length) return '<span style="color:#b3261e">'+esc(c.errs.join(' · '))+'</span>';
   const modGen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO?'<span class="badge b-ambar" title="Este destino pide módulo: quedó GENERICO MODULO; indicá la serie o el Adic. 1 del módulo">indicá el módulo</span> ':'';
   return '<span>'+(c.pr&&c.pr.costo_unit_ars?fmtNum(c.pr.costo_unit_ars,2)+' ARS':'<span style="color:var(--muted)">sin precio</span>')+'</span> '+modGen
     +(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>');
 }
-function ppRecalc(k){
+function ppRecalc(k,sinResumen){
   const r=ppFila(k); if(!r) return;
-  const c=document.getElementById('pp_'+k+'_res'), tr=document.getElementById('pp_tr_'+k);
-  if(c) c.innerHTML=ppResHtml(r);
-  if(tr){ const cc=ppCalc(r), st=ppEstado(r);
+  const cc=ppCalc(r), c=document.getElementById('pp_'+k+'_res'), tr=document.getElementById('pp_tr_'+k);
+  if(c) c.innerHTML=ppResHtml(r,cc);
+  if(tr){ const st=ppEstado(r);
     tr.style.background=r.del?'#f1f1ee':(!ppVacia(r)&&cc.errs.length?'#fdecea':(cc.alerta?'#fff6f4':''));
     tr.style.opacity=r.del?'.5':''; tr.style.textDecoration=r.del?'line-through':''; tr.dataset.st=st;
     const si=document.getElementById('pp_'+k+'_serie'), gen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO;
     if(si){ si.style.borderColor=gen?'#e0a030':''; si.style.background=gen?'#fff8e6':''; }
     const n=document.getElementById('pp_'+k+'_n'); if(n) n.textContent=st==='new'?'nueva':st==='mod'?'editada':st==='del'?'a eliminar':''; }
-  ppResumen();
+  if(!sinResumen) ppResumen();
 }
 function ppResumen(){
   const el=document.getElementById('ppResumen'); if(!el||!PANOL_PLAN) return;
-  const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
-  const n=s=>rows.filter(r=>ppEstado(r)===s).length;
-  const err=rows.filter(r=>!r.del&&ppCalc(r).errs.length).length, al=rows.filter(r=>!r.del&&!ppCalc(r).errs.length&&ppCalc(r).alerta).length;
-  el.innerHTML=rows.length+' filas · '+n('new')+' nuevas · '+n('mod')+' editadas · '+n('del')+' a eliminar'+(err?' · <b style="color:#b3261e">'+err+' con errores</b>':'')+(al?' · '+al+' con alarma':'');
+  let nN=0,nM=0,nD=0,err=0,al=0,tot=0;
+  PANOL_PLAN.rows.forEach(r=>{
+    if(ppVacia(r)) return; tot++;
+    const st=ppEstado(r); if(st==='new') nN++; else if(st==='mod') nM++; else if(st==='del') nD++;
+    if(!r.del){ const c=ppCalc(r); if(c.errs.length) err++; else if(c.alerta) al++; }
+  });
+  el.innerHTML=tot+' filas · '+nN+' nuevas · '+nM+' editadas · '+nD+' a eliminar'+(err?' · <b style="color:#b3261e">'+err+' con errores</b>':'')+(al?' · '+al+' con alarma':'');
 }
 function ppSet(k,f,v){
   const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null;
@@ -3530,7 +3557,7 @@ function ppCompletarAbajo(c){
   renderPanol(); toast('Completado hacia abajo con "'+src[c==='serie'?'serieTxt':c]+'"');
 }
 window.ppCompletarAbajo=ppCompletarAbajo;
-function ppDepDefecto(v){ PANOL_PLAN.dep=v; PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k)); }
+function ppDepDefecto(v){ PANOL_PLAN.dep=v; PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true)); ppResumen(); }
 window.ppDepDefecto=ppDepDefecto;
 function ppDescartar(){
   const cambios=PANOL_PLAN&&PANOL_PLAN.rows.some(r=>!ppVacia(r)&&ppEstado(r));
@@ -3564,7 +3591,7 @@ function ppRowHtml(r,i){
     +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
     +sel('dep','<option value="">(por defecto)</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'onchange="ppSet('+K+',\'dep\',this.value)"')
     +inp('coment','text',r.coment,'oninput="ppSet('+K+',\'coment\',this.value)"',110)
-    +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:170px">'+ppResHtml(r)+'</td>'
+    +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:170px"></td>'
     +'<td><button class="iconbtn del" title="'+(r.id?'Marcar para eliminar / deshacer':'Quitar fila')+'" onclick="ppQuitar('+K+')">'+ICO.del+'</button></td></tr>';
 }
 function renderPanolPlanilla(){
@@ -3587,7 +3614,8 @@ function renderPanolPlanilla(){
       +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid" id="tblPanolPlan"><thead><tr><th>#</th>'
         +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio / alarma')+'<th></th>'
       +'</tr></thead><tbody>'+PANOL_PLAN.rows.map(ppRowHtml).join('')+'</tbody></table></div></div>';
-  PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k));
+  PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true));
+  ppResumen();
 }
 window.renderPanolPlanilla=renderPanolPlanilla;
 
@@ -3691,7 +3719,8 @@ function ppImportarAoa(aoa){
   for(let i=ini;i<aoa.length;i++){
     const f=aoa[i], r=ppNuevaFila();
     r.fecha=_pnFecha(get(f,'fecha'))||''; r.horario=ppHora(get(f,'horario'))||'';
-    r.art=txt(f,'art'); const cn=parseFloat(String(get(f,'cant')).replace(',','.')); r.cant=isNaN(cn)?'':cn;
+    { const cd=txt(f,'cod'), aC=(cd&&cd!=='0')?panolArtPorCod(cd):null; r.art=aC?panolArtTxt(aC.codigo):txt(f,'art'); }
+    const cn=parseFloat(String(get(f,'cant')).replace(',','.')); r.cant=isNaN(cn)?'':cn;
     { const umT=txt(f,'um'); if(umT){ r.um=panolUmResolver(umT)||umT; r.umManual=true; } else { const a0=panolArtResolver(r.art); r.um=(a0.cod&&panolUmSugerida(a0.cod))||'UNI'; } }
     r.solp=txt(f,'solp'); r.oper=txt(f,'oper'); r.coment=txt(f,'coment');
     const d=ppResolverDestino(txt(f,'dest')); if(d){ r.destCod=d.cod; r.dest=d.cod+' — '+(d.desc||''); } else r.dest=txt(f,'dest');
@@ -3903,6 +3932,8 @@ function openPanolHistImport(){
 window.openPanolHistImport=openPanolHistImport;
 function _pnFecha(v){
   if(typeof v==='number' && v>20000 && v<60000) return new Date(Date.UTC(1899,11,30)+Math.floor(v)*86400000).toISOString().slice(0,10);
+  const m=String(v==null?'':v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);   // dd/mm/aa (siempre día primero; sin esto 01/09/26 se leería como 9 de enero)
+  if(m){ const d=new Date(Date.UTC(2000+(+m[3]), (+m[2])-1, +m[1])); return isNaN(d)?'':d.toISOString().slice(0,10); }
   return _syncFechaISO(v);
 }
 async function panolHistImportar(){
@@ -12053,7 +12084,8 @@ function evalProvObraBlur(){ obraBlur('ep_obra_q','ep_obra'); }
 window.evalProvObraBlur=evalProvObraBlur;
 // Pañol: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
 // Destino de una erogación = Clasificación de renglón habilitada para compras (ej. ACOPIO, MANMOD, DTM, IF4430). Es otra lista que la de Obra del egreso clásico (auxiliar 3).
-function panolDestinos(){ return (CLASIF_ALL||[]).filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({cod:r.cod, desc:r.desc||''})).sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true})); }
+function panolDestinos(){ return pnCache('destinos',[CLASIF_ALL,(CLASIF_ALL||[]).length],_panolDestinos0); }
+function _panolDestinos0(){ return (CLASIF_ALL||[]).filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({cod:r.cod, desc:r.desc||''})).sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true})); }
 function panolDestinoNom(cod){ const o=(CLASIF_ALL||[]).find(x=>x.cod===cod); return o?(o.desc||cod):cod; }
 function comboPanolDestino(){ comboObra('pn_obra_q','pn_obra',panolErogDestino,panolDestinos); panolComboMark(document.getElementById('pn_obra_q')); }
 window.comboPanolDestino=comboPanolDestino;
