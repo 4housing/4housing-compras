@@ -1,0 +1,12 @@
+-- =====================================================================
+-- Pañol · auxiliar contable del módulo en cada erogación (oct 2026)
+-- Proyecto Supabase: wcpkpwxhqdcdljfwzcmy. Correr A MANO en el SQL Editor,
+-- ANTES de publicar el index.html que usa esta columna.
+--
+-- Qué hace (aditivo): agrega compras_panol_egresos.aux_modulo = código del Auxiliar 04 (Contenedor/Módulo)
+-- del módulo elegido (ej. M00002). La app lo completa sola al guardar a partir de la serie.
+-- Las erogaciones ya cargadas quedan con aux_modulo vacío; la app lo deduce al mostrarlas.
+--
+-- Reversible: alter table public.compras_panol_egresos drop column aux_modulo;
+-- =====================================================================
+alter table public.compras_panol_egresos add column if not exists aux_modulo text;

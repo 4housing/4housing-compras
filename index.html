@@ -2838,7 +2838,7 @@ function renderPanolErog(){
     } });
   if(!SP_SORT.pnl) SP_SORT.pnl={k:'fecha',dir:-1};
   const shown=_spOrdenar('pnl', base.filter(r=>xlfPass('pnl',r)), {
-    fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
+    fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, aux:r=>r.aux_modulo||panolAuxDeSerie(r.serie), gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
     art:r=>panolErogArt(r), cant:r=>+r.cantidad||0, oper:r=>r.operario, pars:r=>+r.costo_unit_ars||0, pusd:r=>+r.costo_unit_usd||0,
     tars:r=>+r.total_ars||0, tusd:r=>+r.total_usd||0, fuente:r=>r.fuente_precio, alerta:r=>r.alerta||'', exp:r=>r.exportado?1:0 });
   _PANOL_SHOWN=shown;
@@ -2850,7 +2850,7 @@ function renderPanolErog(){
   const num=v=>v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
   const filas=shown.length ? shown.map(r=>'<tr'+(r.alerta?' style="background:#fff6f4"':'')+'>'
       +'<td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.horario||'')+'</td>'
-      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
+      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(r.aux_modulo||panolAuxDeSerie(r.serie)||'')+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
       +'<td>'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.operario||'')+'</td>'
       +'<td style="text-align:right">'+num(r.costo_unit_ars)+'</td><td style="text-align:right">'+num(r.costo_unit_usd)+'</td>'
       +'<td style="text-align:right">'+num(r.total_ars)+'</td><td style="text-align:right">'+num(r.total_usd)+'</td>'
@@ -2858,7 +2858,7 @@ function renderPanolErog(){
       +'<td>'+panolAlertaBadges(r)+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
       +'<td><div class="row-actions">'+(r.exportado?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
-    : '<tr><td colspan="18" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
+    : '<tr><td colspan="19" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
   const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" para precios por mes.</div>':'')
     +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
   C().innerHTML=panolTabs()
@@ -2873,7 +2873,7 @@ function renderPanolErog(){
       +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
       +aviso
       +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid" id="tblPanolErog"><thead><tr>'
-      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Galpón',null,'gal')
+      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Aux. módulo',null,'aux')+_pnTh('Galpón',null,'gal')
       +_pnTh('Proceso','proc','proc')+_pnTh('SOLP',null,'solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad',null,'cant')+_pnTh('Operario','oper','oper')
       +_pnTh('Precio ARS',null,'pars')+_pnTh('Precio USD',null,'pusd')+_pnTh('Total ARS',null,'tars')+_pnTh('Total USD',null,'tusd')
       +_pnTh('Fuente precio','fuente','fuente')+_pnTh('Alarma','alerta','alerta')+_pnTh('Exportado','exp','exp')+'<th style="width:80px"></th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
@@ -2983,7 +2983,7 @@ function panolArmarFila(f){
   let serie=f.serie||''; if(!serie && panolDestinoPideModulo(f.dest)) serie=PANOL_MODULO_GENERICO;
   const operario=(f.oper||'').trim()||'Genérico';
   const row={ fecha:f.fecha, periodo, horario:f.horario||null, cod_deposito:f.dep||null, cod_articulo:f.ra.cod||null, articulo_libre:f.ra.cod?null:f.ra.libre,
-    cantidad:f.cant, um:(f.um||'').trim()||'UNI', proyecto_cod:f.dest, serie:serie||null, galpon:(f.galpon||'').trim()||null, proceso:f.proceso||null, solp:(f.solp||'').trim()||null,
+    cantidad:f.cant, um:(f.um||'').trim()||'UNI', proyecto_cod:f.dest, serie:serie||null, aux_modulo:panolAuxDeSerie(serie)||null, galpon:(f.galpon||'').trim()||null, proceso:f.proceso||null, solp:(f.solp||'').trim()||null,
     operario, comentario:(f.coment||'').trim(), exportado:false,
     alerta:panolAlertaDe({control:pr._control}, !f.ra.cod, panolOperarioSinAlta(operario))||null };
   ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
@@ -3013,7 +3013,7 @@ async function guardarPanolErog(id){
       else await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
       await reloadDB();
     }
-  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_erogaciones.sql?)'); return; }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Pañol de la carpeta sql/?)'); return; }
   closeModal(); toast(row.alerta?'Guardado con alarma: '+row.alerta:'Guardado'); renderPanol();
 }
 window.guardarPanolErog=guardarPanolErog;
@@ -3037,42 +3037,52 @@ async function panolRecalcularPrecios(){
 window.panolRecalcularPrecios=panolRecalcularPrecios;
 
 /* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
-function panolSeriesSrc(){ return (SERIES_ACTIVAS||[]).filter(s=>s.serie); }
+// Opciones de serie/módulo = Auxiliar 04 (Contenedor/Módulo) habilitado. La serie (patente) es la descripción del auxiliar; el Adic. 1
+// (número de referencia) y la descripción salen de Diccionarios → Módulos, cruzados por serie.
+function panolSeriesSrc(){
+  const mods=auxModuloIdx();
+  const aux=auxOpts('4').filter(o=>String(o.habil||'').toLowerCase()==='si');
+  if(aux.length) return aux.map(o=>{ const sp=auxSerieDe(o), m=mods[sp.toUpperCase()]; return {serie:sp, aux:o.cod, adicional_1:m?(m.adicional_1||''):'', descripcion:m?(m.descripcion||''):''}; }).filter(x=>x.serie);
+  return Object.values(mods).map(m=>({serie:m.serie, aux:'', adicional_1:m.adicional_1||'', descripcion:m.descripcion||''}));   // sin auxiliares cargados
+}
 function panolSerieNombre(s){
   const a1=s.adicional_1&&String(s.adicional_1).trim()!==String(s.serie).trim()?s.adicional_1:'';
-  return [a1, s.descripcion].filter(Boolean).join(' · ')+(s.familia==='modulo'?'':' (serie activa)');
+  return [a1, s.descripcion, s.aux?'Aux '+s.aux:''].filter(Boolean).join(' · ');
 }
 function panolSerieTxt(serie){
   if(!serie) return '';
-  if(serie===PANOL_MODULO_GENERICO) return serie;
-  const s=panolSeriesSrc().find(x=>x.serie===serie);
+  const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===String(serie).toUpperCase());
   return s?(s.serie+' — '+panolSerieNombre(s)):serie;
 }
-// Busca por serie, Adic. 1, descripción o comentario (todas las palabras escritas); primero los que arrancan con lo escrito
+function panolAuxDeSerie(serie){
+  const S=String(serie||'').trim().toUpperCase(); if(!S) return '';
+  const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===S); return s?s.aux:'';
+}
+// Busca por serie, Adic. 1, descripción o código de auxiliar (todas las palabras escritas); primero los que arrancan con lo escrito
 function comboPanolSerie(qId, hidId, after){
   const inp=document.getElementById(qId||'pe_serie_q'); if(!inp) return;
   const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
   const src=panolSeriesSrc();
-  const txt=s=>((s.serie||'')+' '+(s.adicional_1||'')+' '+(s.descripcion||'')+' '+(s.comentario||'')).toLowerCase();
-  const empieza=s=>[s.serie,s.adicional_1].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  const txt=s=>((s.serie||'')+' '+(s.adicional_1||'')+' '+(s.descripcion||'')+' '+(s.aux||'')).toLowerCase();
+  const empieza=s=>[s.serie,s.adicional_1,s.aux].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
   let list=words.length?src.filter(s=>{ const t=txt(s); return words.every(w=>t.includes(w)); }):src;
   if(words.length) list=list.filter(empieza).concat(list.filter(s=>!empieza(s)));
   const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
-  if(!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
+  if(!src.some(s=>String(s.serie).toUpperCase()===PANOL_MODULO_GENERICO) && (!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w)))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
   comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; (after||panolErogDestino)(); });
 }
 window.comboPanolSerie=comboPanolSerie;
-// Al salir del campo: si lo escrito es exactamente una serie o un Adic. 1, lo toma sin tener que elegir de la lista
+// Al salir del campo: si lo escrito es exactamente una serie, un Adic. 1 o un código de auxiliar, lo toma sin tener que elegir de la lista
 function panolSerieBlur(qId, hidId, after){
   comboHideDelayed();
   setTimeout(()=>{
     const inp=document.getElementById(qId||'pe_serie_q'), hid=document.getElementById(hidId||'pe_serie'); if(!inp||!hid||hid.value) return;
     const t=(inp.value||'').trim(); if(!t) return;
-    const first=t.split(' — ')[0].trim().toUpperCase();
-    if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; (after||panolErogDestino)(); return; }
+    const first=t.split(' — ')[0].trim().toUpperCase(), T=t.toUpperCase();
     const src=panolSeriesSrc();
-    const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===t.toUpperCase());
+    const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===T) || src.find(x=>String(x.aux||'').toUpperCase()===T);
     if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); (after||panolErogDestino)(); }
+    else if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; (after||panolErogDestino)(); }
   },160);
 }
 window.panolSerieBlur=panolSerieBlur;
@@ -3484,8 +3494,8 @@ function panolDescargarPlantilla(){
 window.panolDescargarPlantilla=panolDescargarPlantilla;
 function panolExportErogExcel(){
   const rows=_PANOL_SHOWN; if(!rows.length){ toast('No hay filas para exportar'); return; }
-  const aoa=[['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','PROCESO','GALPÓN','SOLP','ARTÍCULO','DESCRIPCIÓN','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO','PRECIO ARS','PRECIO USD','TOTAL ARS','TOTAL USD','FUENTE PRECIO','ALARMA','EXPORTADO A TANGO']]
-    .concat(rows.map(r=>[r.fecha,r.horario||'',r.proyecto_cod||'',r.serie||'',r.proceso||'',r.galpon||'',r.solp||'',r.cod_articulo||r.articulo_libre||'',r.cod_articulo?(artDesc(r.cod_articulo)||''):'',+r.cantidad||0,r.um||'',r.operario||'',r.cod_deposito||'',r.comentario||'',+r.costo_unit_ars||0,+r.costo_unit_usd||0,+r.total_ars||0,+r.total_usd||0,r.fuente_precio||'',r.alerta||'',r.exportado?'Sí':'No']));
+  const aoa=[['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','AUX. MÓDULO','PROCESO','GALPÓN','SOLP','ARTÍCULO','DESCRIPCIÓN','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO','PRECIO ARS','PRECIO USD','TOTAL ARS','TOTAL USD','FUENTE PRECIO','ALARMA','EXPORTADO A TANGO']]
+    .concat(rows.map(r=>[r.fecha,r.horario||'',r.proyecto_cod||'',r.serie||'',r.aux_modulo||panolAuxDeSerie(r.serie)||'',r.proceso||'',r.galpon||'',r.solp||'',r.cod_articulo||r.articulo_libre||'',r.cod_articulo?(artDesc(r.cod_articulo)||''):'',+r.cantidad||0,r.um||'',r.operario||'',r.cod_deposito||'',r.comentario||'',+r.costo_unit_ars||0,+r.costo_unit_usd||0,+r.total_ars||0,+r.total_usd||0,r.fuente_precio||'',r.alerta||'',r.exportado?'Sí':'No']));
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Erogaciones');
   XLSX.writeFile(wb,'Erogaciones_Panol_'+PANOL_PERIODO+'.xlsx'); toast('Exportado: '+rows.length+' filas');
 }
@@ -10418,7 +10428,7 @@ function _familiaDeposito(cod){
 function _serieAuxIndex(grupos){
   const idx={};
   (grupos||['04','05','06','07','08']).forEach(g=>{
-    ((CONTA_DB.auxopc&&CONTA_DB.auxopc[g])||[]).forEach(o=>{
+    ((CONTA_DB.auxopc&&(CONTA_DB.auxopc[String(parseInt(g,10))]||CONTA_DB.auxopc[g]))||[]).forEach(o=>{   // las opciones se guardan con clave '4', no '04'
       const d=String(o.desc||'');
       const sp=(d.includes(' - ')?d.split(' - ',1)[0]:d).trim().toUpperCase();
       if(!sp) return;
@@ -10871,15 +10881,24 @@ function paintDic(){
 function setDicTipo(t){ DIC_STIPO=t; paintDic(); }
 window.setDicTipo=setDicTipo;
 function auxOpts(code){ return ((CONTA_DB.auxopc&&CONTA_DB.auxopc[code])||[]).slice().sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true})); }
+// Auxiliar 04: la descripción del auxiliar es la serie del módulo; devuelve {SERIE: fila de Módulos} para traer su Adic. 1
+function auxModuloIdx(){
+  const m={}; (SERIES_ACTIVAS||[]).forEach(r=>{ if(r.familia==='modulo' && r.serie) m[String(r.serie).trim().toUpperCase()]=r; });
+  return m;
+}
+function auxSerieDe(o){ const d=String(o.desc||''); return (d.includes(' - ')?d.split(' - ',1)[0]:d).trim(); }
 function auxRows(list, tipoCod){
   if(!list||!list.length) return '<div style="padding:8px;color:var(--muted);font-size:12.5px">Sin opciones</div>';
   const s=AUX_SORT[tipoCod];
   if(s) list=list.slice().sort((a,b)=>String(a[s.col]==null?'':a[s.col]).localeCompare(String(b[s.col]==null?'':b[s.col]),'es',{numeric:true})*s.dir);
+  const modIdx=String(tipoCod)==='4'?auxModuloIdx():null;
   return list.slice(0,400).map(o=>{
     const si=String(o.habil||'').toLowerCase()==='si';
+    const mod=modIdx?modIdx[auxSerieDe(o).toUpperCase()]:null;
+    const adic=mod&&mod.adicional_1?' <span style="color:var(--muted)">· Adic. 1: <b>'+esc(mod.adicional_1)+'</b></span>':'';
     const chk=ROLE.admin?'<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)"><input type="checkbox" '+(si?'checked':'')+' onclick="toggleHabilAuxOpt(\''+esc(tipoCod)+'\',\''+esc(o.cod)+'\')">habil.</label>'
                           :'<span style="font-size:11px;color:var(--muted)">'+(si?'Sí':'No')+'</span>';
-    return '<div style="display:flex;gap:12px;align-items:center;padding:6px 9px;border-bottom:1px solid var(--line);font-size:12.5px'+(si?'':';opacity:.55')+'"><span style="min-width:120px;font-weight:600">'+esc(o.cod)+'</span><span style="flex:1">'+esc(o.desc)+'</span>'+chk+'</div>'; }).join('')
+    return '<div style="display:flex;gap:12px;align-items:center;padding:6px 9px;border-bottom:1px solid var(--line);font-size:12.5px'+(si?'':';opacity:.55')+'"><span style="min-width:120px;font-weight:600">'+esc(o.cod)+'</span><span style="flex:1">'+esc(o.desc)+adic+'</span>'+chk+'</div>'; }).join('')
     + (list.length>400?'<div style="padding:6px 9px;font-size:11px;color:var(--muted)">Mostrando 400 de '+list.length+'. Afiná la búsqueda.</div>':'');
 }
 function setAuxOpen(code){ AUX_OPEN = (AUX_OPEN===code?'':code); paintDic(); }
@@ -10946,7 +10965,8 @@ function auxFilter(code){
   const q=(inp.value||'').trim().toLowerCase();
   const opts=auxOpts(code);
   const visibles=DIC_AUX_TODOS?opts:opts.filter(o=>String(o.habil||'').toLowerCase()==='si');
-  const f=q?visibles.filter(o=>((o.cod||'')+' '+(o.desc||'')).toLowerCase().includes(q)):visibles;
+  const modIdx=String(code)==='4'?auxModuloIdx():null;
+  const f=q?visibles.filter(o=>{ const m=modIdx?modIdx[auxSerieDe(o).toUpperCase()]:null; return ((o.cod||'')+' '+(o.desc||'')+' '+(m?(m.adicional_1||'')+' '+(m.descripcion||''):'')).toLowerCase().includes(q); }):visibles;
   box.innerHTML=auxRows(f, code);
 }
 window.auxFilter=auxFilter;
