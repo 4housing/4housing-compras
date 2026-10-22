@@ -2679,6 +2679,7 @@ function renderPanol(){
   if(PANOL_TAB==='erog') return renderPanolErog();
   if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_TAB==='cierres') return renderPanolCierres();
+  if(PANOL_TAB==='precios') return renderPanolPrecios();
   if(PANOL_TAB==='anal') return renderPanolAnalisis();
   if(PANOL_TAB==='conc') return renderPanolConc();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
@@ -3087,13 +3088,116 @@ function renderPanolConc(){
     +'</div></div>';
 }
 
+/* ===================== Solapa Precios: precio de referencia por artículo y mes =====================
+   Lista los artículos que aparecen en las erogaciones del mes con el precio con el que se están valorizando. Modificar un precio lo guarda para
+   ese artículo y mes (compras_panol_precios_mes) y se aplica a las erogaciones abiertas de ese artículo en ese mes (las ya exportadas a Tango no
+   se tocan). Las erogaciones que se carguen después toman ese precio. Al cerrar el mes queda congelado. */
+function panolPreciosFin(per){ const fin=panolFinMes(per), hoy=new Date().toISOString().slice(0,10); return fin<hoy?fin:hoy; }
+function panolPreciosLista(per){
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===+per), M=new Map();
+  rows.forEach(r=>{
+    const k=r.cod_articulo||('~'+_cnN(r.articulo_libre)), o=M.get(k)||{k, cod:r.cod_articulo||'', nombre:r.cod_articulo?panolArtTxt(r.cod_articulo).replace(' — ',' · '):'⚠ '+(r.articulo_libre||''), um:new Set(), q:0, tot:0, usd:0, pu:new Set(), fu:new Set(), fecha:'', prov:'', al:new Set(), n:0, nAbi:0, nExp:0};
+    o.um.add(r.um||''); o.q+=+r.cantidad||0; o.tot+=+r.total_ars||0; o.usd+=+r.total_usd||0; o.pu.add(+(+r.costo_unit_ars||0).toFixed(4)); o.fu.add(r.fuente_precio||'(sin precio)');
+    if(r.precio_fecha_ref&&String(r.precio_fecha_ref).slice(0,10)>o.fecha){ o.fecha=String(r.precio_fecha_ref).slice(0,10); o.prov=r.precio_proveedor||''; }
+    panolCsv(r.alerta).forEach(a=>o.al.add(a)); o.n++; if(r.exportado) o.nExp++; else o.nAbi++;
+    M.set(k,o);
+  });
+  return [...M.values()].map(o=>{
+    const ov=o.cod?panolPrecioOv(o.cod,+per):null, pu=o.q?o.tot/o.q:0, pusd=o.q?o.usd/o.q:0;
+    return {...o, ov, pars:pu, pusd, multi:o.pu.size>1, tc:(pu>0&&pusd>0)?pu/pusd:null, fuente:o.fu.size>1?'varios':[...o.fu][0]||'', um:[...o.um].filter(Boolean).join('/'), alerta:[...o.al].join(', ')};
+  });
+}
+function renderPanolPrecios(){
+  if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
+  const per=PANOL_PERIODO, cerr=panolPeriodoCerrado(per), lista=panolPreciosLista(per), puede=canEditOG()&&!cerr;
+  const pMes=String(per).slice(4,6), pAnio=String(per).slice(0,4);
+  const periodoInput='<input type="month" value="'+pAnio+'-'+pMes+'" onchange="setPanolPeriodo(this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:4px 6px;font-size:12.5px">';
+  xlfRegister('ppr',{ rows:()=>lista, onChange:renderPanol, val:(o,col)=>col==='um'?(o.um||'(sin U.M.)'):col==='fuente'?(o.fuente||'(sin precio)'):col==='alerta'?(o.alerta||'OK'):col==='art'?o.nombre:'' });
+  if(!SP_SORT.ppr) SP_SORT.ppr={k:'tot',dir:-1};
+  const q=(PANOL_PRQ||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const shown=_spOrdenar('ppr', lista.filter(o=>xlfPass('ppr',o)&&(!q.length||q.every(w=>o.nombre.toLowerCase().includes(w)))),
+    {art:o=>o.nombre, um:o=>o.um, q:o=>o.q, pars:o=>o.pars, pusd:o=>o.pusd, tc:o=>o.tc||0, fuente:o=>o.fuente, fecha:o=>o.fecha, prov:o=>o.prov, alerta:o=>o.alerta, n:o=>o.nAbi, tot:o=>o.tot});
+  const tr=shown.map((o,i)=>'<tr'+(o.alerta?' style="background:#fff6f4"':'')+'><td class="tx-largo" title="'+esc(o.nombre)+'">'+esc(o.nombre)+'</td><td>'+esc(o.um)+'</td><td style="text-align:right">'+fmtNum(o.q,2)+'</td>'
+    +'<td style="text-align:right"'+(o.multi?' title="Las erogaciones de este artículo tienen más de un precio en el mes (promedio ponderado)"':'')+'>'+panolMon('$',fmtNum(o.pars,2))+(o.multi?' *':'')+'</td><td style="text-align:right">'+panolMon('US$',fmtNum(o.pusd,o.pusd<1?4:2))+'</td><td style="text-align:right">'+(o.tc?fmtNum(o.tc,2):'—')+'</td>'
+    +'<td>'+(o.ov?'<span class="badge b-verde" title="Corregido en esta solapa por '+esc(o.ov.modificado_por||'')+'">Precio del mes</span>':esc(o.fuente))+'</td><td>'+(o.fecha?fmtDate(o.fecha):'')+'</td><td>'+esc(o.prov)+'</td>'
+    +'<td>'+(o.alerta?o.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>')+'</td>'
+    +'<td style="text-align:right">'+o.nAbi+(o.nExp?' <span style="color:var(--muted)" title="Ya exportadas a Tango: no se modifican">(+'+o.nExp+' exp.)</span>':'')+'</td><td style="text-align:right">'+panolMon('$',fmtNum(o.tot,2))+'</td>'
+    +'<td>'+(puede&&o.cod?'<button class="btn ghost sm" style="white-space:nowrap" onclick="openPanolPrecioEd('+lista.indexOf(o)+')">Modificar</button>':'')+'</td></tr>').join('');
+  window._PR_LISTA=lista;
+  const th=(l,col,k)=>_pnTh(l,col,k,'ppr');
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Precios de referencia de los materiales</h3><span class="meta">Período '+periodoInput+' · '+(shown.length!==lista.length?shown.length+' de ':'')+lista.length+' artículos'+(cerr?' · <b>mes cerrado: precios congelados</b>':'')+'</span>'
+    +'<input value="'+esc(PANOL_PRQ)+'" placeholder="Buscar artículo…" onchange="PANOL_PRQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:200px">'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('ppr').replace('margin-left:auto','')+(PANOL_PRQ?'<button class="btn ghost sm" onclick="PANOL_PRQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPrecios\')">Auto-ajustar columnas</button></span></div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Precio con el que se valorizan hoy las erogaciones del mes. <b>Modificar</b> lo guarda para ese artículo y mes y lo aplica a sus erogaciones abiertas; las que se carguen después también lo toman. Al cerrar el mes queda congelado.</div>'
+    +(PANOL_PRECIOS_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudo leer la tabla de precios del mes: '+esc(PANOL_PRECIOS_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_precios_mes.sql</b> en Supabase? Sin eso los cambios no se guardan.</div>':'')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolPrecios"><thead><tr>'
+      +th('Artículo','art','art')+th('U.M.','um','um')+th('Cant. del mes',null,'q')+th('Precio ARS',null,'pars')+th('Precio USD',null,'pusd')+th('TC',null,'tc')+th('Fuente','fuente','fuente')+th('Fecha ref.',null,'fecha')+th('Proveedor',null,'prov')+th('Alarma','alerta','alerta')+th('Erog. abiertas',null,'n')+th('Total ARS',null,'tot')+'<th></th></tr></thead><tbody>'
+      +(tr||'<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(lista.length?' con esos filtros':'')+'.</td></tr>')+'</tbody></table></div></div>';
+}
+let PANOL_PRQ='';
+function openPanolPrecioEd(i){
+  const o=(window._PR_LISTA||[])[i]; if(!o||!o.cod) return;
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  const tc0=(o.tc&&o.tc>0)?o.tc:(panolTcOficial(panolPreciosFin(PANOL_PERIODO))||0);
+  openModal('Modificar precio · '+panolPerTxt(PANOL_PERIODO),
+    '<div style="font-size:13.5px;margin-bottom:10px"><b>'+esc(o.nombre)+'</b><br><span style="color:var(--muted);font-size:12.5px">Hoy se valoriza a <b>$ '+fmtNum(o.pars,2)+'</b> por unidad ('+esc(o.ov?'precio del mes':o.fuente)+'). Se aplica a las <b>'+o.nAbi+'</b> erogaciones abiertas de este artículo en '+panolPerTxt(PANOL_PERIODO)+(o.nExp?' (las '+o.nExp+' ya exportadas a Tango no se modifican)':'')+'.</span></div>'
+    +'<div class="frow c2"><div class="field"><label>Precio ARS (por unidad)</label><input id="pr_ars" type="number" step="any" value="'+(o.pars?+o.pars.toFixed(4):'')+'" oninput="prPx(\'ars\')"></div>'
+    +'<div class="field"><label>Precio USD (por unidad)</label><input id="pr_usd" type="number" step="any" value="'+(o.pusd?+o.pusd.toFixed(8):'')+'" oninput="prPx(\'usd\')"></div></div>'
+    +'<div class="field"><label>Tipo de cambio (ARS por USD)</label><input id="pr_tc" type="number" step="any" value="'+(tc0?(+tc0).toFixed(2):'')+'" oninput="prPx(\'tc\')"><div style="font-size:12px;color:var(--muted);margin-top:4px">Cargá el precio en pesos o en dólares: el otro se calcula con este tipo de cambio, que arranca con el del precio actual (el del dólar BNA venta a fin de mes si no hay uno) y podés ajustar.</div></div>',
+    (o.ov?'<button class="btn ghost" style="margin-right:auto" onclick="panolPrecioQuitar('+i+')">Volver al precio automático</button>':'')+'<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="prGuardarBtn" onclick="panolPrecioGuardar('+i+')">Guardar y aplicar</button>');
+}
+window.openPanolPrecioEd=openPanolPrecioEd;
+function prPx(que){
+  const ars=document.getElementById('pr_ars'), usd=document.getElementById('pr_usd'), tc=document.getElementById('pr_tc');
+  if(que==='ars'||que==='usd') tc.dataset.ancla=que;
+  const t=+tc.value||0; if(!(t>0)) return;
+  if((tc.dataset.ancla||'ars')==='usd'){ const u=+usd.value||0; ars.value=u?+(u*t).toFixed(4):''; }
+  else{ const a=+ars.value||0; usd.value=a?+(a/t).toFixed(8):''; }
+}
+window.prPx=prPx;
+// Erogaciones del artículo en el período que se pueden recalcular (abiertas: sin exportar; el período no puede estar cerrado)
+function panolPrecioFilas(o){ return (DIC.panol_egresos||[]).filter(r=>+r.periodo===+PANOL_PERIODO && (r.cod_articulo||('~'+_cnN(r.articulo_libre)))===o.k && !r.exportado); }
+async function panolPrecioGuardar(i){
+  const o=(window._PR_LISTA||[])[i]; if(!o||!o.cod) return;
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  const ars=+document.getElementById('pr_ars').value||0, usd=+document.getElementById('pr_usd').value||0, tc=+document.getElementById('pr_tc').value||0;
+  if(!(ars>0)){ toast('Ingresá el precio en pesos'); return; }
+  const btn=document.getElementById('prGuardarBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  const fila={periodo:PANOL_PERIODO, cod_articulo:o.cod, precio_ars:ars, precio_usd:usd||null, tc:tc||null, modificado_por:panolUsuario(), modificado_en:new Date().toISOString()};
+  try{
+    if(DEMO_MODE) DIC.panol_precios_mes=(DIC.panol_precios_mes||[]).filter(r=>!(+r.periodo===PANOL_PERIODO&&r.cod_articulo===o.cod)).concat([{id:Date.now(),...fila}]);
+    else{
+      await sbFetch('/compras_panol_precios_mes?on_conflict=periodo,cod_articulo',{method:'POST',body:JSON.stringify(fila),prefer:'resolution=merge-duplicates,return=minimal'});
+      DIC.panol_precios_mes=await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc'); PANOL_PRECIOS_ERR='';
+    }
+    const n=await panolRecalcRows(panolPrecioFilas(o)); if(!DEMO_MODE) await reloadDB();
+    closeModal(); toast('Precio guardado y aplicado a '+n+' erogaciones'); renderPanol();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Guardar y aplicar'; } toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_precios_mes.sql?)'); }
+}
+window.panolPrecioGuardar=panolPrecioGuardar;
+async function panolPrecioQuitar(i){
+  const o=(window._PR_LISTA||[])[i]; if(!o||!o.cod) return;
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  try{
+    if(DEMO_MODE) DIC.panol_precios_mes=(DIC.panol_precios_mes||[]).filter(r=>!(+r.periodo===PANOL_PERIODO&&r.cod_articulo===o.cod));
+    else{
+      await sbFetch('/compras_panol_precios_mes?periodo=eq.'+PANOL_PERIODO+'&cod_articulo=eq.'+encodeURIComponent(o.cod),{method:'DELETE',prefer:'return=minimal'});
+      DIC.panol_precios_mes=await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
+    }
+    const n=await panolRecalcRows(panolPrecioFilas(o)); if(!DEMO_MODE) await reloadDB();
+    closeModal(); toast('Vuelve al precio automático: '+n+' erogaciones recalculadas'); renderPanol();
+  }catch(e){ toast('No se pudo quitar: '+(e.message||e)); }
+}
+window.panolPrecioQuitar=panolPrecioQuitar;
+
 let PANOL_EGQ='';
 let PANOL_TAB='egresos';
 function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
@@ -3158,8 +3262,16 @@ function panolHistIdx(){
 }
 function panolOcCorto(oc){ const s=String(oc||'').trim(); return s.startsWith('0000100') ? String(+s.slice(7)) : s; }
 // → {ars, usd, fecha, fuente, prov, oc, desvioTC, varTango, control}
+let PANOL_PRECIOS_ERR='', _PNL_OV=null, _PNL_OVK=null;
+function panolPrecioOv(cod, periodo){
+  const l=DIC.panol_precios_mes||[];
+  if(!(_PNL_OV && _PNL_OVK && _PNL_OVK[0]===l && _PNL_OVK[1]===l.length)){ _PNL_OV=new Map(); l.forEach(r=>_PNL_OV.set(r.periodo+'|'+r.cod_articulo,r)); _PNL_OVK=[l,l.length]; }
+  return _PNL_OV.get(periodo+'|'+cod)||null;
+}
 function panolPrecioMes(cod, periodo){
   const out={ars:0, usd:0, fecha:'', fuente:'', prov:'', oc:'', desvioTC:null, varTango:null, control:'SIN PRECIO'};
+  const ov=cod?panolPrecioOv(cod, periodo):null;     // precio corregido a mano en la solapa Precios para ese artículo y mes
+  if(ov && +ov.precio_ars>0) return Object.assign(out,{ars:+ov.precio_ars, usd:+ov.precio_usd||0, fuente:'Precio del mes', control:'OK'});
   const lst=cod?panolHistIdx().get(cod):null; if(!lst||!lst.length) return out;
   const fin=panolFinMes(periodo);
   let ref=''; lst.forEach(r=>{ if(r.fecha<=fin && r.fecha>ref) ref=r.fecha; });
@@ -3583,7 +3695,7 @@ function panolRecalcularPrecios(){
   const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.cod_articulo);
   const man=base.filter(r=>r.fuente_precio==='Manual').length, aut=base.length-man;
   openModal('Recalcular precios de '+panolPerTxt(PANOL_PERIODO),
-    '<div style="font-size:14px;line-height:1.7">Vuelve a calcular el precio de cada erogación con la regla normal: la <b>última compra del artículo hasta fin de mes</b> (historial de compras y último costo del diccionario de Artículos, el de fecha más reciente). Útil después de importar compras o cambiar un costo en el diccionario.<br><br>'
+    '<div style="font-size:14px;line-height:1.7">Vuelve a calcular el precio de cada erogación con la regla normal: la <b>última compra del artículo hasta fin de mes</b> (historial de compras y último costo del diccionario de Artículos, el de fecha más reciente), o el precio corregido en la solapa Precios si hay uno para ese artículo y mes. Útil después de importar compras o cambiar un costo en el diccionario.<br><br>'
     +'Erogaciones de '+panolPerTxt(PANOL_PERIODO)+' que se pueden recalcular: <b>'+aut+'</b> con precio automático'+(man?' y <b>'+man+'</b> con precio manual':'')+'. Las ya exportadas a Tango y las de artículos sin alta no se tocan.</div>'
     +(man?'<label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0;font-size:13px"><input type="checkbox" id="prc_man" style="margin-top:3px"> <span>Incluir también las <b>'+man+'</b> con precio manual (volverían al precio automático: el precio que cargaste a mano se pierde)</span></label>':'')
     +'<div style="font-size:12px;color:var(--muted)">Ojo: si cambiaste un costo en el diccionario, tiene que tener una <b>fecha de costo igual o posterior</b> a la última compra; si no, la regla sigue tomando la compra más reciente.</div>',
@@ -14405,6 +14517,10 @@ async function reloadDicts(background){
         const pg = await sbFetchAll('/compras_panol_galpones?select=*&order=nombre.asc');
         if(pg) DIC.panol_galpones = pg;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const pm = await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
+        if(pm){ DIC.panol_precios_mes = pm; PANOL_PRECIOS_ERR=''; }
+      }catch(e){ PANOL_PRECIOS_ERR=String(e.message||e); /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const po = await sbFetchAll('/compras_panol_operarios?select=*&order=nombre.asc');
         if(po) DIC.panol_operarios = po;
