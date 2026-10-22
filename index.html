@@ -263,6 +263,13 @@ table.grid.usub .row-actions{gap:4px;}
 .modal-b{padding:22px;}
 .modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
 
+/* ===== INDICADOR "TRABAJANDO" (cualquier llamada a la base que tarde más de ~0,35 s) ===== */
+.busy-bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:300;overflow:hidden;opacity:0;pointer-events:none;transition:opacity .2s;background:rgba(79,138,83,.18);}
+.busy-bar.on{opacity:1;}
+.busy-bar::before{content:"";position:absolute;top:0;left:-40%;width:40%;height:100%;background:#4f8a53;animation:busyslide 1.1s ease-in-out infinite;}
+@keyframes busyslide{0%{left:-40%}100%{left:100%}}
+.busy-pill{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;background:#2f3a26;color:#fff;padding:8px 16px;border-radius:999px;font-size:12.5px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.22);opacity:0;pointer-events:none;transition:opacity .2s;}
+.busy-pill.on{opacity:1;}
 /* ===== TOAST ===== */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -371,6 +378,7 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
   </div>
 </div>
 
+<div class="busy-bar" id="busyBar"></div><div class="busy-pill" id="busyPill"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -866,7 +874,32 @@ const ORDER=['proyectos','compras','seguimiento','solp','comparativas','tesoreri
    ================================================================ */
 const mem = {}; // { compras:[...], ... }  solo en demo
 
+// Indicador global: barra arriba + cartel "Trabajando…" mientras haya llamadas a la base en curso (aparece si tarda > 0,35 s;
+// a los 8 s avisa que sigue en curso). Así se distingue "está pensando" de "se colgó".
+let _BUSY=0, _BUSY_T=null, _BUSY_T2=null;
+function _busyUi(on, largo){
+  const b=document.getElementById('busyBar'), p=document.getElementById('busyPill'); if(!b||!p) return;
+  b.classList.toggle('on',on); p.classList.toggle('on',on);
+  if(on) p.textContent=largo?'Sigue trabajando… esto puede tardar, no cierres la página':'Trabajando…';
+}
+function _busyInc(){
+  _BUSY++;
+  if(_BUSY===1){
+    clearTimeout(_BUSY_T); clearTimeout(_BUSY_T2);
+    _BUSY_T=setTimeout(()=>_busyUi(true,false),350);
+    _BUSY_T2=setTimeout(()=>_busyUi(true,true),8000);
+  }
+}
+function _busyDec(){
+  _BUSY=Math.max(0,_BUSY-1);
+  if(_BUSY===0){ clearTimeout(_BUSY_T); clearTimeout(_BUSY_T2); _busyUi(false,false); }
+}
 async function sbFetch(path, opts={}, _retry=false){
+  _busyInc();
+  try{ return await _sbFetch(path, opts, _retry); }
+  finally{ _busyDec(); }
+}
+async function _sbFetch(path, opts={}, _retry=false){
   let token = SB_KEY;
   try{
     const { data } = await sbClient.auth.getSession();
@@ -4458,7 +4491,10 @@ async function panolSyncPreciosAnalizar(){
     if(DEMO_MODE){
       updates.forEach(u=>{ const a=DIC.articulos.find(x=>x.codigo===u.codigo); if(a) Object.assign(a,u); });
     }else{
-      for(const u of updates){ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(u.codigo),{method:'PATCH',body:JSON.stringify({costo_ars:u.costo_ars,costo_usd:u.costo_usd,costo_fecha:u.costo_fecha||null,costo_proveedor:u.costo_proveedor}),prefer:'return=minimal'}); }
+      for(let i=0;i<updates.length;i+=10){
+        msg.textContent='Actualizando '+Math.min(i+10,updates.length)+' de '+updates.length+' artículos…';
+        await Promise.all(updates.slice(i,i+10).map(u=>sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(u.codigo),{method:'PATCH',body:JSON.stringify({costo_ars:u.costo_ars,costo_usd:u.costo_usd,costo_fecha:u.costo_fecha||null,costo_proveedor:u.costo_proveedor}),prefer:'return=minimal'})));
+      }
       await reloadDB();
     }
     closeModal(); toast('Costos actualizados: '+updates.length+' artículos'); renderPanol();
