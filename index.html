@@ -3578,15 +3578,29 @@ async function guardarPanolErog(id){
 window.guardarPanolErog=guardarPanolErog;
 
 // Vuelve a calcular el precio de las erogaciones del período que no estén exportadas ni tengan precio manual
-async function panolRecalcularPrecios(){
+function panolRecalcularPrecios(){
   if(panolBloqueoCierre(PANOL_PERIODO)) return;
-  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.fuente_precio!=='Manual' && r.cod_articulo);
-  if(!rows.length){ toast('No hay erogaciones para recalcular en este período'); return; }
-  let n=0;
-  try{ n=await panolRecalcRows(rows); if(!DEMO_MODE) await reloadDB(); }
-  catch(e){ toast('No se pudo recalcular: '+(e.message||e)); return; }
-  toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
+  const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.cod_articulo);
+  const man=base.filter(r=>r.fuente_precio==='Manual').length, aut=base.length-man;
+  openModal('Recalcular precios de '+panolPerTxt(PANOL_PERIODO),
+    '<div style="font-size:14px;line-height:1.7">Vuelve a calcular el precio de cada erogación con la regla normal: la <b>última compra del artículo hasta fin de mes</b> (historial de compras y último costo del diccionario de Artículos, el de fecha más reciente). Útil después de importar compras o cambiar un costo en el diccionario.<br><br>'
+    +'Erogaciones de '+panolPerTxt(PANOL_PERIODO)+' que se pueden recalcular: <b>'+aut+'</b> con precio automático'+(man?' y <b>'+man+'</b> con precio manual':'')+'. Las ya exportadas a Tango y las de artículos sin alta no se tocan.</div>'
+    +(man?'<label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0;font-size:13px"><input type="checkbox" id="prc_man" style="margin-top:3px"> <span>Incluir también las <b>'+man+'</b> con precio manual (volverían al precio automático: el precio que cargaste a mano se pierde)</span></label>':'')
+    +'<div style="font-size:12px;color:var(--muted)">Ojo: si cambiaste un costo en el diccionario, tiene que tener una <b>fecha de costo igual o posterior</b> a la última compra; si no, la regla sigue tomando la compra más reciente.</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="prcBtn" onclick="panolRecalcularOk()">Recalcular</button>');
 }
+async function panolRecalcularOk(){
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  const conMan=!!(document.getElementById('prc_man')||{}).checked;
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.cod_articulo && (conMan||r.fuente_precio!=='Manual'));
+  if(!rows.length){ closeModal(); toast('No hay erogaciones para recalcular en este período'); return; }
+  const btn=document.getElementById('prcBtn'); if(btn){ btn.disabled=true; btn.textContent='Recalculando…'; }
+  let n=0;
+  try{ n=await panolRecalcRows(rows,(a,b)=>{ if(btn) btn.textContent='Recalculando '+a+' de '+b+'…'; }); if(!DEMO_MODE) await reloadDB(); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Recalcular'; } toast('No se pudo recalcular: '+(e.message||e)); return; }
+  closeModal(); toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
+}
+window.panolRecalcularOk=panolRecalcularOk;
 window.panolRecalcularPrecios=panolRecalcularPrecios;
 
 /* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
