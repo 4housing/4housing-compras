@@ -567,6 +567,12 @@ function colResizeSig(table){
   let h=0; for(let i=0;i<ths.length;i++) h=(h*31+ths.charCodeAt(i))|0;
   return 'colw:'+ths.length+':'+h;
 }
+// Con el layout fijo la tabla tiene que tener un ancho explícito (suma de sus columnas); si no (tablas "compactas" en ancho automático) el navegador ignora el ancho de las columnas
+function colResizeFitWidth(table){
+  if(table.style.tableLayout!=='fixed') return;
+  const sum=[...table.querySelectorAll('thead th')].reduce((a,t)=>a+(parseFloat(t.style.width)||t.getBoundingClientRect().width),0);
+  table.style.width=Math.round(sum)+'px';
+}
 function colResizeApplySaved(table){
   const sig=colResizeSig(table);
   let saved=(UI_PREFS_COLW&&UI_PREFS_COLW[sig])||null;
@@ -575,6 +581,7 @@ function colResizeApplySaved(table){
   const ths=[...table.querySelectorAll('thead th')];
   table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
   ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+'px'; });
+  colResizeFitWidth(table);
 }
 function colResizeSave(table, ths){
   const sig=colResizeSig(table);
@@ -664,6 +671,7 @@ function colResizeInit(table){
         ths.forEach(t=>{ t.style.width=t.getBoundingClientRect().width+'px'; });
         table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
       }
+      colResizeFitWidth(table);
       r.classList.add('active');
       COLRESIZE_DRAG={ th, r, table, ths, startX:e.clientX, startW:th.getBoundingClientRect().width };
       document.body.style.cursor='col-resize'; document.body.style.userSelect='none';
@@ -675,6 +683,7 @@ document.addEventListener('mousemove', e=>{
   if(!COLRESIZE_DRAG) return;
   const w=Math.max(32, COLRESIZE_DRAG.startW+(e.clientX-COLRESIZE_DRAG.startX));
   COLRESIZE_DRAG.th.style.width=w+'px';
+  colResizeFitWidth(COLRESIZE_DRAG.table);
 });
 document.addEventListener('mouseup', ()=>{
   if(!COLRESIZE_DRAG) return;
@@ -2734,7 +2743,9 @@ function panolTabs(){
   return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
-const PANOL_DESTINOS_MODULO=['MANMOD','MANTRF','DTM'];    // clasificaciones que piden indicar el módulo / serie (si queda vacío: GENERICO MODULO)
+// Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
+const PANOL_DESTINO_AUX={MANMOD:'4', MANTRF:'4', DTM:'4', MANBSU:'5', MANMYU:'6', MANHRR:'7', MANROD:'8'};
+const PANOL_AUX_ETQ={'4':'Serie / módulo','5':'Auxiliar · Mant. bienes de uso','6':'Auxiliar · Muebles y útiles','7':'Auxiliar · Herramientas','8':'Auxiliar · Rodados'};
 const PANOL_MODULO_GENERICO='GENERICO MODULO';
 const PANOL_PROCESOS=['HABITUAL','RE TRABAJO','DESVIO'];
 const PANOL_ALERTA_SIN_ALTA='ARTICULO SIN ALTA';
@@ -2746,7 +2757,8 @@ function panolDepDefecto(){
   return d?d.codigo:'';
 }
 
-function panolDestinoPideModulo(cod){ const c=String(cod||'').toUpperCase().trim(); return PANOL_DESTINOS_MODULO.some(d=>c===d||c.startsWith(d+' ')); }
+function panolAuxTipoDe(cod){ const c=String(cod||'').toUpperCase().trim(); const k=Object.keys(PANOL_DESTINO_AUX).find(d=>c===d||c.startsWith(d+' ')); return k?PANOL_DESTINO_AUX[k]:''; }
+function panolDestinoPideModulo(cod){ return panolAuxTipoDe(cod)==='4'; }
 function panolFinMes(per){ const y=Math.floor(per/100), m=per%100; return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10); }
 // Dólar oficial BNA venta vigente a esa fecha (último dato igual o anterior), como el XLOOKUP -1 del Excel
 // Caché de 1,5 s para listas y mapas que se consultan por cada fila: cargar cientos de filas en la planilla no tiene que recorrer todo de nuevo cada vez
@@ -2819,6 +2831,41 @@ function panolAlertaDe(p, sinAlta, opSinAlta){
   if(p && p.control!=='OK') a.push(p.control);
   return a.join(', ');
 }
+/* ---- Aprobación de observaciones de precio ----
+   Las observaciones de precio (REVISAR vs TANGO, REVISAR TC, FECHA POSTERIOR AL MES) se pueden aprobar: dejan de contar como pendientes pero
+   quedan visibles ("✓ aprobada") con quién y cuándo. La aprobación vale mientras el precio no cambie; si cambia, vuelve a observarse.
+   PANOL_AUTO_APROBAR: por ahora se aprueban solas al guardar; cuando se apague, las nuevas quedan pendientes hasta que alguien las apruebe. */
+const PANOL_ALERTAS_APROBABLES=['REVISAR vs TANGO','REVISAR TC','FECHA POSTERIOR AL MES'];
+let PANOL_AUTO_APROBAR=true;
+function panolUsuario(){ return (AUTH_USER&&AUTH_USER.email)||'demo'; }
+function panolCsv(v){ return String(v||'').split(',').map(x=>x.trim()).filter(Boolean); }
+function panolOkPrevio(e){ const l=panolCsv(e&&e.alerta_ok); return l.length?{lista:l, precio:+e.alerta_ok_precio||0, por:e.alerta_ok_por||'', en:e.alerta_ok_en||''}:null; }
+function panolAplicarAprobacion(all, precio, auto, previo){
+  const aprob=[]; let por='', en='';
+  all.forEach(a=>{
+    if(!PANOL_ALERTAS_APROBABLES.includes(a)) return;
+    if(previo && previo.lista.includes(a) && Math.abs((+previo.precio||0)-(+precio||0))<0.005){ aprob.push(a); por=previo.por; en=previo.en; }
+    else if(auto){ aprob.push(a); por=panolUsuario()+' (automático)'; en=new Date().toISOString(); }
+  });
+  return {pend:all.filter(a=>!aprob.includes(a)), aprob, por, en};
+}
+function panolCamposAprobacion(res, precio){
+  return { alerta:res.pend.join(', ')||null, alerta_ok:res.aprob.join(', ')||null, alerta_ok_por:res.aprob.length?res.por:null, alerta_ok_en:res.aprob.length?res.en:null, alerta_ok_precio:res.aprob.length?(+precio||0):null };
+}
+function panolPendAprobables(r){ return panolCsv(r.alerta).filter(a=>PANOL_ALERTAS_APROBABLES.includes(a)); }
+// Escribe en compras_panol_egresos; si todavía faltan las columnas nuevas (aux_tipo, alerta_ok*) reintenta sin ellas y avisa
+let EGR_COL_FALTA=false;
+const EGR_COLS_NUEVAS=['aux_tipo','alerta_ok','alerta_ok_por','alerta_ok_en','alerta_ok_precio'];
+async function sbEgr(path, method, body, prefer){
+  const q=x=>{ const y={...x}; EGR_COLS_NUEVAS.forEach(k=>delete y[k]); return y; };
+  const sinNuevas=b=>Array.isArray(b)?b.map(q):q(b);
+  const o=b=>({method, body:JSON.stringify(b), ...(prefer?{prefer}:{})});
+  if(!EGR_COL_FALTA){
+    try{ return await sbFetch(path, o(body)); }
+    catch(e){ if(!new RegExp('\\b('+EGR_COLS_NUEVAS.join('|')+')\\b').test(String(e.message||e))) throw e; EGR_COL_FALTA=true; toast('Faltan columnas nuevas (correr sql/2026-10_panol_aux_tipo.sql y sql/2026-10_panol_alerta_ok.sql): se guardó sin el auxiliar y la aprobación.'); }
+  }
+  return sbFetch(path, o(sinNuevas(body)));
+}
 // Campos de precio de una erogación (cod puede ser '' si el artículo no está dado de alta)
 function panolCamposPrecio(cod, periodo, cant, manual){
   let p, ars, usd, fuente;
@@ -2841,9 +2888,53 @@ function panolErogArt(r){
   return '⚠ '+(r.articulo_libre||'(sin artículo)');
 }
 function panolAlertaBadges(r){
-  const a=String(r.alerta||'').split(',').map(s=>s.trim()).filter(Boolean);
-  return a.length?a.map(x=>'<span class="badge b-rojo" title="'+esc(x)+'">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>';
+  const pend=panolCsv(r.alerta), ok=panolCsv(r.alerta_ok);
+  const tip=ok.length?'Aprobada por '+esc(r.alerta_ok_por||'')+(r.alerta_ok_en?' · '+fmtDate(String(r.alerta_ok_en).slice(0,10)):''):'';
+  return (pend.length?pend.map(x=>'<span class="badge b-rojo" title="'+esc(x)+'">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>')
+    +(ok.length?' '+ok.map(x=>'<span class="badge b-gris" title="'+tip+'">✓ '+esc(x)+'</span>').join(' '):'');
 }
+function panolBtnAprobar(r, cerr){
+  if(cerr || !canEditOG() || !panolPendAprobables(r).length) return '';
+  return '<button class="iconbtn" title="Aprobar la observación de precio" style="color:#4f8a53;font-weight:700" onclick="panolAprobarUna('+r.id+')">✓</button>';
+}
+async function panolAprobarFilas(rows){
+  const ahora=new Date().toISOString(), por=panolUsuario();
+  for(let i=0;i<rows.length;i+=10){
+    await Promise.all(rows.slice(i,i+10).map(async r=>{
+      const aprobar=panolPendAprobables(r), pend=panolCsv(r.alerta).filter(a=>!aprobar.includes(a)), ok=panolCsv(r.alerta_ok).concat(aprobar);
+      const upd={alerta:pend.join(', ')||null, alerta_ok:[...new Set(ok)].join(', ')||null, alerta_ok_por:por, alerta_ok_en:ahora, alerta_ok_precio:+r.costo_unit_ars||0};
+      if(!DEMO_MODE) await sbEgr('/compras_panol_egresos?id=eq.'+r.id,'PATCH',upd,'return=minimal');
+      Object.assign(r,upd);
+    }));
+  }
+}
+async function panolAprobarUna(id){
+  const r=(DIC.panol_egresos||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  if(panolBloqueoCierre(r.periodo)) return;
+  try{ await panolAprobarFilas([r]); if(!DEMO_MODE) await reloadDB(); }catch(e){ toast('No se pudo aprobar: '+(e.message||e)); return; }
+  toast('Observación aprobada'); renderPanol();
+}
+window.panolAprobarUna=panolAprobarUna;
+function openPanolAprobar(){
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && panolPendAprobables(r).length), cnt={};
+  rows.forEach(r=>panolPendAprobables(r).forEach(a=>{ cnt[a]=(cnt[a]||0)+1; }));
+  if(!rows.length){ toast('No hay observaciones de precio pendientes en este período'); return; }
+  openModal('Aprobar observaciones de precio',
+    '<div style="font-size:14px;line-height:1.7">En <b>'+panolPerTxt(PANOL_PERIODO)+'</b> hay <b>'+rows.length+'</b> erogaciones con observaciones de precio pendientes:<br>'+Object.keys(cnt).map(a=>esc(a)+': <b>'+cnt[a]+'</b>').join('<br>')
+    +'<br><br>Al aprobarlas dejan de contar como pendientes, pero se siguen viendo como "✓ aprobada", con tu usuario y la fecha. Si después cambia el precio de una erogación, vuelve a observarse. No se tocan SIN PRECIO ni los artículos u operarios sin alta.</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="paOkBtn" onclick="panolAprobarPeriodo()">Aprobar las '+rows.length+'</button>');
+}
+window.openPanolAprobar=openPanolAprobar;
+async function panolAprobarPeriodo(){
+  if(panolBloqueoCierre(PANOL_PERIODO)) return;
+  const btn=document.getElementById('paOkBtn'); if(btn){ btn.disabled=true; btn.textContent='Aprobando…'; }
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && panolPendAprobables(r).length);
+  try{ await panolAprobarFilas(rows); if(!DEMO_MODE) await reloadDB(); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Aprobar'; } toast('No se pudo aprobar todo: '+(e.message||e)); return; }
+  closeModal(); toast('Observaciones aprobadas: '+rows.length+' erogaciones'); renderPanol();
+}
+window.panolAprobarPeriodo=panolAprobarPeriodo;
 function panolSort(ev, ns, k){
   if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
   const cur=SP_SORT[ns]; SP_SORT[ns]={k, dir:(cur&&cur.k===k&&cur.dir===1)?-1:1};
@@ -2864,13 +2955,13 @@ function renderPanolErog(){
       if(col==='art') return panolErogArt(r);
       if(col==='oper') return r.operario||'(sin operario)';
       if(col==='fuente') return r.fuente_precio||'(sin precio)';
-      if(col==='alerta') return r.alerta?String(r.alerta).split(',').map(s=>s.trim()).filter(Boolean).join(' + '):'OK';
+      if(col==='alerta') return r.alerta?panolCsv(r.alerta).join(' + '):(r.alerta_ok?'OK (aprobada)':'OK');
       if(col==='exp') return r.exportado?'Sí':'No';
       return '';
     } });
   if(!SP_SORT.pnl) SP_SORT.pnl={k:'fecha',dir:-1};
   const shown=_spOrdenar('pnl', base.filter(r=>xlfPass('pnl',r)), {
-    fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, aux:r=>r.aux_modulo||panolAuxDeSerie(r.serie), gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
+    fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, aux:r=>panolAuxFila(r), gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
     art:r=>panolErogArt(r), cant:r=>+r.cantidad||0, oper:r=>r.operario, pars:r=>+r.costo_unit_ars||0, pusd:r=>+r.costo_unit_usd||0,
     tars:r=>+r.total_ars||0, tusd:r=>+r.total_usd||0, fuente:r=>r.fuente_precio, alerta:r=>r.alerta||'', exp:r=>r.exportado?1:0 });
   _PANOL_SHOWN=shown;
@@ -2882,14 +2973,14 @@ function renderPanolErog(){
   const num=v=>v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
   const filas=shown.length ? shown.map(r=>'<tr'+(r.alerta?' style="background:#fff6f4"':'')+'>'
       +'<td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.horario||'')+'</td>'
-      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(r.aux_modulo||panolAuxDeSerie(r.serie)||'')+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
+      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(panolAuxFila(r))+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
       +'<td>'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.operario||'')+'</td>'
       +'<td style="text-align:right">'+num(r.costo_unit_ars)+'</td><td style="text-align:right">'+num(r.costo_unit_usd)+'</td>'
       +'<td style="text-align:right">'+num(r.total_ars)+'</td><td style="text-align:right">'+num(r.total_usd)+'</td>'
       +'<td title="'+esc([r.precio_proveedor,r.precio_oc?('OC '+r.precio_oc):'',r.precio_fecha_ref?fmtDate(r.precio_fecha_ref):''].filter(Boolean).join(' · '))+'">'+esc(r.fuente_precio||'')+'</td>'
       +'<td>'+panolAlertaBadges(r)+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
-      +'<td><div class="row-actions">'+(r.exportado||cerr?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
+      +'<td><div class="row-actions">'+panolBtnAprobar(r,cerr)+(r.exportado||cerr?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
     : '<tr><td colspan="19" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
   const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" para precios por mes.</div>':'')
     +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
@@ -2900,12 +2991,13 @@ function renderPanolErog(){
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
       +'<button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button>'
+      +(canEditOG()&&!cerr&&base.some(r=>panolPendAprobables(r).length)?'<button class="btn ghost sm" onclick="openPanolAprobar()">Aprobar observaciones de precio ('+base.filter(r=>panolPendAprobables(r).length).length+')</button>':'')
       +'<button class="btn ghost sm" onclick="panolExportErogExcel()">Exportar Excel</button>'
       +'<button class="btn ghost sm" onclick="openPanolPlanilla()">Planilla de carga</button>'
       +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
       +aviso
       +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid" id="tblPanolErog"><thead><tr>'
-      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Aux. módulo',null,'aux')+_pnTh('Galpón',null,'gal')
+      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Auxiliar',null,'aux')+_pnTh('Galpón',null,'gal')
       +_pnTh('Proceso','proc','proc')+_pnTh('SOLP',null,'solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad',null,'cant')+_pnTh('Operario','oper','oper')
       +_pnTh('Precio ARS',null,'pars')+_pnTh('Precio USD',null,'pusd')+_pnTh('Total ARS',null,'tars')+_pnTh('Total USD',null,'tusd')
       +_pnTh('Fuente precio','fuente','fuente')+_pnTh('Alarma','alerta','alerta')+_pnTh('Exportado','exp','exp')+'<th style="width:80px"></th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
@@ -2956,7 +3048,7 @@ function openPanolErogForm(id){
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
     +'<div class="field"><label>Unidad de medida</label><select id="pe_um" onchange="this.dataset.manual=1;panolUmNote()">'+panolUmOptionsHtml(cur?(cur.um||'UNI'):'UNI')+'</select><div id="pe_umNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div></div>'
     +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolDestinoNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolDestino()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolDestino();panolErogDestino()" onkeydown="panolComboKey(event)" onblur="panolDestinoBlur();setTimeout(panolErogDestino,200)"></div>'
-    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="this.select();comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';delete this.dataset.auto;comboPanolSerie()" onkeydown="panolComboKey(event)" onblur="panolSerieBlur()">'
+    +'<div class="frow c2"><div class="field"><label id="pe_serieLbl">Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie, cur&&panolAuxTipoFila(cur)))+'" placeholder="Buscá por serie, Adic. 1 o auxiliar…" autocomplete="off" onfocus="this.select();comboPanolSerie(null,null,null,panolTipoModal)" oninput="document.getElementById(\'pe_serie\').value=\'\';delete this.dataset.auto;comboPanolSerie(null,null,null,panolTipoModal)" onkeydown="panolComboKey(event)" onblur="panolSerieBlur(null,null,null,panolTipoModal)">'
     +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Galpón</label><select id="pe_galpon">'+galOpts+'</select></div>'
@@ -2965,7 +3057,8 @@ function openPanolErogForm(id){
     +'<div class="field"><label>Depósito</label><select id="pe_dep"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Precio unit. ARS</label><input id="pe_pars" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div>'
     +'<div class="field"><label>Precio unit. USD</label><input id="pe_pusd" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div></div>'
-    +'<div id="pe_precioNote" style="font-size:12px;margin:2px 0 10px;min-height:16px"></div>'
+    +'<div id="pe_precioNote" style="font-size:12px;margin:2px 0 6px;min-height:16px"></div>'
+    +'<label id="pe_aprobarBox" data-prevok="'+(cur&&cur.alerta_ok?'1':'')+'" style="display:none;align-items:center;gap:6px;font-size:12.5px;margin:0 0 10px"><input type="checkbox" id="pe_aprobar"> Aprobar la observación de precio (queda registrado quién la aprobó)</label>'
     +'<div class="field"><label>Comentario</label><input id="pe_coment" type="text" value="'+esc(cur?(cur.comentario||''):'')+'"></div>';
   openModal((cur?'Editar':'Cargar')+' erogación', body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolErog('+(cur?cur.id:'null')+')">Guardar</button>');
@@ -2975,21 +3068,28 @@ function openPanolErogForm(id){
   else panolErogPrecio();
 }
 window.openPanolErogForm=openPanolErogForm;
-// Destinos que piden módulo (MANMOD / MODALQ / DTM): se propone GENERICO MODULO ya cargado y se pide indicar el módulo que corresponde.
-// Si el usuario no lo cambia, queda GENERICO MODULO y se puede imputar después editando la erogación.
+// Destinos que piden auxiliar (MANMOD / MANTRF / DTM → módulo; MANBSU → bienes de uso; MANMYU, MANHRR, MANROD): el campo trae la lista de ese auxiliar,
+// con GENERICO MODULO / "Sin asignar" ya cargado cuando existe, para imputarlo después al que corresponda editando la erogación.
 function panolErogDestino(){
   const n=document.getElementById('pe_serieNote'); if(!n) return;
   const cod=(document.getElementById('pn_obra')||{}).value||((document.getElementById('pn_obra_q')||{}).value||'').split(' — ')[0];
-  const pide=panolDestinoPideModulo(cod);
-  const q=document.getElementById('pe_serie_q'), h=document.getElementById('pe_serie');
+  const tipo=panolAuxTipoDe(cod), q=document.getElementById('pe_serie_q'), h=document.getElementById('pe_serie'), lbl=document.getElementById('pe_serieLbl');
+  if(lbl) lbl.textContent=PANOL_AUX_ETQ[tipo]||'Serie / módulo';
+  const def=panolAuxDefecto(tipo);
   if(q&&h){
-    if(pide && !h.value && !q.value.trim()){ h.value=PANOL_MODULO_GENERICO; q.value=panolSerieTxt(PANOL_MODULO_GENERICO); q.dataset.auto='1'; }
-    else if(!pide && q.dataset.auto==='1'){ h.value=''; q.value=''; delete q.dataset.auto; }
+    // un auxiliar elegido a mano que no es de este tipo se descarta
+    if(tipo && h.value && q.dataset.auto!=='1' && !panolAuxSrc(tipo).some(x=>String(x.serie).toUpperCase()===String(h.value).toUpperCase())){ h.value=''; q.value=''; toast('El auxiliar elegido no corresponde a este destino: elegí uno de la lista'); }
+    if(tipo && q.dataset.auto==='1' && h.value && h.value!==def){ h.value=''; q.value=''; delete q.dataset.auto; }   // cambió de tipo: se vuelve a proponer
+    if(tipo && def && !h.value && !q.value.trim()){ h.value=def; q.value=panolSerieTxt(def,tipo); q.dataset.auto='1'; }
+    else if(!tipo && q.dataset.auto==='1'){ h.value=''; q.value=''; delete q.dataset.auto; }
   }
-  const gen=!!(pide&&h&&h.value===PANOL_MODULO_GENERICO);
-  n.style.color=gen?'#b36b00':'var(--muted)';
-  n.textContent=pide?(gen?'Este destino pide indicar el módulo. Quedó GENERICO MODULO: escribí la serie o el Adic. 1 del módulo que corresponde para cambiarlo.':'Este destino pide indicar el módulo.'):'';
-  if(q) q.style.borderColor=gen?'#e0a030':'';
+  const gen=!!(tipo&&h&&h.value&&h.value===def), vacio=!!(tipo&&h&&!h.value);
+  n.style.color=(gen||vacio)?'#b36b00':'var(--muted)';
+  const nombre=(PANOL_AUX_ETQ[tipo]||'').replace('Auxiliar · ','').toLowerCase();
+  n.textContent=!tipo?'':(tipo==='4'
+    ?(gen?'Este destino pide indicar el módulo. Quedó GENERICO MODULO: escribí la serie o el Adic. 1 del módulo que corresponde para cambiarlo.':'Este destino pide indicar el módulo.')
+    :(gen?'Este destino pide el auxiliar de '+nombre+'. Quedó "'+def+'": elegí el que corresponde.':(vacio?'Este destino pide el auxiliar de '+nombre+': elegí uno de la lista.':'Auxiliar de '+nombre+'.')));
+  if(q) q.style.borderColor=(gen||vacio)?'#e0a030':'';
 }
 window.panolErogDestino=panolErogDestino;
 function panolErogPrecio(resetManual){
@@ -3014,6 +3114,12 @@ function panolErogPrecio(resetManual){
     pn.style.color=ok?'var(--muted)':'#b3261e';
     pn.textContent=(p.fuente?('Precio de '+per+': '+(p.fuente==='OC'&&p.oc?'OC '+p.oc:p.fuente)+(p.prov?' · '+p.prov:'')+' · '+fmtDate(p.fecha)+' · '):'')+(ok?'OK':'⚠ '+p.control);
   }else pn.textContent='';
+  const apBox=document.getElementById('pe_aprobarBox');
+  if(apBox){
+    const aprobable=!!(ra.cod && p && PANOL_ALERTAS_APROBABLES.includes(p.control) && !(pars.dataset.manual||pusd.dataset.manual));
+    apBox.style.display=aprobable?'flex':'none';
+    if(aprobable && apBox.dataset.init!==p.control){ apBox.dataset.init=p.control; document.getElementById('pe_aprobar').checked=!!apBox.dataset.prevok||PANOL_AUTO_APROBAR; }
+  }
   panolErogTotal();
 }
 window.panolErogPrecio=panolErogPrecio;
@@ -3030,12 +3136,15 @@ window.panolErogTotal=panolErogTotal;
 function panolArmarFila(f){
   const periodo=(+f.fecha.slice(0,4))*100+(+f.fecha.slice(5,7));
   const pr=panolCamposPrecio(f.ra.cod, periodo, f.cant, f.manual);
-  let serie=f.serie||''; if(!serie && panolDestinoPideModulo(f.dest)) serie=PANOL_MODULO_GENERICO;
+  const auxTipo=panolAuxTipoDe(f.dest);
+  let serie=f.serie||''; if(!serie && auxTipo) serie=panolAuxDefecto(auxTipo);
   const operario=(f.oper||'').trim()||'Genérico';
   const row={ fecha:f.fecha, periodo, horario:f.horario||null, cod_deposito:f.dep||null, cod_articulo:f.ra.cod||null, articulo_libre:f.ra.cod?null:f.ra.libre,
-    cantidad:f.cant, um:(f.um||'').trim()||'UNI', proyecto_cod:f.dest, serie:serie||null, aux_modulo:panolAuxDeSerie(serie)||null, galpon:(f.galpon||'').trim()||null, proceso:f.proceso||null, solp:(f.solp||'').trim()||null,
+    cantidad:f.cant, um:(f.um||'').trim()||'UNI', proyecto_cod:f.dest, serie:serie||null, aux_modulo:panolAuxDeSerie(serie, auxTipo||'4')||null, aux_tipo:(serie&&(auxTipo||'4'))||null, galpon:(f.galpon||'').trim()||null, proceso:f.proceso||null, solp:(f.solp||'').trim()||null,
     operario, comentario:(f.coment||'').trim(), exportado:false,
-    alerta:panolAlertaDe({control:pr._control}, !f.ra.cod, panolOperarioSinAlta(operario))||null };
+    };
+  const all=panolCsv(panolAlertaDe({control:pr._control}, !f.ra.cod, panolOperarioSinAlta(operario)));
+  Object.assign(row, panolCamposAprobacion(panolAplicarAprobacion(all, pr.costo_unit_ars, f.auto!==false && (f.auto===undefined?PANOL_AUTO_APROBAR:f.auto), f.okPrevio||null), pr.costo_unit_ars));
   ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
   return row;
 }
@@ -3052,7 +3161,10 @@ async function guardarPanolErog(id){
   const pars=document.getElementById('pe_pars'), pusd=document.getElementById('pe_pusd');
   const manual=(pars.dataset.manual||pusd.dataset.manual)?{ars:+pars.value||0, usd:+pusd.value||0}:null;
   if(!g('pe_serie') && g('pe_serie_q').trim()){ toast('Elegí la serie de la lista (o borrá el campo)'); return; }
-  const row=panolArmarFila({fecha, horario:g('pe_horario'), ra, cant, um:g('pe_um'), dest:proyecto_cod, serie:g('pe_serie'), galpon:g('pe_galpon'), proceso:g('pe_proceso'), solp:g('pe_solp'), oper:g('pe_oper'), dep:cod_deposito, coment:g('pe_coment'), manual});
+  const apBox=document.getElementById('pe_aprobarBox'), apVisible=!!(apBox&&apBox.style.display!=='none'), apChk=!!(document.getElementById('pe_aprobar')||{}).checked;
+  const curRow=id!=null?(DIC.panol_egresos||[]).find(x=>String(x.id)===String(id)):null;
+  const row=panolArmarFila({fecha, horario:g('pe_horario'), ra, cant, um:g('pe_um'), dest:proyecto_cod, serie:g('pe_serie'), galpon:g('pe_galpon'), proceso:g('pe_proceso'), solp:g('pe_solp'), oper:g('pe_oper'), dep:cod_deposito, coment:g('pe_coment'), manual,
+    auto:apVisible?apChk:PANOL_AUTO_APROBAR, okPrevio:(apVisible&&!apChk)?null:panolOkPrevio(curRow)});
   if(ra.cod && cod_deposito) PANOL_LAST_DEP=cod_deposito;
   try{
     if(DEMO_MODE){
@@ -3060,8 +3172,8 @@ async function guardarPanolErog(id){
       if(id==null){ row.id=Math.max(0,...DIC.panol_egresos.map(r=>+r.id||0))+1; DIC.panol_egresos.push(row); }
       else{ const r=DIC.panol_egresos.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,row); }
     }else{
-      if(id==null) await sbFetch('/compras_panol_egresos',{method:'POST',body:JSON.stringify(row)});
-      else await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
+      if(id==null) await sbEgr('/compras_panol_egresos','POST',row);
+      else await sbEgr('/compras_panol_egresos?id=eq.'+id,'PATCH',row);
       await reloadDB();
     }
   }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Pañol de la carpeta sql/?)'); return; }
@@ -3084,52 +3196,68 @@ window.panolRecalcularPrecios=panolRecalcularPrecios;
 /* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
 // Opciones de serie/módulo = Auxiliar 04 (Contenedor/Módulo) habilitado. La serie (patente) es la descripción del auxiliar; el Adic. 1
 // (número de referencia) y la descripción salen de Diccionarios → Módulos, cruzados por serie.
-function panolSeriesSrc(){ return pnCache('series',[CONTA_DB.auxopc&&CONTA_DB.auxopc['4'],(SERIES_ACTIVAS||[]).length],_panolSeriesSrc0); }
-function _panolSeriesSrc0(){
-  const mods=auxModuloIdx();
-  const aux=auxOpts('4').filter(o=>String(o.habil||'').toLowerCase()==='si');
-  if(aux.length) return aux.map(o=>{ const sp=auxSerieDe(o), m=mods[sp.toUpperCase()]; return {serie:sp, aux:o.cod, adicional_1:m?(m.adicional_1||''):'', descripcion:m?(m.descripcion||''):''}; }).filter(x=>x.serie);
-  return Object.values(mods).map(m=>({serie:m.serie, aux:'', adicional_1:m.adicional_1||'', descripcion:m.descripcion||''}));   // sin auxiliares cargados
+function panolAuxSrc(tipo){ return pnCache('aux'+tipo,[CONTA_DB.auxopc&&CONTA_DB.auxopc[tipo],(SERIES_ACTIVAS||[]).length],()=>_panolAuxSrc0(tipo)); }
+function panolSeriesSrc(){ return panolAuxSrc('4'); }
+function _panolAuxSrc0(tipo){
+  const fam=tipo==='4'?'modulo':'otros', ser={};
+  (SERIES_ACTIVAS||[]).forEach(r=>{ if(r.familia===fam && r.serie) ser[String(r.serie).trim().toUpperCase()]=r; });
+  const aux=auxOpts(tipo).filter(o=>String(o.habil||'').toLowerCase()==='si');
+  if(aux.length) return aux.map(o=>{ const sp=auxSerieDe(o), m=ser[sp.toUpperCase()]; return {serie:sp, aux:o.cod, tipo, adicional_1:m?(m.adicional_1||''):'', descripcion:m?(m.descripcion||''):''}; }).filter(x=>x.serie);
+  return tipo==='4'?Object.values(ser).map(m=>({serie:m.serie, aux:'', tipo, adicional_1:m.adicional_1||'', descripcion:m.descripcion||''})):[];   // sin auxiliares cargados
 }
 function panolSerieNombre(s){
   const a1=s.adicional_1&&String(s.adicional_1).trim()!==String(s.serie).trim()?s.adicional_1:'';
-  return [a1, s.descripcion, s.aux?'Aux '+s.aux:''].filter(Boolean).join(' · ');
+  const redundante=s.aux && String(s.serie).toUpperCase().startsWith(String(s.aux).toUpperCase());   // ej. "PL0075 ROCAS NEGRAS" ya trae su código
+  return [a1, s.descripcion, (s.aux&&!redundante)?'Aux '+s.aux:''].filter(Boolean).join(' · ');
 }
-function panolSerieTxt(serie){
+function panolSerieTxt(serie, tipo){
   if(!serie) return '';
-  const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===String(serie).toUpperCase());
-  return s?(s.serie+' — '+panolSerieNombre(s)):serie;
+  const s=panolAuxSrc(tipo||'4').find(x=>String(x.serie).toUpperCase()===String(serie).toUpperCase());
+  const n=s?panolSerieNombre(s):'';
+  return s?(s.serie+(n?' — '+n:'')):serie;
 }
-function panolAuxDeSerie(serie){
+function panolAuxDeSerie(serie, tipo){
   const S=String(serie||'').trim().toUpperCase(); if(!S) return '';
-  const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===S); return s?s.aux:'';
+  const s=panolAuxSrc(tipo||'4').find(x=>String(x.serie).toUpperCase()===S); return s?s.aux:'';
 }
+// Valor que se propone cuando el destino pide auxiliar y no se eligió: GENERICO MODULO (tipo 4) o "Sin asignar" (los demás), si existe
+function panolAuxDefecto(tipo){
+  if(!tipo) return '';
+  if(tipo==='4') return PANOL_MODULO_GENERICO;
+  const s=panolAuxSrc(tipo).find(x=>/^sin ?asignar/i.test(String(x.serie).trim()));
+  return s?s.serie:'';
+}
+function panolAuxTipoFila(r){ return r.aux_tipo||panolAuxTipoDe(r.proyecto_cod)||'4'; }
+function panolAuxFila(r){ return r.aux_modulo||panolAuxDeSerie(r.serie, panolAuxTipoFila(r))||''; }
+function panolTipoModal(){ return panolAuxTipoDe((document.getElementById('pn_obra')||{}).value); }
+window.panolTipoModal=panolTipoModal;
 // Busca por serie, Adic. 1, descripción o código de auxiliar (todas las palabras escritas); primero los que arrancan con lo escrito
-function comboPanolSerie(qId, hidId, after){
+function comboPanolSerie(qId, hidId, after, tipoFn){
   const inp=document.getElementById(qId||'pe_serie_q'); if(!inp) return;
   const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
-  const src=panolSeriesSrc();
+  const tipo=(tipoFn?tipoFn():'')||'4';
+  const src=panolAuxSrc(tipo);
   const txt=s=>((s.serie||'')+' '+(s.adicional_1||'')+' '+(s.descripcion||'')+' '+(s.aux||'')).toLowerCase();
   const empieza=s=>[s.serie,s.adicional_1,s.aux].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
   let list=words.length?src.filter(s=>{ const t=txt(s); return words.every(w=>t.includes(w)); }):src;
   if(words.length) list=list.filter(empieza).concat(list.filter(s=>!empieza(s)));
   const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
-  if(!src.some(s=>String(s.serie).toUpperCase()===PANOL_MODULO_GENERICO) && (!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w)))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
+  if(tipo==='4' && !src.some(s=>String(s.serie).toUpperCase()===PANOL_MODULO_GENERICO) && (!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w)))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
   comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; delete inp.dataset.auto; (after||panolErogDestino)(); });
   panolComboMark(inp);
 }
 window.comboPanolSerie=comboPanolSerie;
 // Al salir del campo: si lo escrito es exactamente una serie, un Adic. 1 o un código de auxiliar, lo toma sin tener que elegir de la lista
-function panolSerieBlur(qId, hidId, after){
+function panolSerieBlur(qId, hidId, after, tipoFn){
   comboHideDelayed();
   setTimeout(()=>{
     const inp=document.getElementById(qId||'pe_serie_q'), hid=document.getElementById(hidId||'pe_serie'); if(!inp||!hid||hid.value) return;
     const t=(inp.value||'').trim(); if(!t) return;
     const first=t.split(' — ')[0].trim().toUpperCase(), T=t.toUpperCase();
-    const src=panolSeriesSrc();
+    const tipo=(tipoFn?tipoFn():'')||'4', src=panolAuxSrc(tipo);
     const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===T) || src.find(x=>String(x.aux||'').toUpperCase()===T);
-    if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); delete inp.dataset.auto; (after||panolErogDestino)(); }
-    else if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; delete inp.dataset.auto; (after||panolErogDestino)(); }
+    if(s){ hid.value=s.serie; inp.value=panolSerieTxt(s.serie,tipo); delete inp.dataset.auto; (after||panolErogDestino)(); }
+    else if(tipo==='4' && first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; delete inp.dataset.auto; (after||panolErogDestino)(); }
   },160);
 }
 window.panolSerieBlur=panolSerieBlur;
@@ -3439,19 +3567,21 @@ function ppNuevaFila(base){
   const r={k:++_PP_SEQ, id:null, fecha:'', horario:'', art:'', cant:'', um:'UNI', dest:'', destCod:'', serie:'', serieTxt:'', proceso:'HABITUAL', galpon:'', solp:'', oper:'', dep:'', coment:'', manual:null, del:false, orig:null};
   if(base) PP_COPIA.forEach(c=>{ r[c]=base[c]; });
   else{ r.fecha=new Date().toISOString().slice(0,10); r.horario=new Date().toTimeString().slice(0,5); }
+  if(!r.dep && PANOL_PLAN && PANOL_PLAN.dep) r.dep=PANOL_PLAN.dep;   // cada fila muestra su depósito (el de la lista de arriba mientras no se cambie a mano)
   return r;
 }
 function ppSnap(r){ return JSON.stringify([r.fecha,r.horario,r.art,r.cant,r.um,r.destCod,r.serie,r.proceso,r.galpon,r.solp,r.oper,r.dep,r.coment]); }
 function ppDesdeEgreso(e){
   const r=ppNuevaFila();
   Object.assign(r,{ id:e.id, fecha:String(e.fecha||'').slice(0,10), horario:e.horario||'', art:e.cod_articulo?panolArtTxt(e.cod_articulo):(e.articulo_libre||''), cant:e.cantidad, um:e.um||'UNI',
-    dest:obraInputVal(e.proyecto_cod,panolDestinoNom), destCod:e.proyecto_cod||'', serie:e.serie||'', serieTxt:panolSerieTxt(e.serie), proceso:e.proceso||'HABITUAL', galpon:e.galpon||'',
-    solp:e.solp||'', oper:e.operario||'', dep:e.cod_deposito||'', coment:e.comentario||'', manual:e.fuente_precio==='Manual'?{ars:+e.costo_unit_ars||0, usd:+e.costo_unit_usd||0}:null });
+    dest:obraInputVal(e.proyecto_cod,panolDestinoNom), destCod:e.proyecto_cod||'', serie:e.serie||'', serieTxt:panolSerieTxt(e.serie, panolAuxTipoFila(e)), proceso:e.proceso||'HABITUAL', galpon:e.galpon||'',
+    solp:e.solp||'', oper:e.operario||'', dep:e.cod_deposito||'', depManual:true, okPrevio:panolOkPrevio(e), coment:e.comentario||'', manual:e.fuente_precio==='Manual'?{ars:+e.costo_unit_ars||0, usd:+e.costo_unit_usd||0}:null });
   r.orig=ppSnap(r);
   return r;
 }
 function openPanolPlanilla(){
-  PANOL_PLAN={rows:[ppNuevaFila()], dep:PANOL_LAST_DEP||panolDepDefecto()};
+  PANOL_PLAN={rows:[], dep:PANOL_LAST_DEP||panolDepDefecto(), auto:PANOL_AUTO_APROBAR, f:{est:'todas', motivo:'', q:''}};
+  PANOL_PLAN.rows.push(ppNuevaFila());
   renderPanol();
 }
 window.openPanolPlanilla=openPanolPlanilla;
@@ -3473,17 +3603,20 @@ function ppCalc(r){
   if(!(cant>0)) errs.push('falta cantidad');
   if(!r.destCod) errs.push('elegí el destino de la lista');
   if(r.serieTxt && !r.serie) errs.push('elegí la serie de la lista');
+  { const tp=panolAuxTipoDe(r.destCod); if(tp && r.serie && !panolAuxSrc(tp).some(x=>String(x.serie).toUpperCase()===String(r.serie).toUpperCase())) errs.push('el auxiliar no corresponde al destino'); }
   if(ra.cod && !dep) errs.push('falta depósito');
   const ul=DIC.unidades_medida||[];
   if(ul.length && r.um && !ul.some(u=>u.codigo===r.um && u.activo!==false) && !(r.orig && r.orig.includes(JSON.stringify(r.um)))) errs.push('U.M. fuera del diccionario');
   const gl=DIC.panol_galpones||[];
   if(r.galpon && gl.length && !gl.some(g=>g.nombre===r.galpon) && !(r.orig && r.orig.includes(JSON.stringify(r.galpon)))) errs.push('galpón fuera del diccionario');
-  let pr=null, alerta='';
+  let pr=null, alerta='', aprob=[];
   if(r.fecha && (ra.cod||ra.libre)){
     pr=panolCamposPrecio(ra.cod, (+r.fecha.slice(0,4))*100+(+r.fecha.slice(5,7)), cant, r.manual);
-    alerta=panolAlertaDe({control:pr._control}, !ra.cod, panolOperarioSinAlta(r.oper||'Genérico'));
+    const all=panolCsv(panolAlertaDe({control:pr._control}, !ra.cod, panolOperarioSinAlta(r.oper||'Genérico')));
+    const ap=panolAplicarAprobacion(all, pr.costo_unit_ars, PANOL_PLAN.auto!==false, r.okPrevio||null);
+    alerta=ap.pend.join(', '); aprob=ap.aprob;
   }
-  return {errs, ra, dep, pr, alerta};
+  return {errs, ra, dep, pr, alerta, aprob};
 }
 function ppVacia(r){ return !r.id && !String(r.art).trim() && !r.cant; }
 function ppEstado(r){ return r.del?'del':(!r.id?'new':(ppSnap(r)!==r.orig?'mod':'')); }
@@ -3491,18 +3624,26 @@ function ppResHtml(r,c0){
   if(ppVacia(r)) return '';
   const c=c0||ppCalc(r);
   if(c.errs.length) return '<span style="color:#b3261e">'+esc(c.errs.join(' · '))+'</span>';
-  const modGen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO?'<span class="badge b-ambar" title="Este destino pide módulo: quedó GENERICO MODULO; indicá la serie o el Adic. 1 del módulo">indicá el módulo</span> ':'';
-  return '<span>'+(c.pr&&c.pr.costo_unit_ars?fmtNum(c.pr.costo_unit_ars,2)+' ARS':'<span style="color:var(--muted)">sin precio</span>')+'</span> '+modGen
-    +(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>');
+  const tp=panolAuxTipoDe(r.destCod);
+  const modGen=tp&&(!r.serie||r.serie===panolAuxDefecto(tp))?'<span class="badge b-ambar" title="Este destino pide auxiliar: indicá el que corresponde">indicá el auxiliar</span> ':'';
+  return modGen+(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>')
+    +(c.aprob&&c.aprob.length?' '+c.aprob.map(x=>'<span class="badge b-gris" title="Observación de precio aprobada">✓ '+esc(x)+'</span>').join(' '):'');
+}
+function ppPrecioHtml(r,c,campo){
+  if(ppVacia(r)||!c.pr) return '';
+  const v=+c.pr[campo]||0;
+  return v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
 }
 function ppRecalc(k,sinResumen){
   const r=ppFila(k); if(!r) return;
   const cc=ppCalc(r), c=document.getElementById('pp_'+k+'_res'), tr=document.getElementById('pp_tr_'+k);
   if(c) c.innerHTML=ppResHtml(r,cc);
+  const pa=document.getElementById('pp_'+k+'_pars'), pu=document.getElementById('pp_'+k+'_pusd');
+  if(pa) pa.innerHTML=ppPrecioHtml(r,cc,'costo_unit_ars'); if(pu) pu.innerHTML=ppPrecioHtml(r,cc,'costo_unit_usd');
   if(tr){ const st=ppEstado(r);
     tr.style.background=r.del?'#f1f1ee':(!ppVacia(r)&&cc.errs.length?'#fdecea':(cc.alerta?'#fff6f4':''));
     tr.style.opacity=r.del?'.5':''; tr.style.textDecoration=r.del?'line-through':''; tr.dataset.st=st;
-    const si=document.getElementById('pp_'+k+'_serie'), gen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO;
+    const tp=panolAuxTipoDe(r.destCod), si=document.getElementById('pp_'+k+'_serie'), gen=!!tp&&(r.serie===panolAuxDefecto(tp)&&!!r.serie||!r.serie);
     if(si){ si.style.borderColor=gen?'#e0a030':''; si.style.background=gen?'#fff8e6':''; }
     const n=document.getElementById('pp_'+k+'_n'); if(n) n.textContent=st==='new'?'nueva':st==='mod'?'editada':st==='del'?'a eliminar':''; }
   if(!sinResumen) ppResumen();
@@ -3519,6 +3660,7 @@ function ppResumen(){
 }
 function ppSet(k,f,v){
   const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null;
+  if(f==='dep') r.depManual=true;
   if(f==='art' && !r.umManual){ const ra=panolArtResolver(v), u=ra.cod?panolUmSugerida(ra.cod):''; if(u){ r.um=u; const el=document.getElementById('pp_'+k+'_um'); if(el) panolUmFijar(el,u); } }
   ppRecalc(k);
 }
@@ -3527,10 +3669,10 @@ window.ppSetUm=ppSetUm;
 window.ppSet=ppSet;
 // Destinos que piden módulo: si la fila no tiene serie se propone GENERICO MODULO (visible, resaltado) para imputarlo al módulo que corresponda
 function ppAutoSerie(r){
-  const pide=panolDestinoPideModulo(r.destCod);
-  if(pide && !r.serie && !r.serieTxt){ r.serie=PANOL_MODULO_GENERICO; r.serieTxt=panolSerieTxt(PANOL_MODULO_GENERICO); r.serieAuto=true; return true; }
-  if(!pide && r.serieAuto){ r.serie=''; r.serieTxt=''; r.serieAuto=false; return true; }
-  return false;
+  const tipo=panolAuxTipoDe(r.destCod), def=panolAuxDefecto(tipo); let cambio=false;
+  if(r.serieAuto && (!tipo || r.serieAutoTipo!==tipo)){ r.serie=''; r.serieTxt=''; r.serieAuto=false; cambio=true; }   // cambió de destino: se vuelve a proponer
+  if(tipo && def && !r.serie && !r.serieTxt){ r.serie=def; r.serieTxt=panolSerieTxt(def,tipo); r.serieAuto=true; r.serieAutoTipo=tipo; cambio=true; }
+  return cambio;
 }
 function ppPintarSerie(r){
   const q=document.getElementById('pp_'+r.k+'_serie'), h=document.getElementById('pp_'+r.k+'_seriecod'); if(!q||!h) return;
@@ -3559,11 +3701,16 @@ window.ppAgregar=ppAgregar;
 function ppCompletarAbajo(c){
   const rows=PANOL_PLAN.rows.filter(r=>!r.del), src=rows.find(r=>String(r[c]||'').trim()!==''); if(!src){ toast('No hay valor para copiar'); return; }
   const cols=c==='dest'?['dest','destCod']:c==='serie'?['serie','serieTxt']:[c];
-  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); if(c==='dest') ppAutoSerie(r); });
+  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); if(c==='dest') ppAutoSerie(r); if(c==='dep') r.depManual=true; });
   renderPanol(); toast('Completado hacia abajo con "'+src[c==='serie'?'serieTxt':c]+'"');
 }
 window.ppCompletarAbajo=ppCompletarAbajo;
-function ppDepDefecto(v){ PANOL_PLAN.dep=v; PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true)); ppResumen(); }
+// Cambiar el "Depósito por defecto" actualiza las filas cuyo depósito no se eligió a mano
+function ppDepDefecto(v){
+  PANOL_PLAN.dep=v;
+  PANOL_PLAN.rows.forEach(r=>{ if(!r.depManual){ r.dep=v; const el=document.getElementById('pp_'+r.k+'_dep'); if(el) el.value=v; } ppRecalc(r.k,true); });
+  ppResumen();
+}
 window.ppDepDefecto=ppDepDefecto;
 function ppDescartar(){
   const cambios=PANOL_PLAN&&PANOL_PLAN.rows.some(r=>!ppVacia(r)&&ppEstado(r));
@@ -3575,6 +3722,45 @@ function ppDescartar(){
 }
 window.ppDescartar=ppDescartar;
 
+/* ---- Filtros de la planilla: estado (no OK / errores / alarma / OK), motivo y buscador. Solo ocultan filas; no cambian nada. ---- */
+function ppMotivosOpts(){
+  const F=PANOL_PLAN.f, cnt={};
+  PANOL_PLAN.rows.forEach(r=>{ if(ppVacia(r)||r.del) return; const c=ppCalc(r); c.errs.concat(c.alerta?c.alerta.split(', '):[]).forEach(m=>{ cnt[m]=(cnt[m]||0)+1; }); });
+  return '<option value="">Todos los motivos</option>'+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]).map(m=>'<option value="'+esc(m)+'"'+(F.motivo===m?' selected':'')+'>'+esc(m)+' ('+cnt[m]+')</option>').join('');
+}
+function ppAplicarFiltro(){
+  const F=PANOL_PLAN.f, q=_syncFold(F.q||''); let vis=0, tot=0;
+  PANOL_PLAN.rows.forEach(r=>{
+    const tr=document.getElementById('pp_tr_'+r.k); if(!tr) return; tot++;
+    const c=ppVacia(r)?null:ppCalc(r);
+    const sev=!c?'vacia':(r.del?'del':(c.errs.length?'err':(c.alerta?'al':'ok')));
+    let ok=true;
+    if(F.est==='noOk') ok=(sev==='err'||sev==='al'); else if(F.est==='err') ok=(sev==='err'); else if(F.est==='al') ok=(sev==='al'); else if(F.est==='ok') ok=(sev==='ok');
+    if(ok && F.motivo) ok=!!c && !r.del && c.errs.concat(c.alerta?c.alerta.split(', '):[]).includes(F.motivo);
+    if(ok && q) ok=_syncFold([r.art,r.dest,r.serieTxt,r.oper,r.solp,r.coment,r.galpon,r.um].join(' ')).includes(q);
+    tr.style.display=ok?'':'none'; if(ok) vis++;
+  });
+  const info=document.getElementById('ppFiltroInfo');
+  if(info) info.textContent=(F.est!=='todas'||F.motivo||q)?(vis+' de '+tot+' filas visibles'):'';
+}
+function ppAutoAprobar(v){
+  PANOL_AUTO_APROBAR=!!v; PANOL_PLAN.auto=!!v;
+  PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true)); ppResumen(); ppAplicarFiltro();
+  toast(v?'Las observaciones de precio se aprueban solas al guardar':'Las observaciones de precio quedan pendientes hasta que alguien las apruebe');
+}
+window.ppAutoAprobar=ppAutoAprobar;
+function ppFiltroSet(k,v){
+  PANOL_PLAN.f[k]=v;
+  if(k==='est'){ const m=document.getElementById('ppF_motivo'); if(m) m.innerHTML=ppMotivosOpts(); }
+  ppAplicarFiltro();
+}
+function ppFiltroActualizar(){ const m=document.getElementById('ppF_motivo'); if(m) m.innerHTML=ppMotivosOpts(); ppAplicarFiltro(); }
+function ppFiltroLimpiar(){
+  PANOL_PLAN.f={est:'todas', motivo:'', q:''};
+  const e=document.getElementById('ppF_est'), q=document.getElementById('ppF_q'); if(e) e.value='todas'; if(q) q.value='';
+  ppFiltroActualizar();
+}
+window.ppFiltroSet=ppFiltroSet; window.ppFiltroActualizar=ppFiltroActualizar; window.ppFiltroLimpiar=ppFiltroLimpiar;
 function ppRowHtml(r,i){
   const K=r.k, id=c=>'pp_'+K+'_'+c;
   const inp=(c,type,val,extra,w)=>'<td><input class="ppin" id="'+id(c)+'" type="'+type+'" value="'+esc(val)+'" style="min-width:'+(w||70)+'px" '+(extra||'')+'></td>';
@@ -3590,17 +3776,19 @@ function ppRowHtml(r,i){
     +inp('cant','number',r.cant,'step="0.01" oninput="ppSet('+K+',\'cant\',this.value)"',70)
     +sel('um',panolUmOptionsHtml(r.um),r.um,'style="min-width:112px" onchange="ppSetUm('+K+',this.value)"')
     +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="IF / obra" onfocus="panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolDestinos)"></td>'
-    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="this.select();comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
+    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie, Adic. 1 o auxiliar" onfocus="this.select();comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'),()=>panolAuxTipoDe(ppFila('+K+').destCod))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'),()=>panolAuxTipoDe(ppFila('+K+').destCod))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'),()=>panolAuxTipoDe(ppFila('+K+').destCod))"></td>'
     +sel('proceso',PANOL_PROCESOS.map(p=>opt(p,p,r.proceso)).join(''),r.proceso,'onchange="ppSet('+K+',\'proceso\',this.value)"')
     +sel('galpon','<option value="">—</option>'+gl.map(n=>opt(n,n,r.galpon)).join(''),r.galpon,'onchange="ppSet('+K+',\'galpon\',this.value)"')
     +inp('solp','text',r.solp,'oninput="ppSet('+K+',\'solp\',this.value)"',70)
     +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
-    +sel('dep','<option value="">(por defecto)</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'onchange="ppSet('+K+',\'dep\',this.value)"')
+    +sel('dep','<option value="">— elegí —</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'style="min-width:210px" onchange="ppSet('+K+',\'dep\',this.value)"')
     +inp('coment','text',r.coment,'oninput="ppSet('+K+',\'coment\',this.value)"',110)
-    +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:170px"></td>'
+    +'<td id="'+id('pars')+'" style="font-size:11.5px;text-align:right;white-space:nowrap"></td><td id="'+id('pusd')+'" style="font-size:11.5px;text-align:right;white-space:nowrap"></td>'
+    +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:200px"></td>'
     +'<td><button class="iconbtn del" title="'+(r.id?'Marcar para eliminar / deshacer':'Quitar fila')+'" onclick="ppQuitar('+K+')">'+ICO.del+'</button></td></tr>';
 }
 function renderPanolPlanilla(){
+  const F0=PANOL_PLAN.f||(PANOL_PLAN.f={est:'todas', motivo:'', q:''});
   const deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
   const fd=(c,l)=>'<button class="xlfbtn" title="Completar hacia abajo con el primer valor" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:var(--olive-deep)" onclick="ppCompletarAbajo(\''+c+'\')">⤓</button>';
   const th=(l,c)=>'<th style="white-space:nowrap">'+l+(c?' '+fd(c):'')+'</th>';
@@ -3616,12 +3804,22 @@ function renderPanolPlanilla(){
         +'<button class="btn ghost sm" onclick="openPpPegar()">Pegar desde Excel</button><button class="btn ghost sm" onclick="openPpImportar()">Importar archivo Excel</button>'
         +'<button class="btn ghost sm" onclick="panolDescargarPlantilla()">Plantilla Excel</button>'
         +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPlan\')">Auto-ajustar columnas</button>'
+        +'<label style="display:flex;gap:6px;align-items:center;font-size:12px" title="Si está tildado, las observaciones de precio (REVISAR vs TANGO, REVISAR TC, FECHA POSTERIOR) se aprueban solas al guardar y quedan registradas con tu usuario"><input type="checkbox" id="ppAuto" '+(PANOL_PLAN.auto!==false?'checked':'')+' onchange="ppAutoAprobar(this.checked)"> Aprobar automáticamente las observaciones de precio</label>'
+        +'<span style="flex-basis:100%;height:0"></span>'
+        +'<span style="font-size:12px;color:var(--muted)">Ver:</span>'
+        +'<select id="ppF_est" class="ppin" style="width:auto;min-width:280px" onchange="ppFiltroSet(\'est\',this.value)">'+[['todas','Todas las filas'],['noOk','Solo las que NO están OK (errores y alarmas)'],['err','Solo con errores'],['al','Solo con alarma'],['ok','Solo las OK']].map(([v,l])=>'<option value="'+v+'"'+(F0.est===v?' selected':'')+'>'+l+'</option>').join('')+'</select>'
+        +'<select id="ppF_motivo" class="ppin" style="width:auto;min-width:250px" onchange="ppFiltroSet(\'motivo\',this.value)">'+ppMotivosOpts()+'</select>'
+        +'<input id="ppF_q" type="search" class="ppin" style="width:250px" placeholder="Buscar artículo, destino, operario…" value="'+esc(F0.q||'')+'" oninput="ppFiltroSet(\'q\',this.value)">'
+        +'<button class="btn ghost sm" onclick="ppFiltroActualizar()" title="Vuelve a calcular la lista de motivos y a aplicar el filtro">↻ Actualizar</button>'
+        +'<button class="btn ghost sm" onclick="ppFiltroLimpiar()">Limpiar filtros</button>'
+        +'<span id="ppFiltroInfo" style="font-size:12px;color:var(--muted)"></span>'
         +'<span style="font-size:11.5px;color:var(--muted)">⤓ en un título copia el primer valor a todas las filas. Nada se guarda hasta "Revisar y guardar".</span></div>'
       +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid" id="tblPanolPlan"><thead><tr><th>#</th>'
-        +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio / alarma')+'<th></th>'
+        +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo / auxiliar','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio ARS')+th('Precio USD')+th('Alarma')+'<th></th>'
       +'</tr></thead><tbody>'+PANOL_PLAN.rows.map(ppRowHtml).join('')+'</tbody></table></div></div>';
   PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true));
   ppResumen();
+  ppAplicarFiltro();
 }
 window.renderPanolPlanilla=renderPanolPlanilla;
 
@@ -3649,7 +3847,7 @@ async function ppGuardar(){
   const btn=document.getElementById('ppOkBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
   const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
   const arma=r=>{ const c=ppCalc(r);
-    return panolArmarFila({fecha:r.fecha, horario:r.horario, ra:c.ra, cant:+r.cant, um:r.um, dest:r.destCod, serie:r.serie, galpon:r.galpon, proceso:r.proceso, solp:r.solp, oper:r.oper, dep:c.dep, coment:r.coment, manual:r.manual}); };
+    return panolArmarFila({fecha:r.fecha, horario:r.horario, ra:c.ra, cant:+r.cant, um:r.um, dest:r.destCod, serie:r.serie, galpon:r.galpon, proceso:r.proceso, solp:r.solp, oper:r.oper, dep:c.dep, coment:r.coment, manual:r.manual, auto:PANOL_PLAN.auto!==false, okPrevio:r.okPrevio||null}); };
   try{
     const nuevas=rows.filter(r=>ppEstado(r)==='new'), mods=rows.filter(r=>ppEstado(r)==='mod'), dels=rows.filter(r=>ppEstado(r)==='del');
     if(DEMO_MODE){
@@ -3659,11 +3857,11 @@ async function ppGuardar(){
       DIC.panol_egresos=DIC.panol_egresos.filter(x=>!dels.some(r=>String(r.id)===String(x.id)));
     }else{
       for(let i=0;i<nuevas.length;i+=100){
-        const lote=nuevas.slice(i,i+100), resp=await sbFetch('/compras_panol_egresos',{method:'POST',body:JSON.stringify(lote.map(arma))});
+        const lote=nuevas.slice(i,i+100), resp=await sbEgr('/compras_panol_egresos','POST',lote.map(arma));
         lote.forEach((r,j)=>{ if(resp&&resp[j]){ r.id=resp[j].id; r.orig=ppSnap(r); } });   // si falla un lote, reintentar no duplica los ya guardados
       }
       for(let i=0;i<mods.length;i+=10){
-        await Promise.all(mods.slice(i,i+10).map(r=>sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(arma(r)),prefer:'return=minimal'}).then(()=>{ r.orig=ppSnap(r); })));
+        await Promise.all(mods.slice(i,i+10).map(r=>sbEgr('/compras_panol_egresos?id=eq.'+r.id,'PATCH',arma(r),'return=minimal').then(()=>{ r.orig=ppSnap(r); })));
       }
       if(dels.length) await sbFetch('/compras_panol_egresos?id=in.('+dels.map(r=>r.id).join(',')+')',{method:'DELETE',prefer:'return=minimal'});
       await reloadDB();
@@ -3693,8 +3891,8 @@ function panolDescargarPlantilla(){
 window.panolDescargarPlantilla=panolDescargarPlantilla;
 function panolExportErogExcel(){
   const rows=_PANOL_SHOWN; if(!rows.length){ toast('No hay filas para exportar'); return; }
-  const aoa=[['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','AUX. MÓDULO','PROCESO','GALPÓN','SOLP','ARTÍCULO','DESCRIPCIÓN','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO','PRECIO ARS','PRECIO USD','TOTAL ARS','TOTAL USD','FUENTE PRECIO','ALARMA','EXPORTADO A TANGO']]
-    .concat(rows.map(r=>[r.fecha,r.horario||'',r.proyecto_cod||'',r.serie||'',r.aux_modulo||panolAuxDeSerie(r.serie)||'',r.proceso||'',r.galpon||'',r.solp||'',r.cod_articulo||r.articulo_libre||'',r.cod_articulo?(artDesc(r.cod_articulo)||''):'',+r.cantidad||0,r.um||'',r.operario||'',r.cod_deposito||'',r.comentario||'',+r.costo_unit_ars||0,+r.costo_unit_usd||0,+r.total_ars||0,+r.total_usd||0,r.fuente_precio||'',r.alerta||'',r.exportado?'Sí':'No']));
+  const aoa=[['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','AUXILIAR','PROCESO','GALPÓN','SOLP','ARTÍCULO','DESCRIPCIÓN','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO','PRECIO ARS','PRECIO USD','TOTAL ARS','TOTAL USD','FUENTE PRECIO','ALARMA','EXPORTADO A TANGO']]
+    .concat(rows.map(r=>[r.fecha,r.horario||'',r.proyecto_cod||'',r.serie||'',panolAuxFila(r),r.proceso||'',r.galpon||'',r.solp||'',r.cod_articulo||r.articulo_libre||'',r.cod_articulo?(artDesc(r.cod_articulo)||''):'',+r.cantidad||0,r.um||'',r.operario||'',r.cod_deposito||'',r.comentario||'',+r.costo_unit_ars||0,+r.costo_unit_usd||0,+r.total_ars||0,+r.total_usd||0,r.fuente_precio||'',r.alerta||'',r.exportado?'Sí':'No']));
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Erogaciones');
   XLSX.writeFile(wb,'Erogaciones_Panol_'+PANOL_PERIODO+'.xlsx'); toast('Exportado: '+rows.length+' filas');
 }
@@ -3762,11 +3960,13 @@ function ppImportarAoa(aoa, formato){
     const st=txt(f,'serie');
     if(st){ const T=st.toUpperCase();
       if(T===PANOL_MODULO_GENERICO){ r.serie=PANOL_MODULO_GENERICO; r.serieTxt=PANOL_MODULO_GENERICO; }
-      else{ const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===T)||panolSeriesSrc().find(x=>String(x.adicional_1||'').trim().toUpperCase()===T);
-        if(s){ r.serie=s.serie; r.serieTxt=s.serie+' — '+panolSerieNombre(s); } else r.serieTxt=st; } }
+      else{ const tp=panolAuxTipoDe(r.destCod)||'4', src=panolAuxSrc(tp);
+        const s=src.find(x=>String(x.serie).toUpperCase()===T)||src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===T);
+        if(s){ r.serie=s.serie; r.serieTxt=panolSerieTxt(s.serie,tp); } else r.serieTxt=st; } }
     const pr=txt(f,'proceso').toUpperCase(); r.proceso=PANOL_PROCESOS.includes(pr)?pr:'HABITUAL';
     const g=txt(f,'galpon'); if(g){ const m=gal.find(x=>String(x.nombre).trim().toUpperCase()===g.toUpperCase()); r.galpon=m?m.nombre:g; }
-    const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; }
+    const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; r.depManual=!!m; }
+    if(!r.dep) r.dep=PANOL_PLAN.dep||'';
     ppAutoSerie(r);
     nuevas.push(r);
   }
@@ -3830,7 +4030,7 @@ function panolBloqueoCierre(per){
 function panolResumenPeriodo(per){
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===+per), al=r=>String(r.alerta||'');
   return { n:rows.length, ars:rows.reduce((a,r)=>a+(+r.total_ars||0),0), usd:rows.reduce((a,r)=>a+(+r.total_usd||0),0),
-    conAlerta:rows.filter(r=>al(r)).length, sinPrecio:rows.filter(r=>al(r).includes('SIN PRECIO')).length,
+    aprobadas:rows.filter(r=>r.alerta_ok).length, conAlerta:rows.filter(r=>al(r)).length, sinPrecio:rows.filter(r=>al(r).includes('SIN PRECIO')).length,
     sinAlta:rows.filter(r=>al(r).includes(PANOL_ALERTA_SIN_ALTA)).length, revisar:rows.filter(r=>/REVISAR|FECHA POSTERIOR/.test(al(r))).length,
     sinExportar:rows.filter(r=>!r.exportado).length };
 }
@@ -3848,8 +4048,9 @@ async function panolRecalcRows(rows, prog){
     await Promise.all(rows.slice(i,i+10).map(async r=>{
       const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
       const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; });
-      upd.alerta=panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario))||null;
-      if(!DEMO_MODE) await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'});
+      const all=panolCsv(panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario)));
+      Object.assign(upd, panolCamposAprobacion(panolAplicarAprobacion(all, pr.costo_unit_ars, PANOL_AUTO_APROBAR, panolOkPrevio(r)), pr.costo_unit_ars));
+      if(!DEMO_MODE) await sbEgr('/compras_panol_egresos?id=eq.'+r.id,'PATCH',upd,'return=minimal');
       Object.assign(r,upd); n++;
     }));
   }
@@ -3889,7 +4090,7 @@ window.renderPanolCierres=renderPanolCierres;
 function openPanolCerrar(per){
   if(!ROLE.admin){ toast('Solo un administrador puede cerrar un mes.'); return; }
   const r=panolResumenPeriodo(per), grave=r.sinPrecio+r.sinAlta;
-  const avisos=[r.sinPrecio?r.sinPrecio+' sin precio':'', r.sinAlta?r.sinAlta+' con artículo sin alta':'', r.revisar?r.revisar+' para revisar (precio o tipo de cambio)':'', r.sinExportar?r.sinExportar+' todavía sin exportar a Tango':''].filter(Boolean);
+  const avisos=[r.sinPrecio?r.sinPrecio+' sin precio':'', r.sinAlta?r.sinAlta+' con artículo sin alta':'', r.revisar?r.revisar+' para revisar (precio o tipo de cambio)':'', r.sinExportar?r.sinExportar+' todavía sin exportar a Tango':'', r.aprobadas?r.aprobadas+' con observación de precio ya aprobada (informativo)':''].filter(Boolean);
   const body='<div style="font-size:14px;line-height:1.7">Vas a cerrar <b>'+panolPerTxt(per)+'</b>: '+r.n+' erogaciones · $ '+fmtNum(r.ars,2)+' ARS · US$ '+fmtNum(r.usd,2)+'.<br>'
     +'Al cerrar, los precios quedan <b>congelados</b>: no se podrán crear, editar ni eliminar erogaciones de ese mes, y las compras nuevas no lo afectan. Reabrirlo queda registrado.</div>'
     +(avisos.length?'<div style="margin:12px 0;padding:8px 12px;border-radius:8px;background:'+(grave?'#fdecea':'#fff6e5')+';border:1px solid '+(grave?'#f3b8b1':'#f0d9a8')+';font-size:12.5px"><b>Antes de cerrar (estado actual):</b> '+avisos.join(' · ')+'.'+(grave?' Si cerrás igual, las que no tienen precio quedan valuadas en $0.':'')+'</div>':'')
@@ -12518,7 +12719,7 @@ function tblAutofit(sel){
   if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
     sbFetch('/compras_ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW||{}}),prefer:'resolution=merge-duplicates,return=minimal'}).catch(()=>{});
   }
-  table.style.tableLayout=''; table.classList.remove('grid-fixed');
+  table.style.tableLayout=''; table.style.width=''; table.classList.remove('grid-fixed');
   table.querySelectorAll('thead th').forEach(th=>{ th.style.width=''; });
 }
 window.tblAutofit=tblAutofit;
