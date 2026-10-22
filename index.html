@@ -2902,6 +2902,7 @@ function comboPanolArt(qId, after){
   let list=words.length?src.filter(a=>{ const t=txt(a); return words.every(w=>t.includes(w)); }):src;
   if(words.length) list=list.filter(empieza).concat(list.filter(a=>!empieza(a)));
   comboShow(inp, list.slice(0,80).map(a=>({code:a.codigo, name:panolArtNombre(a)})), it=>{ inp.value=it.code+' — '+it.name; (after||(()=>panolErogPrecio(true)))(); });
+  panolComboMark(inp);
 }
 window.comboPanolArt=comboPanolArt;
 function openPanolErogForm(id){
@@ -2917,17 +2918,17 @@ function openPanolErogForm(id){
   const artVal=cur?(cur.cod_articulo?panolArtTxt(cur.cod_articulo):(cur.articulo_libre||'')):'';
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
     +'<div class="field"><label>Hora</label><input id="pe_horario" type="time" value="'+esc(cur?(cur.horario||''):ahora)+'"></div></div>'
-    +'<div class="field"><label>Artículo</label><input id="pe_art" value="'+esc(artVal)+'" placeholder="Escribí código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt()" oninput="comboPanolArt();panolErogPrecio(true)" onblur="comboHideDelayed()">'
+    +'<div class="field"><label>Artículo</label><input id="pe_art" value="'+esc(artVal)+'" placeholder="Escribí código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt()" oninput="comboPanolArt();panolErogPrecio(true)" onkeydown="panolComboKey(event)" onblur="comboHideDelayed()">'
     +'<div id="pe_artNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
-    +'<div class="field"><label>Unidad de medida</label><input id="pe_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
-    +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
-    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';comboPanolSerie()" onblur="panolSerieBlur()">'
+    +'<div class="field"><label>Unidad de medida</label><select id="pe_um" onchange="this.dataset.manual=1;panolUmNote()">'+panolUmOptionsHtml(cur?(cur.um||'UNI'):'UNI')+'</select><div id="pe_umNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div></div>'
+    +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onkeydown="panolComboKey(event)" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
+    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';comboPanolSerie()" onkeydown="panolComboKey(event)" onblur="panolSerieBlur()">'
     +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Galpón</label><select id="pe_galpon">'+galOpts+'</select></div>'
     +'<div class="field"><label>SOLP</label><input id="pe_solp" type="text" value="'+esc(cur?(cur.solp||''):'')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Buscá por nombre o puesto, o vacío = Genérico" autocomplete="off" onfocus="comboPanolOper()" oninput="comboPanolOper();panolOperNote()" onblur="comboHideDelayed();panolOperNote()"><div id="pe_operNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Buscá por nombre o puesto, o vacío = Genérico" autocomplete="off" onfocus="comboPanolOper()" oninput="comboPanolOper();panolOperNote()" onkeydown="panolComboKey(event)" onblur="comboHideDelayed();panolOperNote()"><div id="pe_operNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Depósito</label><select id="pe_dep"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Precio unit. ARS</label><input id="pe_pars" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div>'
     +'<div class="field"><label>Precio unit. USD</label><input id="pe_pusd" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div></div>'
@@ -2936,6 +2937,7 @@ function openPanolErogForm(id){
   openModal((cur?'Editar':'Cargar')+' erogación', body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolErog('+(cur?cur.id:'null')+')">Guardar</button>');
   panolErogDestino();
+  if(cur) document.getElementById('pe_um').dataset.manual=1;   // al editar no se pisa la U.M. guardada
   if(cur && cur.fuente_precio==='Manual'){ document.getElementById('pe_pars').value=cur.costo_unit_ars||''; document.getElementById('pe_pusd').value=cur.costo_unit_usd||''; document.getElementById('pe_pars').dataset.manual=1; document.getElementById('pe_pusd').dataset.manual=1; panolErogTotal(); }
   else panolErogPrecio();
 }
@@ -2954,7 +2956,12 @@ function panolErogPrecio(resetManual){
   if(!ra.cod && !ra.libre){ note.textContent=''; }
   else if(ra.libre){ note.style.color='#b3261e'; note.textContent='⚠ Ese artículo no está en el diccionario. Se guarda igual, con alarma "'+PANOL_ALERTA_SIN_ALTA+'", para que se cree como corresponde.'; }
   else{ note.style.color='var(--muted)'; note.textContent=artDesc(ra.cod); }
-  if(resetManual){ delete pars.dataset.manual; delete pusd.dataset.manual; }
+  if(resetManual){ delete pars.dataset.manual; delete pusd.dataset.manual; const um0=document.getElementById('pe_um'); if(um0) delete um0.dataset.manual; }
+  const umSel=document.getElementById('pe_um'), umNote=document.getElementById('pe_umNote');
+  if(umSel && ra.cod && !umSel.dataset.manual){
+    const u=panolUmSugerida(ra.cod);
+    if(u){ panolUmFijar(umSel,u); if(umNote) umNote.textContent='U.M. sugerida según Tango para este artículo: '+u; } else if(umNote) umNote.textContent='';
+  }
   const per=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
   const p=ra.cod?panolPrecioMes(ra.cod, per):null;
   if(!pars.dataset.manual && !pusd.dataset.manual){ pars.value=p&&p.ars?p.ars.toFixed(2):''; pusd.value=p&&p.usd?p.usd.toFixed(2):''; }
@@ -3070,6 +3077,7 @@ function comboPanolSerie(qId, hidId, after){
   const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
   if(!src.some(s=>String(s.serie).toUpperCase()===PANOL_MODULO_GENERICO) && (!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w)))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
   comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; (after||panolErogDestino)(); });
+  panolComboMark(inp);
 }
 window.comboPanolSerie=comboPanolSerie;
 // Al salir del campo: si lo escrito es exactamente una serie, un Adic. 1 o un código de auxiliar, lo toma sin tener que elegir de la lista
@@ -3101,6 +3109,7 @@ function comboPanolOper(qId, after){
   let list=panolOperariosActivos();
   if(words.length){ list=list.filter(o=>{ const t=txt(o); return words.every(w=>t.includes(w)); }); list=list.filter(empieza).concat(list.filter(o=>!empieza(o))); }
   comboShow(inp, list.slice(0,80).map(o=>({code:o.nombre, name:[o.nombre_pila,o.puesto].filter(Boolean).join(' · ')})), it=>{ inp.value=it.code; (after||panolOperNote)(); });
+  panolComboMark(inp);
 }
 window.comboPanolOper=comboPanolOper;
 function panolOperNote(){
@@ -3111,22 +3120,126 @@ function panolOperNote(){
 }
 window.panolOperNote=panolOperNote;
 
-/* ---- Solapa "Diccionario pañol": galpones y operarios ----
+/* ---- Teclado en las listas de búsqueda de Pañol ----
+   Con lo escrito en el campo, Tab (o Enter) elige la sugerencia marcada en verde: la primera, la que coincide exacto, o la que
+   marcaste con las flechas ↑↓. Esc cierra la lista y deja lo escrito tal cual (útil para un artículo u operario sin alta). */
+function panolComboPaint(){
+  const c=_comboCur; if(!c||!_comboEl) return;
+  [..._comboEl.children].forEach((ch,k)=>{ ch.style.background=(k===c.idx)?'#e6f1e3':'#fff'; if(k===c.idx&&ch.scrollIntoView) ch.scrollIntoView({block:'nearest'}); });
+}
+function panolComboMark(inp){
+  const c=_comboCur; if(!c||c.inp!==inp||!c.items.length||!_comboEl||_comboEl.style.display==='none') return;
+  c.idx=0; c.nav=false; panolComboPaint();
+}
+function panolComboKey(ev){
+  const inp=ev.target, c=_comboCur;
+  const open=!!(c&&c.inp===inp&&c.items.length&&_comboEl&&_comboEl.style.display!=='none');
+  if(ev.key==='Escape'){ if(open){ comboHide(); c.items=[]; ev.stopPropagation(); } return; }
+  if(!open) return;
+  if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){
+    ev.preventDefault(); const n=c.items.length, d=ev.key==='ArrowDown'?1:-1;
+    c.idx=((c.idx<0?(d>0?-1:0):c.idx)+d+n)%n; c.nav=true; panolComboPaint(); return;
+  }
+  const txt=String(inp.value||'').trim();
+  if(((ev.key==='Tab'&&!ev.shiftKey)||ev.key==='Enter') && (c.nav||txt)){
+    const exacto=c.items.findIndex(it=>String(it.code).toUpperCase()===txt.toUpperCase());
+    const k=c.nav?c.idx:(exacto>=0?exacto:0);
+    c.pick(c.items[k]); comboHide(); c.items=[];
+    if(ev.key==='Enter') ev.preventDefault();
+  }
+}
+window.panolComboKey=panolComboKey;
+function panolComboObra(qId,hidId,after){ comboObra(qId,hidId,after,panolObras); panolComboMark(document.getElementById(qId)); }
+
+/* ---- Unidades de medida (diccionario en Pañol → Diccionario pañol) ---- */
+function panolUmOpts(){ const l=(DIC.unidades_medida||[]).filter(u=>u.activo!==false).map(u=>u.codigo); return l.length?l:UM_LIST.slice(); }
+function panolUmResolver(txt){
+  const T=String(txt||'').trim().toUpperCase(); if(!T) return '';
+  const l=DIC.unidades_medida||[];
+  const m=l.find(u=>String(u.codigo).toUpperCase()===T)||l.find(u=>String(u.sigla||'').toUpperCase()===T)||l.find(u=>String(u.descripcion||'').toUpperCase()===T);
+  if(m) return m.codigo;
+  return l.length?'':(UM_LIST.find(x=>x.toUpperCase()===T)||'');
+}
+// U.M. del artículo: la de los saldos de Tango ("U.M. control stock"); si no está ahí, la de su última erogación
+function panolUmSugerida(cod){
+  if(!cod) return '';
+  const s=(DIC.stock_saldos||[]).find(x=>x.cod_articulo===cod&&x.um);
+  if(s){ const u=panolUmResolver(s.um); if(u) return u; }
+  const e=(DIC.panol_egresos||[]).filter(r=>r.cod_articulo===cod&&r.um).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0];
+  return e?panolUmResolver(e.um):'';
+}
+function panolUmOptionsHtml(cur){
+  const l=panolUmOpts(); if(cur&&!l.includes(cur)) l.push(cur);
+  const desc=c=>{ const u=(DIC.unidades_medida||[]).find(x=>x.codigo===c); return u&&u.descripcion?c+' · '+u.descripcion:c; };
+  return l.map(c=>'<option value="'+esc(c)+'"'+(cur===c?' selected':'')+'>'+esc(desc(c))+'</option>').join('');
+}
+function panolUmNote(){ const n=document.getElementById('pe_umNote'); if(n) n.textContent=''; }
+window.panolUmNote=panolUmNote;
+function panolUmFijar(sel,u){
+  if(![...sel.options].some(o=>o.value===u)) sel.insertAdjacentHTML('beforeend','<option value="'+esc(u)+'">'+esc(u)+'</option>');
+  sel.value=u;
+}
+// Importar el reporte de Tango "Unidades de medida" (Código, Descripción, Cantidad de decimales, Sigla, Tipo de unidad): agrega las nuevas y actualiza
+// descripción / sigla / decimales / tipo de las existentes. No toca si están habilitadas o no.
+function openPanolUmImport(){
+  openModal('Importar unidades de medida',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de Tango "Unidades de medida" (columnas Código, Descripción, Cantidad de decimales, Sigla, Tipo de unidad). Agrega las que faltan y actualiza los datos de las que ya están; no cambia cuáles están habilitadas.</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="pnum_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="pnumMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolUmImportar()">Importar</button>');
+}
+window.openPanolUmImport=openPanolUmImport;
+async function panolUmImportar(){
+  const f=(document.getElementById('pnum_file').files||[])[0], msg=document.getElementById('pnumMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'Código','Codigo')>=0 && _syncIdx(h,'Sigla')>=0 && _syncIdx(h,'Descripción','Descripcion')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "Código", "Descripción" y "Sigla".');
+    const H=rows[0], iC=_syncIdx(H,'Código','Codigo'), iD=_syncIdx(H,'Descripción','Descripcion'), iDec=_syncIdx(H,'Cantidad de decimales','Decimales'), iS=_syncIdx(H,'Sigla'), iT=_syncIdx(H,'Tipo de unidad','Tipo');
+    const ex={}; (DIC.unidades_medida||[]).forEach(u=>{ ex[String(u.codigo).trim().toUpperCase()]=u; });
+    const nuevos=[], cambios=[];
+    for(let i=1;i<rows.length;i++){
+      const codigo=_syncNorm(rows[i][iC]).toUpperCase(); if(!codigo) continue;
+      const d={descripcion:_syncNorm(rows[i][iD]), sigla:iS>=0?_syncNorm(rows[i][iS]):'', decimales:iDec>=0&&_syncNorm(rows[i][iDec])!==''?+_syncNorm(rows[i][iDec]):null, tipo:iT>=0?(_syncNorm(rows[i][iT])||null):null};
+      const u=ex[codigo];
+      if(!u) nuevos.push({codigo, ...d, activo:true, creado_por:(AUTH_USER&&AUTH_USER.email)||null});
+      else if(u.descripcion!==d.descripcion || (u.sigla||'')!==d.sigla || (u.decimales==null?null:+u.decimales)!==d.decimales || (u.tipo||null)!==d.tipo) cambios.push({id:u.id, upd:d});
+    }
+    if(!nuevos.length && !cambios.length){ msg.textContent='Todo igual: no hay unidades nuevas ni cambios.'; return; }
+    msg.textContent='Guardando '+nuevos.length+' nuevas y '+cambios.length+' actualizadas…';
+    if(DEMO_MODE){
+      nuevos.forEach((n,j)=>{ (DIC.unidades_medida=DIC.unidades_medida||[]).push({id:1000+j,...n}); });
+      cambios.forEach(c=>{ const u=DIC.unidades_medida.find(x=>x.id===c.id); if(u) Object.assign(u,c.upd); });
+    }else{
+      if(nuevos.length) await sbFetch('/compras_unidades_medida',{method:'POST',body:JSON.stringify(nuevos),prefer:'return=minimal'});
+      for(const c of cambios) await sbFetch('/compras_unidades_medida?id=eq.'+c.id,{method:'PATCH',body:JSON.stringify(c.upd),prefer:'return=minimal'});
+      await panolDicRecargar('um');
+    }
+    closeModal(); toast('Unidades de medida: '+nuevos.length+' nuevas, '+cambios.length+' actualizadas'); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolUmImportar=panolUmImportar;
+
+/* ---- Solapa "Diccionario pañol": galpones, operarios y unidades de medida ----
    Alta / modificación / baja. Solo se puede eliminar (o cambiar el nombre) lo que nunca se usó en una erogación;
    lo que ya se usó se puede inhabilitar para que no aparezca más en el formulario. */
 const PANOL_DIC_CFG={
   gal:{tabla:'compras_panol_galpones', dic:'panol_galpones', uso:'galpon', etq:'galpón', campos:[['nombre','Nombre']]},
-  ope:{tabla:'compras_panol_operarios', dic:'panol_operarios', uso:'operario', etq:'operario', campos:[['nombre','Nombre (el que figura en las erogaciones)'],['nombre_pila','Nombre de pila'],['puesto','Puesto']]}
+  ope:{tabla:'compras_panol_operarios', dic:'panol_operarios', uso:'operario', etq:'operario', campos:[['nombre','Nombre (el que figura en las erogaciones)'],['nombre_pila','Nombre de pila'],['puesto','Puesto']]},
+  um:{tabla:'compras_unidades_medida', dic:'unidades_medida', uso:'um', key:'codigo', mayus:true, num:['decimales'], etq:'unidad de medida', campos:[['codigo','Código'],['descripcion','Descripción'],['sigla','Sigla'],['decimales','Cantidad de decimales'],['tipo','Tipo de unidad']]}
 };
 function panolDicUsos(k,row){
-  const f=PANOL_DIC_CFG[k].uso, n=String(row.nombre||'').trim().toUpperCase();
+  const cfg=PANOL_DIC_CFG[k], f=cfg.uso, n=String(row[cfg.key||'nombre']||'').trim().toUpperCase();
   return (DIC.panol_egresos||[]).filter(r=>String(r[f]||'').trim().toUpperCase()===n).length;
 }
 function renderPanolDic(){
-  const gal=DIC.panol_galpones||[], ope=DIC.panol_operarios||[];
+  const gal=DIC.panol_galpones||[], ope=DIC.panol_operarios||[], ums=DIC.unidades_medida||[];
   const estado=r=>r.activo===false?'Inhabilitado':'Activo';
   xlfRegister('pgal',{rows:()=>gal, onChange:renderPanol, val:(r,col)=>col==='estado'?estado(r):''});
   xlfRegister('pope',{rows:()=>ope, onChange:renderPanol, val:(r,col)=>col==='puesto'?(r.puesto||'(sin puesto)'):col==='estado'?estado(r):''});
+  xlfRegister('pum',{rows:()=>ums, onChange:renderPanol, val:(r,col)=>col==='tipo'?(r.tipo||'(sin tipo)'):col==='estado'?estado(r):''});
+  if(!SP_SORT.pum) SP_SORT.pum={k:'codigo',dir:1};
   if(!SP_SORT.pgal) SP_SORT.pgal={k:'nombre',dir:1};
   if(!SP_SORT.pope) SP_SORT.pope={k:'nombre',dir:1};
   const galS=_spOrdenar('pgal', gal.filter(r=>xlfPass('pgal',r)), {nombre:r=>r.nombre, estado:estado, usos:r=>panolDicUsos('gal',r)});
@@ -3139,6 +3252,16 @@ function renderPanolDic(){
     :'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">Sin galpones'+(gal.length?' con esos filtros':' cargados')+'.</td></tr>';
   const opeRows=opeS.length?opeS.map(r=>{ const u=panolDicUsos('ope',r); return '<tr data-q="'+esc(_syncFold([r.puesto,r.nombre,r.nombre_pila,estado(r)].join(' ')))+'"><td>'+esc(r.puesto||'')+'</td><td>'+esc(r.nombre)+'</td><td>'+esc(r.nombre_pila||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('ope',r,u)+'</tr>'; }).join('')
     :'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted)">Sin operarios'+(ope.length?' con esos filtros':' cargados todavía: importalos desde el Excel o cargalos a mano')+'.</td></tr>';
+  const umS=_spOrdenar('pum', ums.filter(r=>xlfPass('pum',r)), {codigo:r=>r.codigo, desc:r=>r.descripcion, sigla:r=>r.sigla, dec:r=>+r.decimales||0, tipo:r=>r.tipo, estado:estado, usos:r=>panolDicUsos('um',r)});
+  const umRows=umS.length?umS.map(r=>{ const u=panolDicUsos('um',r); return '<tr data-q="'+esc(_syncFold([r.codigo,r.descripcion,r.sigla,r.tipo,estado(r)].join(' ')))+'"><td><b>'+esc(r.codigo)+'</b></td><td>'+esc(r.descripcion||'')+'</td><td>'+esc(r.sigla||'')+'</td><td style="text-align:right">'+(r.decimales==null?'':esc(r.decimales))+'</td><td>'+esc(r.tipo||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('um',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--muted)">Sin unidades de medida'+(ums.length?' con esos filtros':' cargadas todavía: importalas desde el Excel de Tango o cargalas a mano')+'.</td></tr>';
+  const umCard='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Unidades de medida</h3><span class="meta">'+umS.length+' de '+ums.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pum')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolUm\')">Auto-ajustar columnas</button>'
+      +'<button class="btn ghost sm" onclick="openPanolUmImport()">Importar desde Excel (Tango)</button>'
+      +'<button class="btn sm" onclick="openPanolDicForm(\'um\')">'+ICO.plus+'Nueva unidad</button></span></div>'
+      +'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolUm" placeholder="Buscar unidad de medida…" oninput="spFiltrar(this,\'tblPanolUm\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" id="tblPanolUm"><thead><tr>'+_pnTh('Código',null,'codigo','pum')+_pnTh('Descripción',null,'desc','pum')+_pnTh('Sigla',null,'sigla','pum')+_pnTh('Decimales',null,'dec','pum')+_pnTh('Tipo','tipo','tipo','pum')+_pnTh('Estado','estado','estado','pum')+_pnTh('Usos',null,'usos','pum')+'<th style="width:230px"></th></tr></thead><tbody>'+umRows+'</tbody></table></div></div>';
   C().innerHTML=panolTabs()
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Galpones</h3><span class="meta">'+galS.length+' de '+gal.length+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pgal')
@@ -3152,30 +3275,34 @@ function renderPanolDic(){
       +'<button class="btn ghost sm" onclick="openPanolOperImport()">Importar desde Excel</button>'
       +'<button class="btn sm" onclick="openPanolDicForm(\'ope\')">'+ICO.plus+'Nuevo operario</button></span></div>'
 +'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolOpe" placeholder="Buscar por nombre, nombre de pila o puesto…" oninput="spFiltrar(this,\'tblPanolOpe\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>';
-  ['tblPanolGal','tblPanolOpe'].forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp&&SP_Q[t]){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>'
+    +umCard;
+  ['tblPanolGal','tblPanolOpe','tblPanolUm'].forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp&&SP_Q[t]){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
 }
 window.renderPanolDic=renderPanolDic;
 function openPanolDicForm(k,id){
   const cfg=PANOL_DIC_CFG[k], cur=id!=null?(DIC[cfg.dic]||[]).find(r=>String(r.id)===String(id)):null;
   const usos=cur?panolDicUsos(k,cur):0;
   const body=cfg.campos.map(([c,l])=>{
-    const bloq=(c==='nombre'&&usos>0);
+    const bloq=(c===(cfg.key||'nombre')&&usos>0);
     return '<div class="field"><label>'+l+'</label><input id="pd_'+c+'" type="text" value="'+esc(cur?(cur[c]||''):'')+'"'+(bloq?' disabled':'')+'></div>';
-  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+' erogación(es): el nombre no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
+  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+' erogación(es): el nombre o código no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
   openModal((cur?'Editar ':'Nuevo ')+cfg.etq, body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolDic(\''+k+'\','+(cur?cur.id:'null')+')">Guardar</button>');
 }
 window.openPanolDicForm=openPanolDicForm;
 async function panolDicRecargar(k){
   const cfg=PANOL_DIC_CFG[k];
-  DIC[cfg.dic]=(await sbFetchAll('/'+cfg.tabla+'?select=*&order=nombre.asc'))||[];
+  DIC[cfg.dic]=(await sbFetchAll('/'+cfg.tabla+'?select=*&order='+(cfg.key||'nombre')+'.asc'))||[];
 }
 async function guardarPanolDic(k,id){
   const cfg=PANOL_DIC_CFG[k], lista=DIC[cfg.dic]=DIC[cfg.dic]||[];
   const cur=id!=null?lista.find(r=>String(r.id)===String(id)):null;
   const row={}; cfg.campos.forEach(([c])=>{ const el=document.getElementById('pd_'+c); row[c]=el&&!el.disabled?el.value.trim():(cur?cur[c]:''); });
-  if(!row.nombre){ toast('Falta el nombre'); return; }
-  if(lista.some(r=>String(r.id)!==String(id) && String(r.nombre).trim().toUpperCase()===row.nombre.toUpperCase())){ toast('Ya existe un '+cfg.etq+' con ese nombre'); return; }
+  const key=cfg.key||'nombre';
+  if(cfg.mayus && row[key]) row[key]=row[key].toUpperCase();
+  (cfg.num||[]).forEach(c=>{ row[c]=(row[c]===''||row[c]==null)?null:+row[c]; });
+  if(!row[key]){ toast(key==='codigo'?'Falta el código':'Falta el nombre'); return; }
+  if(lista.some(r=>String(r.id)!==String(id) && String(r[key]).trim().toUpperCase()===String(row[key]).toUpperCase())){ toast('Ya existe un '+cfg.etq+' con ese '+(key==='codigo'?'código':'nombre')); return; }
   try{
     if(DEMO_MODE){
       if(cur) Object.assign(cur,row); else lista.push({id:Math.max(0,...lista.map(r=>+r.id||0))+1, activo:true, ...row});
@@ -3184,7 +3311,7 @@ async function guardarPanolDic(k,id){
       else await sbFetch('/'+cfg.tabla,{method:'POST',body:JSON.stringify({...row, creado_por:(AUTH_USER&&AUTH_USER.email)||null}),prefer:'return=minimal'});
       await panolDicRecargar(k);
     }
-  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_diccionario.sql?)'); return; }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Pañol de la carpeta sql/?)'); return; }
   closeModal(); toast('Guardado'); renderPanol();
 }
 window.guardarPanolDic=guardarPanolDic;
@@ -3201,7 +3328,7 @@ window.panolDicToggle=panolDicToggle;
 function askPanolDicDel(k,id){
   const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
   if(panolDicUsos(k,r)){ toast('Ya se usó en erogaciones; no se puede eliminar. Inhabilitalo.'); return; }
-  openModal('Eliminar '+cfg.etq,'<p style="margin:0;font-size:14px">¿Eliminar "'+esc(r.nombre)+'"? Nunca se usó en una erogación.</p>',
+  openModal('Eliminar '+cfg.etq,'<p style="margin:0;font-size:14px">¿Eliminar "'+esc(r[cfg.key||'nombre'])+'"? Nunca se usó en una erogación.</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmPanolDicDel(\''+k+'\','+id+')">Eliminar</button>');
 }
 window.askPanolDicDel=askPanolDicDel;
@@ -3305,6 +3432,8 @@ function ppCalc(r){
   if(!r.destCod) errs.push('elegí el destino de la lista');
   if(r.serieTxt && !r.serie) errs.push('elegí la serie de la lista');
   if(ra.cod && !dep) errs.push('falta depósito');
+  const ul=DIC.unidades_medida||[];
+  if(ul.length && r.um && !ul.some(u=>u.codigo===r.um && u.activo!==false) && !(r.orig && r.orig.includes(JSON.stringify(r.um)))) errs.push('U.M. fuera del diccionario');
   const gl=DIC.panol_galpones||[];
   if(r.galpon && gl.length && !gl.some(g=>g.nombre===r.galpon) && !(r.orig && r.orig.includes(JSON.stringify(r.galpon)))) errs.push('galpón fuera del diccionario');
   let pr=null, alerta='';
@@ -3340,7 +3469,13 @@ function ppResumen(){
   const err=rows.filter(r=>!r.del&&ppCalc(r).errs.length).length, al=rows.filter(r=>!r.del&&!ppCalc(r).errs.length&&ppCalc(r).alerta).length;
   el.innerHTML=rows.length+' filas · '+n('new')+' nuevas · '+n('mod')+' editadas · '+n('del')+' a eliminar'+(err?' · <b style="color:#b3261e">'+err+' con errores</b>':'')+(al?' · '+al+' con alarma':'');
 }
-function ppSet(k,f,v){ const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null; ppRecalc(k); }
+function ppSet(k,f,v){
+  const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null;
+  if(f==='art' && !r.umManual){ const ra=panolArtResolver(v), u=ra.cod?panolUmSugerida(ra.cod):''; if(u){ r.um=u; const el=document.getElementById('pp_'+k+'_um'); if(el) panolUmFijar(el,u); } }
+  ppRecalc(k);
+}
+function ppSetUm(k,v){ const r=ppFila(k); if(!r) return; r.um=v; r.umManual=true; ppRecalc(k); }
+window.ppSetUm=ppSetUm;
 window.ppSet=ppSet;
 function ppSyncDest(k){ const r=ppFila(k); r.dest=document.getElementById('pp_'+k+'_dest').value; r.destCod=document.getElementById('pp_'+k+'_destcod').value; ppRecalc(k); }
 function ppSyncSerie(k){ const r=ppFila(k); r.serieTxt=document.getElementById('pp_'+k+'_serie').value; r.serie=document.getElementById('pp_'+k+'_seriecod').value; ppRecalc(k); }
@@ -3388,15 +3523,15 @@ function ppRowHtml(r,i){
     +'<td style="white-space:nowrap;color:var(--muted)">'+(i+1)+' <span id="'+id('n')+'" style="font-size:10.5px"></span></td>'
     +inp('fecha','date',r.fecha,'onchange="ppSet('+K+',\'fecha\',this.value)"',120)
     +inp('horario','time',r.horario,'onchange="ppSet('+K+',\'horario\',this.value)"',90)
-    +'<td><input class="ppin" id="'+id('art')+'" value="'+esc(r.art)+'" autocomplete="off" style="min-width:260px" placeholder="código, nombre o sinónimo" onfocus="comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" oninput="ppSet('+K+',\'art\',this.value);comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" onblur="comboHideDelayed()"></td>'
+    +'<td><input class="ppin" id="'+id('art')+'" value="'+esc(r.art)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:260px" placeholder="código, nombre o sinónimo" onfocus="comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" oninput="ppSet('+K+',\'art\',this.value);comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" onblur="comboHideDelayed()"></td>'
     +inp('cant','number',r.cant,'step="0.01" oninput="ppSet('+K+',\'cant\',this.value)"',70)
-    +inp('um','text',r.um,'oninput="ppSet('+K+',\'um\',this.value)"',50)
-    +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" style="min-width:190px" placeholder="IF / obra" onfocus="comboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');comboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)"></td>'
-    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
+    +sel('um',panolUmOptionsHtml(r.um),r.um,'onchange="ppSetUm('+K+',this.value)"')
+    +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="IF / obra" onfocus="panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)"></td>'
+    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
     +sel('proceso',PANOL_PROCESOS.map(p=>opt(p,p,r.proceso)).join(''),r.proceso,'onchange="ppSet('+K+',\'proceso\',this.value)"')
     +sel('galpon','<option value="">—</option>'+gl.map(n=>opt(n,n,r.galpon)).join(''),r.galpon,'onchange="ppSet('+K+',\'galpon\',this.value)"')
     +inp('solp','text',r.solp,'oninput="ppSet('+K+',\'solp\',this.value)"',70)
-    +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
+    +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
     +sel('dep','<option value="">(por defecto)</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'onchange="ppSet('+K+',\'dep\',this.value)"')
     +inp('coment','text',r.coment,'oninput="ppSet('+K+',\'coment\',this.value)"',110)
     +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:170px">'+ppResHtml(r)+'</td>'
@@ -3527,7 +3662,8 @@ function ppImportarAoa(aoa){
     const f=aoa[i], r=ppNuevaFila();
     r.fecha=_pnFecha(get(f,'fecha'))||''; r.horario=ppHora(get(f,'horario'))||'';
     r.art=txt(f,'art'); const cn=parseFloat(String(get(f,'cant')).replace(',','.')); r.cant=isNaN(cn)?'':cn;
-    r.um=txt(f,'um')||'UNI'; r.solp=txt(f,'solp'); r.oper=txt(f,'oper'); r.coment=txt(f,'coment');
+    { const umT=txt(f,'um'); if(umT){ r.um=panolUmResolver(umT)||umT; r.umManual=true; } else { const a0=panolArtResolver(r.art); r.um=(a0.cod&&panolUmSugerida(a0.cod))||'UNI'; } }
+    r.solp=txt(f,'solp'); r.oper=txt(f,'oper'); r.coment=txt(f,'coment');
     const d=ppResolverDestino(txt(f,'dest')); if(d){ r.destCod=d.cod; r.dest=d.cod+' — '+(d.desc||''); } else r.dest=txt(f,'dest');
     const st=txt(f,'serie');
     if(st){ const T=st.toUpperCase();
@@ -8559,7 +8695,9 @@ function _comboDD(){
   }
   return _comboEl;
 }
+let _comboCur=null;   // lista abierta (para elegir con Tab / flechas en Pañol)
 function comboShow(inp, items, pick){
+  _comboCur={inp, items, pick, idx:-1, nav:false};
   const dd=_comboDD(); const r=inp.getBoundingClientRect();
   dd.style.left=r.left+'px'; dd.style.top=(r.bottom+2)+'px'; dd.style.minWidth=Math.max(r.width,240)+'px';
   if(!items.length){ dd.innerHTML='<div style="padding:9px 11px;color:var(--muted)">Sin resultados</div>'; dd.style.display='block'; return; }
@@ -11718,7 +11856,7 @@ window.evalProvObraBlur=evalProvObraBlur;
 // Pañol: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
 function panolObras(){ return auxOpts('3'); }
 function panolObraNom(cod){ const o=panolObras().find(x=>x.cod===cod); return o?(o.desc||cod):cod; }
-function comboPanolObra(){ comboObra('pn_obra_q','pn_obra',null,panolObras); }
+function comboPanolObra(){ comboObra('pn_obra_q','pn_obra',null,panolObras); panolComboMark(document.getElementById('pn_obra_q')); }
 window.comboPanolObra=comboPanolObra;
 function panolObraBlur(){ obraBlur('pn_obra_q','pn_obra',null,panolObras); }
 window.panolObraBlur=panolObraBlur;
@@ -13288,6 +13426,10 @@ async function reloadDicts(background){
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const um = await sbFetchAll('/compras_unidades_medida?select=*&order=codigo.asc');
+        if(um) DIC.unidades_medida = um;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const pg = await sbFetchAll('/compras_panol_galpones?select=*&order=nombre.asc');
