@@ -6,7 +6,8 @@
 -- Qué hace (aditivo):
 --   1) compras_panol_solicitudes: una fila por solicitud de OT (un archivo Excel = una OT): N° de OT, solicitante, destino, fecha de necesidad,
 --      estado (Pendiente / En preparación / Parcial / Entregada / Anulada).
---   2) compras_panol_solicitud_items: los materiales pedidos (artículo, cantidad, U.M., fecha de necesidad, comentario) y cuánto se entregó.
+--   2) compras_panol_solicitud_items: los materiales pedidos (artículo, cantidad, U.M., fecha de necesidad, comentario), cuánto se entregó y cuánto se anuló.
+--      La solicitud guarda también si Pañol la bloqueó (ya no se puede editar) y su historial (quién, qué y cuándo).
 --   3) compras_panol_egresos: columnas ot y solicitud_id, para saber de qué OT salió cada egreso cuando Pañol entrega.
 -- RLS: solo authenticated con public.tiene_sector('compras'::public.sector_portal). Nada para anon.
 --   OJO: quién puede preparar / entregar / anular (Pañol) y que cada solicitante vea solo lo suyo se controla en la app, no en la base:
@@ -30,7 +31,11 @@ create table if not exists public.compras_panol_solicitudes (
   estado             text not null default 'Pendiente' check (estado in ('Pendiente','En preparación','Parcial','Entregada','Anulada')),
   creado_en          timestamptz not null default now(),
   actualizado_en     timestamptz,
-  actualizado_por    text
+  actualizado_por    text,
+  bloqueada          boolean not null default false,   -- Pañol definió que ya no se puede editar
+  bloqueada_por      text,
+  bloqueada_en       timestamptz,
+  historial          jsonb not null default '[]'::jsonb  -- [{accion, detalle, por, fecha}]
 );
 create index if not exists compras_panol_solicitudes_estado_idx on public.compras_panol_solicitudes (estado, fecha_necesidad);
 
@@ -43,9 +48,19 @@ create table if not exists public.compras_panol_solicitud_items (
   um                  text,
   fecha_necesidad     date,
   comentario          text,
-  cantidad_entregada  numeric not null default 0
+  cantidad_entregada  numeric not null default 0,
+  cantidad_anulada    numeric not null default 0      -- unidades anuladas o cerradas: vigente = cantidad - cantidad_anulada
 );
 create index if not exists compras_panol_solicitud_items_sol_idx on public.compras_panol_solicitud_items (solicitud_id);
+
+-- Si las tablas ya existían de una corrida anterior, se agregan las columnas nuevas (se puede volver a correr sin problema)
+alter table public.compras_panol_solicitudes
+  add column if not exists bloqueada     boolean not null default false,
+  add column if not exists bloqueada_por text,
+  add column if not exists bloqueada_en  timestamptz,
+  add column if not exists historial     jsonb not null default '[]'::jsonb;
+alter table public.compras_panol_solicitud_items
+  add column if not exists cantidad_anulada numeric not null default 0;
 
 alter table public.compras_panol_solicitudes      enable row level security;
 alter table public.compras_panol_solicitud_items  enable row level security;

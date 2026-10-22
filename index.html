@@ -3207,14 +3207,21 @@ const solItems=id=>(DIC.panol_solicitud_items||[]).filter(i=>String(i.solicitud_
 const solEsMia=s=>!!(AUTH_USER&&AUTH_USER.email&&s.solicitante_email===AUTH_USER.email) || (DEMO_MODE&&!AUTH_USER);
 const solPuedeGestionar=()=>canEditOG();
 function solVisibles(){ const l=DIC.panol_solicitudes||[]; return solPuedeGestionar()?l:l.filter(solEsMia); }
-function solProgreso(s){ const it=solItems(s.id), ped=it.reduce((a,i)=>a+(+i.cantidad||0),0), ent=it.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,+i.cantidad||0),0); return {it, ped, ent, pct:ped?Math.round(ent/ped*100):0, pend:it.filter(i=>(+i.cantidad_entregada||0)<(+i.cantidad||0)).length}; }
+// Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
+const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
+const solPend=i=>Math.max(0,solVig(i)-(+i.cantidad_entregada||0));
+function solProgreso(s){ const it=solItems(s.id), ped=it.reduce((a,i)=>a+solVig(i),0), ent=it.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0); return {it, ped, ent, pct:ped?Math.round(ent/ped*100):(it.length?100:0), pend:it.filter(i=>solPend(i)>1e-9).length}; }
 function solEstadoCalc(s, items){
   if(s.estado==='Anulada') return 'Anulada';
-  const ped=items.reduce((a,i)=>a+(+i.cantidad||0),0), ent=items.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,+i.cantidad||0),0);
+  const ped=items.reduce((a,i)=>a+solVig(i),0), ent=items.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0);
+  if(items.length && ped<=1e-9 && ent<=1e-9) return 'Anulada';          // se anuló todo y no se entregó nada
   if(ped>0 && ent>=ped-1e-9) return 'Entregada';
   if(ent>0) return 'Parcial';
   return s.estado==='En preparación'?'En preparación':'Pendiente';
 }
+// Historial con usuario, fecha y hora de cada movimiento de la solicitud
+const solHist=(s,accion,detalle)=>(Array.isArray(s.historial)?s.historial:[]).concat([{accion, detalle:detalle||'', por:panolUsuario(), fecha:new Date().toISOString()}]);
+const solPuedeEditar=s=>!['Entregada','Anulada'].includes(s.estado) && (solPuedeGestionar() || (solEsMia(s) && !s.bloqueada));
 function solBadge(e){ const c={'Pendiente':'b-ambar','En preparación':'b-gris','Parcial':'b-ambar','Entregada':'b-verde','Anulada':'b-rojo'}[e]||'b-gris'; return '<span class="badge '+c+'">'+esc(e)+'</span>'; }
 function solFechaHtml(s){
   if(!s.fecha_necesidad) return '—'; const hoy=new Date().toISOString().slice(0,10), f=String(s.fecha_necesidad).slice(0,10), cerrada=(s.estado==='Entregada'||s.estado==='Anulada');
@@ -3235,7 +3242,7 @@ function renderPanolSolicitudes(){
   const shown=_spOrdenar('psol',lista,{ot:s=>s.nro_ot, sol:s=>s.solicitante, dest:s=>s.destino_cod||s.destino_txt, fsol:s=>s.creado_en, fnec:s=>s.fecha_necesidad||'9999', items:s=>solItems(s.id).length, est:s=>s.estado, av:s=>solProgreso(s).pct});
   const nAb=todas.filter(abiertas).length, nVenc=todas.filter(s=>abiertas(s)&&s.fecha_necesidad&&String(s.fecha_necesidad).slice(0,10)<hoy).length;
   const gest=solPuedeGestionar();
-  const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b></td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
+  const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b>'+(s.bloqueada?' <span title="Pañol la bloqueó: ya no se puede editar">🔒</span>':'')+'</td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
     +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td style="text-align:right">'+p.it.length+'</td><td>'+solBadge(s.estado)+'</td>'
     +'<td style="min-width:110px"><div style="height:7px;background:#e6ece8;border-radius:4px;overflow:hidden"><div style="height:7px;width:'+p.pct+'%;background:#2f6f5e"></div></div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+p.pct+'% · faltan '+p.pend+' renglón(es)</div></td>'
     +'<td style="font-size:11.5px;color:var(--muted)" class="tx-largo" title="'+esc(s.comentario||'')+'">'+esc(s.comentario||'')+'</td>'
@@ -3346,8 +3353,8 @@ function panolSolPreview(errs,warns){
 }
 async function panolSolEnviar(){
   const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  const cab={nro_ot:S.nro_ot, solicitante:S.solicitante, solicitante_email:(AUTH_USER&&AUTH_USER.email)||null, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente'};
-  const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0}));
+  const cab={nro_ot:S.nro_ot, solicitante:S.solicitante, solicitante_email:(AUTH_USER&&AUTH_USER.email)||null, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:[{accion:'Creada',detalle:S.items.length+' renglón(es) desde Excel',por:panolUsuario(),fecha:new Date().toISOString()}]};
+  const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
   try{
     if(DEMO_MODE){
       DIC.panol_solicitudes=DIC.panol_solicitudes||[]; DIC.panol_solicitud_items=DIC.panol_solicitud_items||[];
@@ -3371,17 +3378,20 @@ async function panolSolCargar(){
 /* ---- Detalle, preparación y entrega ---- */
 function openPanolSolDetalle(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  const it=solItems(id), gest=solPuedeGestionar(), abierta=['Pendiente','En preparación','Parcial'].includes(s.estado);
-  const dep=panolDepDefecto();
-  const filas=it.map(i=>{ const pend=Math.max(0,(+i.cantidad||0)-(+i.cantidad_entregada||0)), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
-    return '<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(i.cantidad,2)+' '+esc(i.um||'')+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,2)+'</td>'
+  const it=solItems(id), gest=solPuedeGestionar(), abierta=['Pendiente','En preparación','Parcial'].includes(s.estado), dep=panolDepDefecto();
+  const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
+    return '<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(i.cantidad,2)+' '+esc(i.um||'')+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,2)+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,2)+'</td>'
       +'<td style="text-align:right;'+(pend>0?'font-weight:700':'')+'">'+fmtNum(pend,2)+'</td><td style="text-align:right;'+(sal!=null&&sal<pend?'color:#b3261e;font-weight:600':'')+'" title="Saldo en el depósito '+esc(dep||'')+'">'+(sal==null?'—':fmtNum(sal,2))+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>'; }).join('');
-  const acc=[]; 
+  const hist=(Array.isArray(s.historial)?s.historial:[]).slice().reverse().map(h=>'<div style="padding:3px 0;border-bottom:1px solid var(--line)"><b>'+esc(h.accion)+'</b>'+(h.detalle?' · '+esc(h.detalle):'')+' <span style="color:var(--muted)">— '+_spCuando({autor:h.por,fecha:h.fecha})+'</span></div>').join('');
+  const acc=[];
   if(gest&&abierta){ acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
-  if((gest||(solEsMia(s)&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular</button>');
+  if(solPuedeEditar(s)) acc.push('<button class="btn ghost" onclick="openPanolSolEditar('+id+')">Editar solicitud</button>');
+  if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
+  if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
   openModal('Solicitud OT '+s.nro_ot,
-    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+'</div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:44vh;margin-top:10px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Entregado</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
+    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+'</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh;margin-top:10px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+    +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
     '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'wide');
 }
 window.openPanolSolDetalle=openPanolSolDetalle;
@@ -3392,14 +3402,20 @@ async function panolSolGuardarCab(s,upd){
 }
 async function panolSolEstado(id,est){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  try{ await panolSolGuardarCab(s,{estado:est}); }catch(e){ toast('No se pudo cambiar el estado: '+(e.message||e)); return; }
+  try{ await panolSolGuardarCab(s,{estado:est, historial:solHist(s,est==='Anulada'?'Anulada':'Cambio de estado',est==='Anulada'?'Se anuló toda la solicitud':'Pasó a '+est)}); }catch(e){ toast('No se pudo cambiar el estado: '+(e.message||e)); return; }
   toast('Solicitud '+s.nro_ot+': '+est); closeModal(); renderPanol();
 }
 window.panolSolEstado=panolSolEstado;
+async function panolSolBloquear(id,bloq){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s||!solPuedeGestionar()) return;
+  try{ await panolSolGuardarCab(s,{bloqueada:!!bloq, bloqueada_por:bloq?panolUsuario():null, bloqueada_en:bloq?new Date().toISOString():null, historial:solHist(s,bloq?'Bloqueada':'Desbloqueada',bloq?'Ya no se puede editar':'Se puede volver a editar')}); }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; }
+  toast(bloq?'Solicitud bloqueada: el solicitante ya no puede editarla':'Solicitud desbloqueada'); closeModal(); renderPanol();
+}
+window.panolSolBloquear=panolSolBloquear;
 function panolSolAnular(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  openModal('Anular solicitud OT '+s.nro_ot,'<div style="font-size:14px;line-height:1.7">¿Anular la solicitud <b>'+esc(s.nro_ot)+'</b>?'+(solProgreso(s).ent>0?'<br>Ya tiene entregas registradas: esos egresos <b>no se borran</b>; solo se cierra lo que falta.':'')+'</div>',
-    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" style="background:#b3261e" onclick="panolSolEstado('+id+',\'Anulada\')">Anular</button>');
+  openModal('Anular solicitud OT '+s.nro_ot,'<div style="font-size:14px;line-height:1.7">¿Anular <b>toda</b> la solicitud <b>'+esc(s.nro_ot)+'</b>?'+(solProgreso(s).ent>0?'<br>Ya tiene entregas registradas: esos egresos <b>no se borran</b>; solo se cierra lo que falta.':'')+'<br><span style="color:var(--muted);font-size:12.5px">Para anular solo algunas unidades de un material, usá "Editar solicitud".</span></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" style="background:#b3261e" onclick="panolSolEstado('+id+',\'Anulada\')">Anular todo</button>');
 }
 window.panolSolAnular=panolSolAnular;
 function openPanolSolEntrega(id){
@@ -3407,16 +3423,16 @@ function openPanolSolEntrega(id){
   if(!solPuedeGestionar()){ toast('Solo Pañol puede registrar entregas.'); return; }
   const dep=panolDepDefecto(), deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si'), ahora=new Date(), pad=n=>String(n).padStart(2,'0');
   const fecha=ahora.getFullYear()+'-'+pad(ahora.getMonth()+1)+'-'+pad(ahora.getDate()), hora=pad(ahora.getHours())+':'+pad(ahora.getMinutes());
-  const it=solItems(id).filter(i=>(+i.cantidad_entregada||0)<(+i.cantidad||0));
-  const filas=it.map(i=>{ const pend=(+i.cantidad||0)-(+i.cantidad_entregada||0), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
+  const it=solItems(id).filter(i=>solPend(i)>1e-9);
+  const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
     return '<tr data-item="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(pend,2)+' '+esc(i.um||'')+'</td><td style="text-align:right" class="sol-saldo" data-cod="'+esc(i.cod_articulo||'')+'">'+(sal==null?'—':fmtNum(sal,2))+'</td>'
-      +'<td><input type="number" step="any" min="0" max="'+pend+'" value="'+pend+'" class="sol-qty" style="width:90px;text-align:right;border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px"></td></tr>'; }).join('');
+      +'<td><input type="number" step="any" min="0" max="'+pend+'" value="'+pend+'" class="sol-qty" style="width:90px;text-align:right;border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px"></td><td style="text-align:center"><input type="checkbox" class="sol-cerrar" title="Si entregás menos de lo pendiente, lo que falta se da por cerrado (no queda pendiente)"></td></tr>'; }).join('');
   openModal('Entregar · OT '+s.nro_ot,
     '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Cargá lo que entregás <b>ahora</b> (puede ser menos de lo pedido: queda parcial). Se generan los egresos con el precio del mes de la fecha de entrega.</div>'
     +'<div class="frow c2"><div class="field"><label>Fecha de entrega</label><input id="se_fecha" type="date" value="'+fecha+'"></div><div class="field"><label>Hora</label><input id="se_hora" type="time" value="'+hora+'"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Depósito</label><select id="se_dep" onchange="panolSolSaldos()"><option value="">— elegí —</option>'+deps.map(d=>'<option value="'+esc(d.codigo)+'"'+(String(d.codigo)===String(dep)?' selected':'')+'>'+esc(d.codigo+' · '+d.descripcion)+'</option>').join('')+'</select></div>'
     +'<div class="field"><label>Retira (operario)</label><input id="se_oper" type="text" value="'+esc(s.solicitante||'')+'"></div></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pendiente</th><th>Saldo en el depósito</th><th>Entregar ahora</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pendiente</th><th>Saldo en el depósito</th><th>Entregar ahora</th><th title="Si entregás menos de lo pendiente, lo que falta se da por cerrado">Cerrar el resto</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
     '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="seBtn" onclick="panolSolEntregarOk('+id+')">Registrar entrega</button>', 'wide');
 }
 window.openPanolSolEntrega=openPanolSolEntrega;
@@ -3427,9 +3443,10 @@ async function panolSolEntregarOk(id){
   const g=i=>(document.getElementById(i)||{}).value||'', fecha=g('se_fecha'), hora=g('se_hora'), dep=g('se_dep'), oper=g('se_oper').trim();
   if(!fecha){ toast('Elegí la fecha de entrega'); return; }
   const per=(+fecha.slice(0,4))*100+(+fecha.slice(5,7)); if(panolBloqueoCierre(per)) return;
-  const lineas=[...document.querySelectorAll('tr[data-item]')].map(tr=>({it:solItems(id).find(x=>String(x.id)===tr.dataset.item), q:+tr.querySelector('.sol-qty').value||0})).filter(x=>x.it&&x.q>0);
+  const todas=[...document.querySelectorAll('tr[data-item]')].map(tr=>({it:solItems(id).find(x=>String(x.id)===tr.dataset.item), q:+tr.querySelector('.sol-qty').value||0, cerrar:tr.querySelector('.sol-cerrar').checked})).filter(x=>x.it);
+  const lineas=todas.filter(x=>x.q>0);
   if(!lineas.length){ toast('Ingresá al menos una cantidad a entregar'); return; }
-  const exceso=lineas.find(x=>x.q>(+x.it.cantidad-(+x.it.cantidad_entregada||0))+1e-9); if(exceso){ toast('Una cantidad supera lo pendiente'); return; }
+  const exceso=lineas.find(x=>x.q>solPend(x.it)+1e-9); if(exceso){ toast('Una cantidad supera lo pendiente'); return; }
   if(lineas.some(x=>x.it.cod_articulo)&&!dep){ toast('Elegí el depósito'); return; }
   const btn=document.getElementById('seBtn'); if(btn){ btn.disabled=true; btn.textContent='Registrando…'; }
   const rows=lineas.map(x=>{ const ra=x.it.cod_articulo?{cod:x.it.cod_articulo,libre:''}:{cod:'',libre:x.it.articulo_libre||''};
@@ -3439,13 +3456,106 @@ async function panolSolEntregarOk(id){
   try{
     if(DEMO_MODE){ DIC.panol_egresos=DIC.panol_egresos||[]; let k=Math.max(0,...DIC.panol_egresos.map(r=>+r.id||0)); rows.forEach(r=>{ DIC.panol_egresos.push({id:++k,...r}); }); }
     else await sbEgr('/compras_panol_egresos','POST',rows);
-    for(const x of lineas){ const nueva=(+x.it.cantidad_entregada||0)+x.q; if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+x.it.id,{method:'PATCH',body:JSON.stringify({cantidad_entregada:nueva}),prefer:'return=minimal'}); x.it.cantidad_entregada=nueva; }
-    await panolSolGuardarCab(s,{estado:solEstadoCalc(s,solItems(id))});
+    const cierres=[];
+    for(const x of todas){
+      const nueva=(+x.it.cantidad_entregada||0)+x.q, resto=Math.max(0,solPend(x.it)-x.q), cierra=x.cerrar&&resto>1e-9, upd={};
+      if(x.q>0) upd.cantidad_entregada=nueva; if(cierra){ upd.cantidad_anulada=(+x.it.cantidad_anulada||0)+resto; cierres.push((x.it.cod_articulo||x.it.articulo_libre)+': se cierran '+fmtNum(resto,2)); }
+      if(!Object.keys(upd).length) continue;
+      if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+x.it.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); Object.assign(x.it,upd);
+    }
+    await panolSolGuardarCab(s,{estado:solEstadoCalc(s,solItems(id)), historial:solHist(s,'Entrega',lineas.map(x=>(x.it.cod_articulo||x.it.articulo_libre)+' × '+fmtNum(x.q,2)).join(', ')+' · depósito '+dep+(cierres.length?' · Cerrado el resto: '+cierres.join('; '):''))});
     if(!DEMO_MODE) await reloadDB();
   }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Registrar entrega'; } toast('No se pudo registrar la entrega: '+(e.message||e)+'. Revisá la lista de Egresos antes de repetirla.'); return; }
   closeModal(); toast('Entrega registrada: '+rows.length+' egreso(s). Solicitud '+s.estado); renderPanol();
 }
 window.panolSolEntregarOk=panolSolEntregarOk;
+
+
+/* ---- Editar la solicitud (hasta que Pañol la bloquee): datos, cantidades, anular unidades, agregar o quitar materiales ---- */
+let _SOL_ED=null;
+function openPanolSolEditar(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  if(!solPuedeEditar(s)){ toast(s.bloqueada?'Pañol bloqueó esta solicitud: ya no se puede editar.':'Esta solicitud ya no se puede editar.'); return; }
+  _SOL_ED={id, k:0, quitar:new Set(), nuevos:[]};
+  const it=solItems(id), ds=panolDestinos(), inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
+  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(s.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
+  const filas=it.map(i=>{ const pend=solPend(i), fija=(+i.cantidad_entregada||0)+(+i.cantidad_anulada||0);
+    return '<tr data-id="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td>'
+      +'<td><input type="number" step="any" min="'+fija+'" value="'+i.cantidad+'" class="ed-cant" style="width:80px;text-align:right;'+inp+'" title="Cantidad pedida. No puede ser menor a lo entregado más lo ya anulado ('+fmtNum(fija,2)+')"></td>'
+      +'<td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,2)+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,2)+'</td>'
+      +'<td><input type="number" step="any" min="0" value="" placeholder="0" class="ed-anul" style="width:80px;text-align:right;'+inp+'" title="Unidades que se anulan ahora (hasta '+fmtNum(pend,2)+' pendientes)"></td>'
+      +'<td><input type="date" value="'+esc(String(i.fecha_necesidad||'').slice(0,10))+'" class="ed-fec" style="'+inp+'"></td><td><input type="text" value="'+esc(i.comentario||'')+'" class="ed-com" style="width:150px;'+inp+'"></td>'
+      +'<td>'+((+i.cantidad_entregada||0)+(+i.cantidad_anulada||0)===0?'<button class="iconbtn del" title="Quitar este material" onclick="panolSolEdQuitar(this,'+i.id+')">'+ICO.del+'</button>':'')+'</td></tr>'; }).join('');
+  openModal('Editar solicitud OT '+s.nro_ot,
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(s.bloqueada?'Pañol la tiene bloqueada, pero vos podés editarla por ser de Pañol. ':'Podés cambiarla hasta que Pañol la bloquee. ')+'Para <b>anular unidades</b> de un material cargá cuántas en "Anular ahora"; lo ya entregado no se toca. Todo queda en el historial.</div>'
+    +'<div class="frow c2"><div class="field"><label>Destino (IF / obra)</label><select id="ed_dest">'+destOpts+'</select></div><div class="field"><label>Fecha de necesidad</label><input id="ed_fnec" type="date" value="'+esc(String(s.fecha_necesidad||'').slice(0,10))+'"></div></div>'
+    +'<div class="field"><label>Comentario general</label><input id="ed_com" type="text" value="'+esc(s.comentario||'')+'"></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh"><table class="grid" style="font-size:11.5px" id="tblSolEd"><thead><tr><th>Artículo</th><th>Cantidad pedida</th><th>Entregado</th><th>Ya anulado</th><th>Anular ahora</th><th>Fecha de necesidad</th><th>Comentario</th><th></th></tr></thead><tbody id="edBody">'+filas+'</tbody></table></div>'
+    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="panolSolEdNuevo()">'+ICO.plus+'Agregar material</button></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Cancelar</button><button class="btn" id="edBtn" onclick="panolSolEditarGuardar()">Guardar cambios</button>', 'xwide');
+}
+window.openPanolSolEditar=openPanolSolEditar;
+function panolSolEdQuitar(btn,itemId){ _SOL_ED.quitar.add(String(itemId)); const tr=btn.closest('tr'); tr.style.display='none'; }
+window.panolSolEdQuitar=panolSolEdQuitar;
+function panolSolEdNuevo(){
+  const k=++_SOL_ED.k, inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px', tr=document.createElement('tr'); tr.dataset.nuevo=k;
+  tr.innerHTML='<td><input id="ed_art_'+k+'" class="ed-art" style="width:300px;'+inp+'" placeholder="Código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt(\'ed_art_'+k+'\')" oninput="comboPanolArt(\'ed_art_'+k+'\')" onkeydown="panolComboKey(event)" onblur="comboHideDelayed()"></td>'
+    +'<td><input type="number" step="any" min="0" class="ed-cant" style="width:80px;text-align:right;'+inp+'"></td><td colspan="3"><select class="ed-um" style="'+inp+'">'+panolUmOptionsHtml('UNI')+'</select></td>'
+    +'<td><input type="date" class="ed-fec" value="'+(document.getElementById('ed_fnec')||{}).value+'" style="'+inp+'"></td><td><input type="text" class="ed-com" style="width:150px;'+inp+'"></td><td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td>';
+  document.getElementById('edBody').appendChild(tr);
+}
+window.panolSolEdNuevo=panolSolEdNuevo;
+async function panolSolEditarGuardar(){
+  const E=_SOL_ED, s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(E.id)); if(!s) return;
+  if(!solPuedeEditar(s)){ toast('Esta solicitud ya no se puede editar.'); return; }
+  const g=i=>(document.getElementById(i)||{}).value||'', dest=g('ed_dest'), fnec=g('ed_fnec'), coment=g('ed_com').trim();
+  if(!dest){ toast('Elegí el destino'); return; } if(!fnec){ toast('Ingresá la fecha de necesidad'); return; }
+  const items=solItems(E.id), cambios=[], upds=[], nuevos=[], quitados=[];
+  for(const tr of document.querySelectorAll('#edBody tr[data-id]')){
+    const it=items.find(x=>String(x.id)===tr.dataset.id); if(!it) continue;
+    const nom=(it.cod_articulo||it.articulo_libre||'');
+    if(E.quitar.has(String(it.id))){ quitados.push(it); cambios.push('Se quitó '+nom); continue; }
+    const cant=+tr.querySelector('.ed-cant').value, anul=+tr.querySelector('.ed-anul').value||0, fec=tr.querySelector('.ed-fec').value||null, com=tr.querySelector('.ed-com').value.trim()||null;
+    if(!(cant>0)){ toast('La cantidad de '+nom+' tiene que ser mayor a 0 (para sacarlo, usá el tachito)'); return; }
+    if(anul<0){ toast('No se puede anular una cantidad negativa'); return; }
+    const anulTot=(+it.cantidad_anulada||0)+anul;
+    if(cant-anulTot < (+it.cantidad_entregada||0)-1e-9){ toast(nom+': la cantidad vigente no puede ser menor a lo ya entregado ('+fmtNum(it.cantidad_entregada||0,2)+')'); return; }
+    const u={}; 
+    if(Math.abs(cant-(+it.cantidad))>1e-9){ u.cantidad=cant; cambios.push(nom+': pedido '+fmtNum(it.cantidad,2)+' → '+fmtNum(cant,2)); }
+    if(anul>0){ u.cantidad_anulada=anulTot; cambios.push(nom+': se anulan '+fmtNum(anul,2)+' unidad(es)'); }
+    if((fec||'')!==String(it.fecha_necesidad||'').slice(0,10)){ u.fecha_necesidad=fec; cambios.push(nom+': fecha de necesidad '+(fec?fmtDate(fec):'—')); }
+    if((com||'')!==(it.comentario||'')){ u.comentario=com; cambios.push(nom+': comentario'); }
+    if(Object.keys(u).length) upds.push({it,u});
+  }
+  for(const tr of document.querySelectorAll('#edBody tr[data-nuevo]')){
+    const txt=tr.querySelector('.ed-art').value.trim(), cant=+tr.querySelector('.ed-cant').value;
+    if(!txt&&!cant) continue; if(!txt){ toast('Falta el artículo en un material nuevo'); return; } if(!(cant>0)){ toast('Falta la cantidad de '+txt); return; }
+    const ra=panolArtResolver(txt);
+    nuevos.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', fecha_necesidad:tr.querySelector('.ed-fec').value||fnec, comentario:tr.querySelector('.ed-com').value.trim()||null, cantidad_entregada:0, cantidad_anulada:0});
+    cambios.push('Se agregó '+(ra.cod||txt)+' × '+fmtNum(cant,2));
+  }
+  const dTxt=ppResolverDestino(dest); const nuevoDest=dTxt?dTxt.cod:dest;
+  const cab={}; if(String(nuevoDest)!==String(s.destino_cod||'')){ cab.destino_cod=nuevoDest; cab.destino_txt=(dTxt&&dTxt.desc)?nuevoDest+' — '+dTxt.desc:nuevoDest; cambios.push('Destino: '+nuevoDest); }
+  if(fnec!==String(s.fecha_necesidad||'').slice(0,10)){ cab.fecha_necesidad=fnec; cambios.push('Fecha de necesidad: '+fmtDate(fnec)); }
+  if(coment!==(s.comentario||'')){ cab.comentario=coment||null; cambios.push('Comentario general'); }
+  if(!cambios.length){ toast('No hay cambios para guardar'); return; }
+  if(!items.length&&!nuevos.length){ toast('La solicitud tiene que quedar con al menos un material'); return; }
+  const btn=document.getElementById('edBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  try{
+    if(DEMO_MODE){
+      upds.forEach(x=>Object.assign(x.it,x.u)); DIC.panol_solicitud_items=(DIC.panol_solicitud_items||[]).filter(i=>!quitados.includes(i));
+      let k=Math.max(0,...(DIC.panol_solicitud_items||[]).map(i=>+i.id||0)); nuevos.forEach(n=>{ DIC.panol_solicitud_items.push({id:++k,solicitud_id:s.id,...n}); });
+    }else{
+      for(const x of upds) await sbFetch('/compras_panol_solicitud_items?id=eq.'+x.it.id,{method:'PATCH',body:JSON.stringify(x.u),prefer:'return=minimal'});
+      for(const q of quitados) await sbFetch('/compras_panol_solicitud_items?id=eq.'+q.id,{method:'DELETE',prefer:'return=minimal'});
+      if(nuevos.length) await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(nuevos.map(n=>({...n,solicitud_id:s.id}))),prefer:'return=minimal'});
+      DIC.panol_solicitud_items=await sbFetchAll('/compras_panol_solicitud_items?select=*&order=id.asc');
+    }
+    await panolSolGuardarCab(s,Object.assign(cab,{estado:solEstadoCalc(s,solItems(s.id)), historial:solHist(s,'Editada',cambios.join(' · '))}));
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Guardar cambios'; } if(!DEMO_MODE) await panolSolCargar(); toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió el SQL de solicitudes actualizado?)'); return; }
+  toast('Solicitud actualizada ('+cambios.length+' cambio'+(cambios.length>1?'s':'')+')'); _SOL_ED=null; openPanolSolDetalle(s.id); renderPanol();
+}
+window.panolSolEditarGuardar=panolSolEditarGuardar;
 
 let PANOL_EGQ='';
 let PANOL_TAB='egresos';
