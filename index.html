@@ -2801,7 +2801,7 @@ function panolSinPrecioNum(r){ return !(+r.costo_unit_ars>0); }
 
 /* ---- Tabla ---- */
 function panolErogArt(r){
-  if(r.cod_articulo) return r.cod_articulo+' · '+(artDesc(r.cod_articulo)||'');
+  if(r.cod_articulo){ const a=(DIC.articulos||[]).find(x=>x.codigo===r.cod_articulo); return r.cod_articulo+' · '+(a?panolArtNombre(a):''); }
   return '⚠ '+(r.articulo_libre||'(sin artículo)');
 }
 function panolAlertaBadges(r){
@@ -2874,11 +2874,27 @@ window.renderPanolErog=renderPanolErog;
 /* ---- Alta / edición ---- */
 function panolArtResolver(txt){
   const t=String(txt||'').trim(); if(!t) return {cod:'', libre:''};
-  const first=t.split(' · ')[0].trim().toUpperCase();
-  const a=(DIC.articulos||[]).find(x=>String(x.codigo).toUpperCase()===first)
-       || (DIC.articulos||[]).find(x=>String(x.descripcion||'').toUpperCase()===t.toUpperCase());
+  const first=t.split(/ — | · /)[0].trim().toUpperCase(), T=t.toUpperCase();
+  const arts=DIC.articulos||[];
+  const a=arts.find(x=>String(x.codigo).toUpperCase()===first)
+       || arts.find(x=>x.sinonimo && String(x.sinonimo).toUpperCase()===T)       // ej. "TORNILLO N°14" (se busca por sinónimo, no por descripción)
+       || arts.find(x=>String(x.descripcion||'').toUpperCase()===T);
   return a?{cod:a.codigo, libre:''}:{cod:'', libre:t};
 }
+function panolArtNombre(a){ return a.sinonimo?(a.sinonimo+' · '+(a.descripcion||'')):(a.descripcion||''); }   // el pañol los nombra por el sinónimo (ej. TORNILLO N°14)
+function panolArtTxt(cod){ const a=(DIC.articulos||[]).find(x=>x.codigo===cod); return a?(a.codigo+' — '+panolArtNombre(a)):cod; }
+// Selector de artículo: busca por código, descripción o sinónimo (todas las palabras escritas); primero los que empiezan con lo escrito
+function comboPanolArt(){
+  const inp=document.getElementById('pe_art'); if(!inp) return;
+  const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const src=DIC.articulos||[];
+  const txt=a=>((a.codigo||'')+' '+(a.descripcion||'')+' '+(a.sinonimo||'')+' '+(a.desc_adicional||'')).toLowerCase();
+  const empieza=a=>[a.codigo,a.sinonimo,a.descripcion].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  let list=words.length?src.filter(a=>{ const t=txt(a); return words.every(w=>t.includes(w)); }):src;
+  if(words.length) list=list.filter(empieza).concat(list.filter(a=>!empieza(a)));
+  comboShow(inp, list.slice(0,80).map(a=>({code:a.codigo, name:panolArtNombre(a)})), it=>{ inp.value=it.code+' — '+it.name; panolErogPrecio(true); });
+}
+window.comboPanolArt=comboPanolArt;
 function openPanolErogForm(id){
   const cur=id!=null?(DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)):null;
   if(cur && cur.exportado){ toast('Esta erogación ya se exportó a Tango; no se puede editar.'); return; }
@@ -2889,11 +2905,10 @@ function openPanolErogForm(id){
   const modOpts='<option value="">— ninguno —</option><option value="'+PANOL_MODULO_GENERICO+'"'+(cur&&cur.serie===PANOL_MODULO_GENERICO?' selected':'')+'>'+PANOL_MODULO_GENERICO+'</option>'
     +mods.map(s=>'<option value="'+esc(s)+'"'+(cur&&cur.serie===s?' selected':'')+'>'+esc(s)+'</option>').join('');
   const procOpts=PANOL_PROCESOS.map(p=>'<option'+((cur?cur.proceso:'HABITUAL')===p?' selected':'')+'>'+p+'</option>').join('');
-  const artVal=cur?(cur.cod_articulo?(cur.cod_articulo+' · '+(artDesc(cur.cod_articulo)||'')):(cur.articulo_libre||'')):'';
-  const dl='<datalist id="pn_art_dl">'+(DIC.articulos||[]).map(a=>'<option value="'+esc(a.codigo+' · '+a.descripcion)+'"></option>').join('')+'</datalist>';
+  const artVal=cur?(cur.cod_articulo?panolArtTxt(cur.cod_articulo):(cur.articulo_libre||'')):'';
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
     +'<div class="field"><label>Hora</label><input id="pe_horario" type="time" value="'+esc(cur?(cur.horario||''):ahora)+'"></div></div>'
-    +'<div class="field"><label>Artículo</label><input id="pe_art" list="pn_art_dl" value="'+esc(artVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" oninput="panolErogPrecio(true)">'+dl
+    +'<div class="field"><label>Artículo</label><input id="pe_art" value="'+esc(artVal)+'" placeholder="Escribí código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt()" oninput="comboPanolArt();panolErogPrecio(true)" onblur="comboHideDelayed()">'
     +'<div id="pe_artNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
     +'<div class="field"><label>Unidad de medida</label><input id="pe_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
