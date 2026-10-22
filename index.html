@@ -270,6 +270,9 @@ table.grid.usub .row-actions{gap:4px;}
 @keyframes busyslide{0%{left:-40%}100%{left:100%}}
 .busy-pill{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;background:#2f3a26;color:#fff;padding:8px 16px;border-radius:999px;font-size:12.5px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.22);opacity:0;pointer-events:none;transition:opacity .2s;}
 .busy-pill.on{opacity:1;}
+.ppin{width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:5px;padding:4px 6px;font-size:12px;background:#fff;font-family:inherit;}
+.ppin:focus{outline:2px solid #9bb98f;}
+#tblPanolPlan td{padding:3px 4px;}
 /* ===== TOAST ===== */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -2659,6 +2662,7 @@ function panolResumenPor(rows, key){
 }
 function renderPanol(){
   if(PANOL_TAB==='erog') return renderPanolErog();
+  if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
   const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
@@ -2725,10 +2729,10 @@ function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('dic','Diccionario pañol')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
-const PANOL_DESTINOS_MODULO=['MODALQ','MANMOD'];          // destinos que piden indicar el módulo
+const PANOL_DESTINOS_MODULO=['MODALQ','MANMOD','DTM'];    // destinos que piden indicar el módulo / serie (si queda vacío: GENERICO MODULO)
 const PANOL_MODULO_GENERICO='GENERICO MODULO';
 const PANOL_PROCESOS=['HABITUAL','RE TRABAJO','DESVIO'];
 const PANOL_ALERTA_SIN_ALTA='ARTICULO SIN ALTA';
@@ -2778,8 +2782,9 @@ function panolPrecioMes(cod, periodo){
   else control='REVISAR TC';
   return Object.assign(out,{ars:row.ars, usd:row.usd, fecha:row.fecha, fuente:row.fuente, prov:row.prov, oc:panolOcCorto(row.oc), desvioTC:desv, varTango:varT, control});
 }
-function panolAlertaDe(p, sinAlta){
+function panolAlertaDe(p, sinAlta, opSinAlta){
   const a=[]; if(sinAlta) a.push(PANOL_ALERTA_SIN_ALTA);
+  if(opSinAlta) a.push('OPERARIO SIN ALTA');
   if(p && p.control!=='OK') a.push(p.control);
   return a.join(', ');
 }
@@ -2814,8 +2819,9 @@ function panolSort(ev, ns, k){
   renderPanol();
 }
 window.panolSort=panolSort;
-function _pnTh(label, col, k){ return _spTh('pnl', label, col, k).replace('spSort(','panolSort('); }
+function _pnTh(label, col, k, ns){ return _spTh(ns||'pnl', label, col, k).replace('spSort(','panolSort('); }
 function renderPanolErog(){
+  if(PANOL_PLAN) return renderPanolPlanilla();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO);
   xlfRegister('pnl',{ rows:()=>base, onChange:renderPanol, dateVal:r=>String(r.fecha||'').slice(0,10),
@@ -2835,6 +2841,7 @@ function renderPanolErog(){
     fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
     art:r=>panolErogArt(r), cant:r=>+r.cantidad||0, oper:r=>r.operario, pars:r=>+r.costo_unit_ars||0, pusd:r=>+r.costo_unit_usd||0,
     tars:r=>+r.total_ars||0, tusd:r=>+r.total_usd||0, fuente:r=>r.fuente_precio, alerta:r=>r.alerta||'', exp:r=>r.exportado?1:0 });
+  _PANOL_SHOWN=shown;
   const conAlerta=base.filter(r=>r.alerta).length, sinAlta=base.filter(r=>r.articulo_libre&&!r.cod_articulo).length;
   const totArs=shown.reduce((a,r)=>a+(+r.total_ars||0),0), totUsd=shown.reduce((a,r)=>a+(+r.total_usd||0),0);
   const pMes=String(PANOL_PERIODO).slice(4,6), pAnio=String(PANOL_PERIODO).slice(0,4);
@@ -2861,6 +2868,8 @@ function renderPanolErog(){
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
       +'<button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button>'
+      +'<button class="btn ghost sm" onclick="panolExportErogExcel()">Exportar Excel</button>'
+      +'<button class="btn ghost sm" onclick="openPanolPlanilla()">Planilla de carga</button>'
       +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
       +aviso
       +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid" id="tblPanolErog"><thead><tr>'
@@ -2884,15 +2893,15 @@ function panolArtResolver(txt){
 function panolArtNombre(a){ return a.sinonimo?(a.sinonimo+' · '+(a.descripcion||'')):(a.descripcion||''); }   // el pañol los nombra por el sinónimo (ej. TORNILLO N°14)
 function panolArtTxt(cod){ const a=(DIC.articulos||[]).find(x=>x.codigo===cod); return a?(a.codigo+' — '+panolArtNombre(a)):cod; }
 // Selector de artículo: busca por código, descripción o sinónimo (todas las palabras escritas); primero los que empiezan con lo escrito
-function comboPanolArt(){
-  const inp=document.getElementById('pe_art'); if(!inp) return;
+function comboPanolArt(qId, after){
+  const inp=document.getElementById(qId||'pe_art'); if(!inp) return;
   const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
   const src=DIC.articulos||[];
   const txt=a=>((a.codigo||'')+' '+(a.descripcion||'')+' '+(a.sinonimo||'')+' '+(a.desc_adicional||'')).toLowerCase();
   const empieza=a=>[a.codigo,a.sinonimo,a.descripcion].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
   let list=words.length?src.filter(a=>{ const t=txt(a); return words.every(w=>t.includes(w)); }):src;
   if(words.length) list=list.filter(empieza).concat(list.filter(a=>!empieza(a)));
-  comboShow(inp, list.slice(0,80).map(a=>({code:a.codigo, name:panolArtNombre(a)})), it=>{ inp.value=it.code+' — '+it.name; panolErogPrecio(true); });
+  comboShow(inp, list.slice(0,80).map(a=>({code:a.codigo, name:panolArtNombre(a)})), it=>{ inp.value=it.code+' — '+it.name; (after||(()=>panolErogPrecio(true)))(); });
 }
 window.comboPanolArt=comboPanolArt;
 function openPanolErogForm(id){
@@ -2901,9 +2910,9 @@ function openPanolErogForm(id){
   const hoy=new Date().toISOString().slice(0,10), ahora=new Date().toTimeString().slice(0,5);
   const dep0=cur?cur.cod_deposito:PANOL_LAST_DEP;
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
-  const mods=[...new Set((SERIES_ACTIVAS||[]).filter(s=>s.familia==='modulo').map(s=>s.serie))].sort();
-  const modOpts='<option value="">— ninguno —</option><option value="'+PANOL_MODULO_GENERICO+'"'+(cur&&cur.serie===PANOL_MODULO_GENERICO?' selected':'')+'>'+PANOL_MODULO_GENERICO+'</option>'
-    +mods.map(s=>'<option value="'+esc(s)+'"'+(cur&&cur.serie===s?' selected':'')+'>'+esc(s)+'</option>').join('');
+  const galList=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre);
+  if(cur&&cur.galpon&&!galList.includes(cur.galpon)) galList.push(cur.galpon);   // si el valor guardado ya no está activo, se conserva
+  const galOpts='<option value="">— ninguno —</option>'+galList.map(n=>'<option value="'+esc(n)+'"'+(cur&&cur.galpon===n?' selected':'')+'>'+esc(n)+'</option>').join('');
   const procOpts=PANOL_PROCESOS.map(p=>'<option'+((cur?cur.proceso:'HABITUAL')===p?' selected':'')+'>'+p+'</option>').join('');
   const artVal=cur?(cur.cod_articulo?panolArtTxt(cur.cod_articulo):(cur.articulo_libre||'')):'';
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
@@ -2913,12 +2922,12 @@ function openPanolErogForm(id){
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
     +'<div class="field"><label>Unidad de medida</label><input id="pe_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
     +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
-    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><select id="pe_serie">'+modOpts+'</select>'
+    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';comboPanolSerie()" onblur="panolSerieBlur()">'
     +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Galpón</label><input id="pe_galpon" type="text" value="'+esc(cur?(cur.galpon||''):'')+'"></div>'
+    +'<div class="frow c2"><div class="field"><label>Galpón</label><select id="pe_galpon">'+galOpts+'</select></div>'
     +'<div class="field"><label>SOLP</label><input id="pe_solp" type="text" value="'+esc(cur?(cur.solp||''):'')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Nombre, o vacío = Genérico"></div>'
+    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Buscá por nombre o puesto, o vacío = Genérico" autocomplete="off" onfocus="comboPanolOper()" oninput="comboPanolOper();panolOperNote()" onblur="comboHideDelayed();panolOperNote()"><div id="pe_operNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Depósito</label><select id="pe_dep"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Precio unit. ARS</label><input id="pe_pars" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div>'
     +'<div class="field"><label>Precio unit. USD</label><input id="pe_pusd" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div></div>'
@@ -2967,6 +2976,19 @@ function panolErogTotal(){
   t.textContent=pn.dataset.tot;
 }
 window.panolErogTotal=panolErogTotal;
+// Arma la fila de compras_panol_egresos (precio del mes + alarmas) — la usan el formulario y la planilla
+function panolArmarFila(f){
+  const periodo=(+f.fecha.slice(0,4))*100+(+f.fecha.slice(5,7));
+  const pr=panolCamposPrecio(f.ra.cod, periodo, f.cant, f.manual);
+  let serie=f.serie||''; if(!serie && panolDestinoPideModulo(f.dest)) serie=PANOL_MODULO_GENERICO;
+  const operario=(f.oper||'').trim()||'Genérico';
+  const row={ fecha:f.fecha, periodo, horario:f.horario||null, cod_deposito:f.dep||null, cod_articulo:f.ra.cod||null, articulo_libre:f.ra.cod?null:f.ra.libre,
+    cantidad:f.cant, um:(f.um||'').trim()||'UNI', proyecto_cod:f.dest, serie:serie||null, galpon:(f.galpon||'').trim()||null, proceso:f.proceso||null, solp:(f.solp||'').trim()||null,
+    operario, comentario:(f.coment||'').trim(), exportado:false,
+    alerta:panolAlertaDe({control:pr._control}, !f.ra.cod, panolOperarioSinAlta(operario))||null };
+  ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
+  return row;
+}
 async function guardarPanolErog(id){
   const g=k=>(document.getElementById(k)||{}).value||'';
   const fecha=g('pe_fecha'), cant=+g('pe_cant')||0, proyecto_cod=g('pn_obra'), cod_deposito=g('pe_dep');
@@ -2976,16 +2998,10 @@ async function guardarPanolErog(id){
   if(!cant){ toast('Ingresá una cantidad'); return; }
   if(!proyecto_cod){ toast('Elegí el destino de la lista (escribí código o nombre)'); return; }
   if(ra.cod && !cod_deposito){ toast('Elegí el depósito'); return; }
-  const periodo=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
   const pars=document.getElementById('pe_pars'), pusd=document.getElementById('pe_pusd');
   const manual=(pars.dataset.manual||pusd.dataset.manual)?{ars:+pars.value||0, usd:+pusd.value||0}:null;
-  const pr=panolCamposPrecio(ra.cod, periodo, cant, manual);
-  let serie=g('pe_serie'); if(!serie && panolDestinoPideModulo(proyecto_cod)) serie=PANOL_MODULO_GENERICO;
-  const row={ fecha, periodo, horario:g('pe_horario')||null, cod_deposito:ra.cod?cod_deposito:(cod_deposito||null), cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:ra.libre,
-    cantidad:cant, um:g('pe_um').trim()||'UNI', proyecto_cod, serie:serie||null, galpon:g('pe_galpon').trim()||null, proceso:g('pe_proceso')||null, solp:g('pe_solp').trim()||null,
-    operario:g('pe_oper').trim()||'Genérico', comentario:g('pe_coment').trim(), exportado:false,
-    alerta:panolAlertaDe({control:pr._control}, !ra.cod)||null };
-  ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
+  if(!g('pe_serie') && g('pe_serie_q').trim()){ toast('Elegí la serie de la lista (o borrá el campo)'); return; }
+  const row=panolArmarFila({fecha, horario:g('pe_horario'), ra, cant, um:g('pe_um'), dest:proyecto_cod, serie:g('pe_serie'), galpon:g('pe_galpon'), proceso:g('pe_proceso'), solp:g('pe_solp'), oper:g('pe_oper'), dep:cod_deposito, coment:g('pe_coment'), manual});
   if(ra.cod && cod_deposito) PANOL_LAST_DEP=cod_deposito;
   try{
     if(DEMO_MODE){
@@ -3009,7 +3025,7 @@ async function panolRecalcularPrecios(){
   let n=0;
   for(const r of rows){
     const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
-    const alerta=panolAlertaDe({control:pr._control}, false)||null;
+    const alerta=panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario))||null;
     const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; }); upd.alerta=alerta;
     if(DEMO_MODE){ Object.assign(r,upd); n++; continue; }
     try{ await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); n++; }
@@ -3019,6 +3035,538 @@ async function panolRecalcularPrecios(){
   toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
 }
 window.panolRecalcularPrecios=panolRecalcularPrecios;
+
+/* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
+function panolSeriesSrc(){ return (SERIES_ACTIVAS||[]).filter(s=>s.serie); }
+function panolSerieNombre(s){
+  const a1=s.adicional_1&&String(s.adicional_1).trim()!==String(s.serie).trim()?s.adicional_1:'';
+  return [a1, s.descripcion].filter(Boolean).join(' · ')+(s.familia==='modulo'?'':' (serie activa)');
+}
+function panolSerieTxt(serie){
+  if(!serie) return '';
+  if(serie===PANOL_MODULO_GENERICO) return serie;
+  const s=panolSeriesSrc().find(x=>x.serie===serie);
+  return s?(s.serie+' — '+panolSerieNombre(s)):serie;
+}
+// Busca por serie, Adic. 1, descripción o comentario (todas las palabras escritas); primero los que arrancan con lo escrito
+function comboPanolSerie(qId, hidId, after){
+  const inp=document.getElementById(qId||'pe_serie_q'); if(!inp) return;
+  const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const src=panolSeriesSrc();
+  const txt=s=>((s.serie||'')+' '+(s.adicional_1||'')+' '+(s.descripcion||'')+' '+(s.comentario||'')).toLowerCase();
+  const empieza=s=>[s.serie,s.adicional_1].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  let list=words.length?src.filter(s=>{ const t=txt(s); return words.every(w=>t.includes(w)); }):src;
+  if(words.length) list=list.filter(empieza).concat(list.filter(s=>!empieza(s)));
+  const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
+  if(!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
+  comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; (after||panolErogDestino)(); });
+}
+window.comboPanolSerie=comboPanolSerie;
+// Al salir del campo: si lo escrito es exactamente una serie o un Adic. 1, lo toma sin tener que elegir de la lista
+function panolSerieBlur(qId, hidId, after){
+  comboHideDelayed();
+  setTimeout(()=>{
+    const inp=document.getElementById(qId||'pe_serie_q'), hid=document.getElementById(hidId||'pe_serie'); if(!inp||!hid||hid.value) return;
+    const t=(inp.value||'').trim(); if(!t) return;
+    const first=t.split(' — ')[0].trim().toUpperCase();
+    if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; (after||panolErogDestino)(); return; }
+    const src=panolSeriesSrc();
+    const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===t.toUpperCase());
+    if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); (after||panolErogDestino)(); }
+  },160);
+}
+window.panolSerieBlur=panolSerieBlur;
+function panolOperariosActivos(){ return (DIC.panol_operarios||[]).filter(o=>o.activo!==false); }
+function panolOperarioSinAlta(nombre){
+  const n=String(nombre||'').trim().toUpperCase();
+  if(!n||n==='GENÉRICO'||n==='GENERICO') return false;
+  const l=DIC.panol_operarios||[]; if(!l.length) return false;       // sin diccionario cargado no se puede validar
+  return !l.some(o=>String(o.nombre).trim().toUpperCase()===n);
+}
+function comboPanolOper(qId, after){
+  const inp=document.getElementById(qId||'pe_oper'); if(!inp) return;
+  const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const txt=o=>((o.nombre||'')+' '+(o.nombre_pila||'')+' '+(o.puesto||'')).toLowerCase();
+  const empieza=o=>[o.nombre,o.nombre_pila].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  let list=panolOperariosActivos();
+  if(words.length){ list=list.filter(o=>{ const t=txt(o); return words.every(w=>t.includes(w)); }); list=list.filter(empieza).concat(list.filter(o=>!empieza(o))); }
+  comboShow(inp, list.slice(0,80).map(o=>({code:o.nombre, name:[o.nombre_pila,o.puesto].filter(Boolean).join(' · ')})), it=>{ inp.value=it.code; (after||panolOperNote)(); });
+}
+window.comboPanolOper=comboPanolOper;
+function panolOperNote(){
+  const n=document.getElementById('pe_operNote'), v=(document.getElementById('pe_oper')||{}).value; if(!n) return;
+  if(!(DIC.panol_operarios||[]).length){ n.style.color='var(--muted)'; n.textContent='Todavía no hay operarios cargados: se cargan en la solapa "Diccionario pañol".'; }
+  else if(panolOperarioSinAlta(v)){ n.style.color='#b3261e'; n.textContent='⚠ No está en el diccionario de operarios. Se guarda igual, con alarma "OPERARIO SIN ALTA"; podés darlo de alta en "Diccionario pañol".'; }
+  else n.textContent='';
+}
+window.panolOperNote=panolOperNote;
+
+/* ---- Solapa "Diccionario pañol": galpones y operarios ----
+   Alta / modificación / baja. Solo se puede eliminar (o cambiar el nombre) lo que nunca se usó en una erogación;
+   lo que ya se usó se puede inhabilitar para que no aparezca más en el formulario. */
+const PANOL_DIC_CFG={
+  gal:{tabla:'compras_panol_galpones', dic:'panol_galpones', uso:'galpon', etq:'galpón', campos:[['nombre','Nombre']]},
+  ope:{tabla:'compras_panol_operarios', dic:'panol_operarios', uso:'operario', etq:'operario', campos:[['nombre','Nombre (el que figura en las erogaciones)'],['nombre_pila','Nombre de pila'],['puesto','Puesto']]}
+};
+function panolDicUsos(k,row){
+  const f=PANOL_DIC_CFG[k].uso, n=String(row.nombre||'').trim().toUpperCase();
+  return (DIC.panol_egresos||[]).filter(r=>String(r[f]||'').trim().toUpperCase()===n).length;
+}
+function renderPanolDic(){
+  const gal=DIC.panol_galpones||[], ope=DIC.panol_operarios||[];
+  const estado=r=>r.activo===false?'Inhabilitado':'Activo';
+  xlfRegister('pgal',{rows:()=>gal, onChange:renderPanol, val:(r,col)=>col==='estado'?estado(r):''});
+  xlfRegister('pope',{rows:()=>ope, onChange:renderPanol, val:(r,col)=>col==='puesto'?(r.puesto||'(sin puesto)'):col==='estado'?estado(r):''});
+  if(!SP_SORT.pgal) SP_SORT.pgal={k:'nombre',dir:1};
+  if(!SP_SORT.pope) SP_SORT.pope={k:'nombre',dir:1};
+  const galS=_spOrdenar('pgal', gal.filter(r=>xlfPass('pgal',r)), {nombre:r=>r.nombre, estado:estado, usos:r=>panolDicUsos('gal',r)});
+  const opeS=_spOrdenar('pope', ope.filter(r=>xlfPass('pope',r)), {puesto:r=>r.puesto, nombre:r=>r.nombre, pila:r=>r.nombre_pila, estado:estado, usos:r=>panolDicUsos('ope',r)});
+  const acc=(k,r,usos)=>'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openPanolDicForm(\''+k+'\','+r.id+')">'+ICO.edit+'</button>'
+    +'<button class="btn ghost sm" onclick="panolDicToggle(\''+k+'\','+r.id+')">'+(r.activo===false?'Habilitar':'Inhabilitar')+'</button>'
+    +(usos?'':'<button class="iconbtn del" title="Eliminar (nunca se usó)" onclick="askPanolDicDel(\''+k+'\','+r.id+')">'+ICO.del+'</button>')+'</div></td>';
+  const badge=r=>r.activo===false?'<span class="badge b-gris">Inhabilitado</span>':'<span class="badge b-verde">Activo</span>';
+  const galRows=galS.length?galS.map(r=>{ const u=panolDicUsos('gal',r); return '<tr><td>'+esc(r.nombre)+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('gal',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">Sin galpones'+(gal.length?' con esos filtros':' cargados')+'.</td></tr>';
+  const opeRows=opeS.length?opeS.map(r=>{ const u=panolDicUsos('ope',r); return '<tr><td>'+esc(r.puesto||'')+'</td><td>'+esc(r.nombre)+'</td><td>'+esc(r.nombre_pila||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('ope',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted)">Sin operarios'+(ope.length?' con esos filtros':' cargados todavía: importalos desde el Excel o cargalos a mano')+'.</td></tr>';
+  C().innerHTML=panolTabs()
+    +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Galpones</h3><span class="meta">'+galS.length+' de '+gal.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pgal')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolGal\')">Auto-ajustar columnas</button>'
+      +'<button class="btn sm" onclick="openPanolDicForm(\'gal\')">'+ICO.plus+'Nuevo galpón</button></span></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" id="tblPanolGal"><thead><tr>'+_pnTh('Galpón',null,'nombre','pgal')+_pnTh('Estado','estado','estado','pgal')+_pnTh('Usos',null,'usos','pgal')+'<th style="width:230px"></th></tr></thead><tbody>'+galRows+'</tbody></table></div></div>'
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Operarios</h3><span class="meta">'+opeS.length+' de '+ope.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pope')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolOpe\')">Auto-ajustar columnas</button>'
+      +'<button class="btn ghost sm" onclick="openPanolOperImport()">Importar desde Excel</button>'
+      +'<button class="btn sm" onclick="openPanolDicForm(\'ope\')">'+ICO.plus+'Nuevo operario</button></span></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>';
+}
+window.renderPanolDic=renderPanolDic;
+function openPanolDicForm(k,id){
+  const cfg=PANOL_DIC_CFG[k], cur=id!=null?(DIC[cfg.dic]||[]).find(r=>String(r.id)===String(id)):null;
+  const usos=cur?panolDicUsos(k,cur):0;
+  const body=cfg.campos.map(([c,l])=>{
+    const bloq=(c==='nombre'&&usos>0);
+    return '<div class="field"><label>'+l+'</label><input id="pd_'+c+'" type="text" value="'+esc(cur?(cur[c]||''):'')+'"'+(bloq?' disabled':'')+'></div>';
+  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+' erogación(es): el nombre no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
+  openModal((cur?'Editar ':'Nuevo ')+cfg.etq, body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolDic(\''+k+'\','+(cur?cur.id:'null')+')">Guardar</button>');
+}
+window.openPanolDicForm=openPanolDicForm;
+async function panolDicRecargar(k){
+  const cfg=PANOL_DIC_CFG[k];
+  DIC[cfg.dic]=(await sbFetchAll('/'+cfg.tabla+'?select=*&order=nombre.asc'))||[];
+}
+async function guardarPanolDic(k,id){
+  const cfg=PANOL_DIC_CFG[k], lista=DIC[cfg.dic]=DIC[cfg.dic]||[];
+  const cur=id!=null?lista.find(r=>String(r.id)===String(id)):null;
+  const row={}; cfg.campos.forEach(([c])=>{ const el=document.getElementById('pd_'+c); row[c]=el&&!el.disabled?el.value.trim():(cur?cur[c]:''); });
+  if(!row.nombre){ toast('Falta el nombre'); return; }
+  if(lista.some(r=>String(r.id)!==String(id) && String(r.nombre).trim().toUpperCase()===row.nombre.toUpperCase())){ toast('Ya existe un '+cfg.etq+' con ese nombre'); return; }
+  try{
+    if(DEMO_MODE){
+      if(cur) Object.assign(cur,row); else lista.push({id:Math.max(0,...lista.map(r=>+r.id||0))+1, activo:true, ...row});
+    }else{
+      if(cur) await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row),prefer:'return=minimal'});
+      else await sbFetch('/'+cfg.tabla,{method:'POST',body:JSON.stringify({...row, creado_por:(AUTH_USER&&AUTH_USER.email)||null}),prefer:'return=minimal'});
+      await panolDicRecargar(k);
+    }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_diccionario.sql?)'); return; }
+  closeModal(); toast('Guardado'); renderPanol();
+}
+window.guardarPanolDic=guardarPanolDic;
+async function panolDicToggle(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  const nuevo=r.activo===false;
+  try{
+    if(!DEMO_MODE){ await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'PATCH',body:JSON.stringify({activo:nuevo}),prefer:'return=minimal'}); }
+    r.activo=nuevo;
+  }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; }
+  toast(nuevo?'Habilitado':'Inhabilitado'); renderPanol();
+}
+window.panolDicToggle=panolDicToggle;
+function askPanolDicDel(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  if(panolDicUsos(k,r)){ toast('Ya se usó en erogaciones; no se puede eliminar. Inhabilitalo.'); return; }
+  openModal('Eliminar '+cfg.etq,'<p style="margin:0;font-size:14px">¿Eliminar "'+esc(r.nombre)+'"? Nunca se usó en una erogación.</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmPanolDicDel(\''+k+'\','+id+')">Eliminar</button>');
+}
+window.askPanolDicDel=askPanolDicDel;
+async function confirmPanolDicDel(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  if(panolDicUsos(k,r)){ toast('Ya se usó en erogaciones; no se puede eliminar.'); return; }
+  try{ if(!DEMO_MODE) await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
+  catch(e){ toast('No se pudo eliminar: '+(e.message||e)); return; }
+  DIC[cfg.dic]=(DIC[cfg.dic]||[]).filter(x=>String(x.id)!==String(id));
+  closeModal(); toast('Eliminado'); renderPanol();
+}
+window.confirmPanolDicDel=confirmPanolDicDel;
+// Importar operarios de la hoja "NOMBRE OPERARIOS" (PUESTO / NOMBRE / EXCEL). Solo agrega los que no existen; no borra ni pisa nada.
+function openPanolOperImport(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel que tiene la hoja "NOMBRE OPERARIOS" (columnas PUESTO, NOMBRE, EXCEL). Solo se agregan los que todavía no están; no se borra ni se modifica ninguno. Si el Excel es muy pesado, copiá esa hoja a un archivo nuevo y subí ese.</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="pnop_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
+    +'<div id="pnopMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  openModal('Importar operarios', body, '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolOperImportar()">Importar</button>');
+}
+window.openPanolOperImport=openPanolOperImport;
+async function panolOperImportar(){
+  const f=(document.getElementById('pnop_file').files||[])[0], msg=document.getElementById('pnopMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo… (si el archivo es grande puede tardar)';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'NOMBRE')>=0 && _syncIdx(h,'PUESTO')>=0 && _syncIdx(h,'EXCEL')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "PUESTO", "NOMBRE" y "EXCEL".');
+    const H=rows[0], iP=_syncIdx(H,'PUESTO'), iN=_syncIdx(H,'NOMBRE'), iE=_syncIdx(H,'EXCEL');
+    const existentes=new Set((DIC.panol_operarios||[]).map(o=>String(o.nombre).trim().toUpperCase()));
+    const nuevos=[]; let repetidos=0;
+    for(let i=1;i<rows.length;i++){
+      const nombre=_syncNorm(rows[i][iN]); if(!nombre) continue;
+      const key=nombre.toUpperCase();
+      if(existentes.has(key)){ repetidos++; continue; }
+      existentes.add(key);
+      nuevos.push({nombre, nombre_pila:_syncNorm(rows[i][iE]), puesto:_syncNorm(rows[i][iP]).toUpperCase(), activo:true, creado_por:(AUTH_USER&&AUTH_USER.email)||null});
+    }
+    if(!nuevos.length){ msg.textContent='No hay operarios nuevos ('+repetidos+' ya estaban cargados).'; return; }
+    msg.textContent='Guardando '+nuevos.length+' operarios…';
+    if(DEMO_MODE){ DIC.panol_operarios=(DIC.panol_operarios||[]).concat(nuevos.map((o,i)=>({id:1000+i,...o}))); }
+    else{
+      await sbFetch('/compras_panol_operarios',{method:'POST',body:JSON.stringify(nuevos),prefer:'return=minimal'});
+      await panolDicRecargar('ope');
+    }
+    closeModal(); toast('Operarios agregados: '+nuevos.length+(repetidos?' ('+repetidos+' ya estaban)':'')); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolOperImportar=panolOperImportar;
+
+/* ===== Planilla de carga (formato Excel) =====
+   Grilla editable para cargar o corregir muchas erogaciones juntas (ej. un montaje con 50 materiales).
+   Nada se guarda hasta "Revisar y guardar": muestra el resumen (nuevas / modificadas / eliminadas / con alarma) y pide el OK.
+   Se llena a mano, completando hacia abajo, pegando desde Excel o importando un archivo. Solo se pueden traer a la planilla
+   erogaciones que todavía no se exportaron a Tango. */
+let PANOL_PLAN=null;      // null = vista de solo lectura; objeto = borrador {rows, dep}
+let _PP_SEQ=0;
+let _PANOL_SHOWN=[];
+const PP_COPIA=['fecha','horario','dest','destCod','serie','serieTxt','proceso','galpon','solp','oper','dep'];
+const PP_COLS={
+  fecha:['FECHA'], horario:['HORA','HORARIO'], dest:['DESTINO (IF / OBRA)','DESTINO','IF','IF/OBRA','OBRA'],
+  serie:['SERIE / MÓDULO','SERIE/MODULO','SERIE','MODULO','MÓDULO'], proceso:['PROCESO'], galpon:['GALPÓN','GALPON'], solp:['SOLP'],
+  art:['ARTÍCULO','ARTICULO'], cant:['CANTIDAD','CANTIDAD ENTREGADA'], um:['U.M.','UM','UNIDAD','UNIDAD DE MEDIDA'],
+  oper:['OPERARIO'], dep:['DEPÓSITO','DEPOSITO'], coment:['COMENTARIO','COMENTARIOS']
+};
+function ppNuevaFila(base){
+  const r={k:++_PP_SEQ, id:null, fecha:'', horario:'', art:'', cant:'', um:'UNI', dest:'', destCod:'', serie:'', serieTxt:'', proceso:'HABITUAL', galpon:'', solp:'', oper:'', dep:'', coment:'', manual:null, del:false, orig:null};
+  if(base) PP_COPIA.forEach(c=>{ r[c]=base[c]; });
+  else{ r.fecha=new Date().toISOString().slice(0,10); r.horario=new Date().toTimeString().slice(0,5); }
+  return r;
+}
+function ppSnap(r){ return JSON.stringify([r.fecha,r.horario,r.art,r.cant,r.um,r.destCod,r.serie,r.proceso,r.galpon,r.solp,r.oper,r.dep,r.coment]); }
+function ppDesdeEgreso(e){
+  const r=ppNuevaFila();
+  Object.assign(r,{ id:e.id, fecha:String(e.fecha||'').slice(0,10), horario:e.horario||'', art:e.cod_articulo?panolArtTxt(e.cod_articulo):(e.articulo_libre||''), cant:e.cantidad, um:e.um||'UNI',
+    dest:obraInputVal(e.proyecto_cod,panolObraNom), destCod:e.proyecto_cod||'', serie:e.serie||'', serieTxt:panolSerieTxt(e.serie), proceso:e.proceso||'HABITUAL', galpon:e.galpon||'',
+    solp:e.solp||'', oper:e.operario||'', dep:e.cod_deposito||'', coment:e.comentario||'', manual:e.fuente_precio==='Manual'?{ars:+e.costo_unit_ars||0, usd:+e.costo_unit_usd||0}:null });
+  r.orig=ppSnap(r);
+  return r;
+}
+function openPanolPlanilla(){
+  PANOL_PLAN={rows:[ppNuevaFila()], dep:PANOL_LAST_DEP||''};
+  renderPanol();
+}
+window.openPanolPlanilla=openPanolPlanilla;
+function ppTraerPeriodo(){
+  const ya=new Set(PANOL_PLAN.rows.filter(r=>r.id).map(r=>String(r.id)));
+  const lst=(DIC.panol_egresos||[]).filter(e=>+e.periodo===PANOL_PERIODO && !e.exportado && !ya.has(String(e.id)))
+    .sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))||(+a.id)-(+b.id));
+  if(!lst.length){ toast('No hay erogaciones sin exportar en este período'); return; }
+  PANOL_PLAN.rows=lst.map(ppDesdeEgreso).concat(PANOL_PLAN.rows.filter(r=>r.id||r.art||r.cant));
+  renderPanol(); toast(lst.length+' erogaciones traídas para editar');
+}
+window.ppTraerPeriodo=ppTraerPeriodo;
+function ppFila(k){ return PANOL_PLAN.rows.find(r=>r.k===k); }
+function ppCalc(r){
+  const errs=[], ra=panolArtResolver(r.art), cant=+r.cant||0, dep=r.dep||PANOL_PLAN.dep;
+  if(!r.fecha) errs.push('falta fecha');
+  if(!ra.cod && !ra.libre) errs.push('falta artículo');
+  if(!(cant>0)) errs.push('falta cantidad');
+  if(!r.destCod) errs.push('elegí el destino de la lista');
+  if(r.serieTxt && !r.serie) errs.push('elegí la serie de la lista');
+  if(ra.cod && !dep) errs.push('falta depósito');
+  const gl=DIC.panol_galpones||[];
+  if(r.galpon && gl.length && !gl.some(g=>g.nombre===r.galpon) && !(r.orig && r.orig.includes(JSON.stringify(r.galpon)))) errs.push('galpón fuera del diccionario');
+  let pr=null, alerta='';
+  if(r.fecha && (ra.cod||ra.libre)){
+    pr=panolCamposPrecio(ra.cod, (+r.fecha.slice(0,4))*100+(+r.fecha.slice(5,7)), cant, r.manual);
+    alerta=panolAlertaDe({control:pr._control}, !ra.cod, panolOperarioSinAlta(r.oper||'Genérico'));
+  }
+  return {errs, ra, dep, pr, alerta};
+}
+function ppVacia(r){ return !r.id && !String(r.art).trim() && !r.cant; }
+function ppEstado(r){ return r.del?'del':(!r.id?'new':(ppSnap(r)!==r.orig?'mod':'')); }
+function ppResHtml(r){
+  const c=ppCalc(r);
+  if(ppVacia(r)) return '';
+  if(c.errs.length) return '<span style="color:#b3261e">'+esc(c.errs.join(' · '))+'</span>';
+  return '<span>'+(c.pr&&c.pr.costo_unit_ars?fmtNum(c.pr.costo_unit_ars,2)+' ARS':'<span style="color:var(--muted)">sin precio</span>')+'</span> '
+    +(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>');
+}
+function ppRecalc(k){
+  const r=ppFila(k); if(!r) return;
+  const c=document.getElementById('pp_'+k+'_res'), tr=document.getElementById('pp_tr_'+k);
+  if(c) c.innerHTML=ppResHtml(r);
+  if(tr){ const cc=ppCalc(r), st=ppEstado(r);
+    tr.style.background=r.del?'#f1f1ee':(!ppVacia(r)&&cc.errs.length?'#fdecea':(cc.alerta?'#fff6f4':''));
+    tr.style.opacity=r.del?'.5':''; tr.style.textDecoration=r.del?'line-through':''; tr.dataset.st=st;
+    const n=document.getElementById('pp_'+k+'_n'); if(n) n.textContent=st==='new'?'nueva':st==='mod'?'editada':st==='del'?'a eliminar':''; }
+  ppResumen();
+}
+function ppResumen(){
+  const el=document.getElementById('ppResumen'); if(!el||!PANOL_PLAN) return;
+  const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
+  const n=s=>rows.filter(r=>ppEstado(r)===s).length;
+  const err=rows.filter(r=>!r.del&&ppCalc(r).errs.length).length, al=rows.filter(r=>!r.del&&!ppCalc(r).errs.length&&ppCalc(r).alerta).length;
+  el.innerHTML=rows.length+' filas · '+n('new')+' nuevas · '+n('mod')+' editadas · '+n('del')+' a eliminar'+(err?' · <b style="color:#b3261e">'+err+' con errores</b>':'')+(al?' · '+al+' con alarma':'');
+}
+function ppSet(k,f,v){ const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null; ppRecalc(k); }
+window.ppSet=ppSet;
+function ppSyncDest(k){ const r=ppFila(k); r.dest=document.getElementById('pp_'+k+'_dest').value; r.destCod=document.getElementById('pp_'+k+'_destcod').value; ppRecalc(k); }
+function ppSyncSerie(k){ const r=ppFila(k); r.serieTxt=document.getElementById('pp_'+k+'_serie').value; r.serie=document.getElementById('pp_'+k+'_seriecod').value; ppRecalc(k); }
+window.ppSyncDest=ppSyncDest; window.ppSyncSerie=ppSyncSerie;
+function ppQuitar(k){
+  const r=ppFila(k); if(!r) return;
+  if(r.id){ r.del=!r.del; ppRecalc(k); }
+  else{ PANOL_PLAN.rows=PANOL_PLAN.rows.filter(x=>x.k!==k); if(!PANOL_PLAN.rows.length) PANOL_PLAN.rows.push(ppNuevaFila()); renderPanol(); }
+}
+window.ppQuitar=ppQuitar;
+function ppAgregar(n){
+  const ult=PANOL_PLAN.rows.filter(r=>!r.del).slice(-1)[0];
+  for(let i=0;i<n;i++) PANOL_PLAN.rows.push(ppNuevaFila(ult));
+  renderPanol();
+}
+window.ppAgregar=ppAgregar;
+// Copia el valor de la primera fila con dato a todas las filas (completar hacia abajo)
+function ppCompletarAbajo(c){
+  const rows=PANOL_PLAN.rows.filter(r=>!r.del), src=rows.find(r=>String(r[c]||'').trim()!==''); if(!src){ toast('No hay valor para copiar'); return; }
+  const cols=c==='dest'?['dest','destCod']:c==='serie'?['serie','serieTxt']:[c];
+  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); });
+  renderPanol(); toast('Completado hacia abajo con "'+src[c==='serie'?'serieTxt':c]+'"');
+}
+window.ppCompletarAbajo=ppCompletarAbajo;
+function ppDepDefecto(v){ PANOL_PLAN.dep=v; PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k)); }
+window.ppDepDefecto=ppDepDefecto;
+function ppDescartar(){
+  const cambios=PANOL_PLAN&&PANOL_PLAN.rows.some(r=>!ppVacia(r)&&ppEstado(r));
+  const salir=()=>{ PANOL_PLAN=null; closeModal(); renderPanol(); };
+  if(!cambios){ salir(); return; }
+  window._ppSalir=salir;
+  openModal('Descartar planilla','<p style="margin:0;font-size:14px">Hay cambios sin guardar. Si descartás, se pierden.</p>',
+    '<button class="btn ghost" onclick="closeModal()">Seguir editando</button><button class="btn danger" onclick="_ppSalir()">Descartar</button>');
+}
+window.ppDescartar=ppDescartar;
+
+function ppRowHtml(r,i){
+  const K=r.k, id=c=>'pp_'+K+'_'+c;
+  const inp=(c,type,val,extra,w)=>'<td><input class="ppin" id="'+id(c)+'" type="'+type+'" value="'+esc(val)+'" style="min-width:'+(w||70)+'px" '+(extra||'')+'></td>';
+  const sel=(c,opts,val,extra)=>'<td><select class="ppin" id="'+id(c)+'" '+(extra||'')+'>'+opts+'</select></td>';
+  const opt=(v,l,cur)=>'<option value="'+esc(v)+'"'+(cur===v?' selected':'')+'>'+esc(l)+'</option>';
+  const gl=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre); if(r.galpon&&!gl.includes(r.galpon)) gl.push(r.galpon);
+  const deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
+  return '<tr id="pp_tr_'+K+'">'
+    +'<td style="white-space:nowrap;color:var(--muted)">'+(i+1)+' <span id="'+id('n')+'" style="font-size:10.5px"></span></td>'
+    +inp('fecha','date',r.fecha,'onchange="ppSet('+K+',\'fecha\',this.value)"',120)
+    +inp('horario','time',r.horario,'onchange="ppSet('+K+',\'horario\',this.value)"',90)
+    +'<td><input class="ppin" id="'+id('art')+'" value="'+esc(r.art)+'" autocomplete="off" style="min-width:260px" placeholder="código, nombre o sinónimo" onfocus="comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" oninput="ppSet('+K+',\'art\',this.value);comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" onblur="comboHideDelayed()"></td>'
+    +inp('cant','number',r.cant,'step="0.01" oninput="ppSet('+K+',\'cant\',this.value)"',70)
+    +inp('um','text',r.um,'oninput="ppSet('+K+',\'um\',this.value)"',50)
+    +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" style="min-width:190px" placeholder="IF / obra" onfocus="comboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');comboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)"></td>'
+    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
+    +sel('proceso',PANOL_PROCESOS.map(p=>opt(p,p,r.proceso)).join(''),r.proceso,'onchange="ppSet('+K+',\'proceso\',this.value)"')
+    +sel('galpon','<option value="">—</option>'+gl.map(n=>opt(n,n,r.galpon)).join(''),r.galpon,'onchange="ppSet('+K+',\'galpon\',this.value)"')
+    +inp('solp','text',r.solp,'oninput="ppSet('+K+',\'solp\',this.value)"',70)
+    +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
+    +sel('dep','<option value="">(por defecto)</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'onchange="ppSet('+K+',\'dep\',this.value)"')
+    +inp('coment','text',r.coment,'oninput="ppSet('+K+',\'coment\',this.value)"',110)
+    +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:170px">'+ppResHtml(r)+'</td>'
+    +'<td><button class="iconbtn del" title="'+(r.id?'Marcar para eliminar / deshacer':'Quitar fila')+'" onclick="ppQuitar('+K+')">'+ICO.del+'</button></td></tr>';
+}
+function renderPanolPlanilla(){
+  const deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
+  const fd=(c,l)=>'<button class="xlfbtn" title="Completar hacia abajo con el primer valor" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:var(--olive-deep)" onclick="ppCompletarAbajo(\''+c+'\')">⤓</button>';
+  const th=(l,c)=>'<th style="white-space:nowrap">'+l+(c?' '+fd(c):'')+'</th>';
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Planilla de carga</h3><span class="meta" id="ppResumen"></span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+      +'<label style="font-size:12px;color:var(--muted)">Depósito por defecto <select style="font-size:12px;border:1px solid var(--line-strong);border-radius:7px;padding:5px 6px" onchange="ppDepDefecto(this.value)"><option value="">— elegí —</option>'+deps.map(d=>'<option value="'+esc(d.codigo)+'"'+(PANOL_PLAN.dep===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('')+'</select></label>'
+      +'<button class="btn ghost sm" onclick="ppDescartar()">Descartar</button>'
+      +'<button class="btn sm" onclick="ppRevisar()">Revisar y guardar</button></span></div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 10px;align-items:center">'
+        +'<button class="btn ghost sm" onclick="ppAgregar(1)">'+ICO.plus+'Fila</button><button class="btn ghost sm" onclick="ppAgregar(10)">+10 filas</button>'
+        +'<button class="btn ghost sm" onclick="ppTraerPeriodo()">Traer erogaciones del período para editar</button>'
+        +'<button class="btn ghost sm" onclick="openPpPegar()">Pegar desde Excel</button><button class="btn ghost sm" onclick="openPpImportar()">Importar archivo Excel</button>'
+        +'<button class="btn ghost sm" onclick="panolDescargarPlantilla()">Plantilla Excel</button>'
+        +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPlan\')">Auto-ajustar columnas</button>'
+        +'<span style="font-size:11.5px;color:var(--muted)">⤓ en un título copia el primer valor a todas las filas. Nada se guarda hasta "Revisar y guardar".</span></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid" id="tblPanolPlan"><thead><tr><th>#</th>'
+        +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio / alarma')+'<th></th>'
+      +'</tr></thead><tbody>'+PANOL_PLAN.rows.map(ppRowHtml).join('')+'</tbody></table></div></div>';
+  PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k));
+}
+window.renderPanolPlanilla=renderPanolPlanilla;
+
+/* ---- Revisar y guardar (el OK) ---- */
+function ppRevisar(){
+  const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
+  if(!rows.length){ toast('No hay nada para guardar'); return; }
+  const malas=rows.filter(r=>!r.del&&ppCalc(r).errs.length);
+  if(malas.length){
+    toast('Hay '+malas.length+' fila(s) con errores (en rojo): corregilas antes de guardar');
+    const tr=document.getElementById('pp_tr_'+malas[0].k); if(tr&&tr.scrollIntoView) tr.scrollIntoView({block:'center'});
+    return;
+  }
+  const n=s=>rows.filter(r=>ppEstado(r)===s).length, ok=rows.filter(r=>!r.del&&ppCalc(r).alerta);
+  const alertas={}; ok.forEach(r=>ppCalc(r).alerta.split(', ').forEach(a=>{ alertas[a]=(alertas[a]||0)+1; }));
+  const hay=n('new')+n('mod')+n('del'); if(!hay){ toast('No hay cambios para guardar'); return; }
+  openModal('Confirmar',
+    '<div style="font-size:14px;line-height:1.7">Se van a guardar:<br><b>'+n('new')+'</b> erogaciones nuevas<br><b>'+n('mod')+'</b> editadas<br><b>'+n('del')+'</b> eliminadas'
+    +(ok.length?'<br><br>'+ok.length+' quedan con alarma: '+Object.keys(alertas).map(a=>esc(a)+' ('+alertas[a]+')').join(' · '):'')
+    +'</div>',
+    '<button class="btn ghost" onclick="closeModal()">Volver a la planilla</button><button class="btn" id="ppOkBtn" onclick="ppGuardar()">Guardar</button>');
+}
+window.ppRevisar=ppRevisar;
+async function ppGuardar(){
+  const btn=document.getElementById('ppOkBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
+  const arma=r=>{ const c=ppCalc(r);
+    return panolArmarFila({fecha:r.fecha, horario:r.horario, ra:c.ra, cant:+r.cant, um:r.um, dest:r.destCod, serie:r.serie, galpon:r.galpon, proceso:r.proceso, solp:r.solp, oper:r.oper, dep:c.dep, coment:r.coment, manual:r.manual}); };
+  try{
+    const nuevas=rows.filter(r=>ppEstado(r)==='new'), mods=rows.filter(r=>ppEstado(r)==='mod'), dels=rows.filter(r=>ppEstado(r)==='del');
+    if(DEMO_MODE){
+      DIC.panol_egresos=DIC.panol_egresos||[];
+      nuevas.forEach(r=>{ const f=arma(r); f.id=Math.max(0,...DIC.panol_egresos.map(x=>+x.id||0))+1; DIC.panol_egresos.push(f); r.id=f.id; });
+      mods.forEach(r=>{ const e=DIC.panol_egresos.find(x=>String(x.id)===String(r.id)); if(e) Object.assign(e,arma(r)); });
+      DIC.panol_egresos=DIC.panol_egresos.filter(x=>!dels.some(r=>String(r.id)===String(x.id)));
+    }else{
+      for(let i=0;i<nuevas.length;i+=100){
+        const lote=nuevas.slice(i,i+100), resp=await sbFetch('/compras_panol_egresos',{method:'POST',body:JSON.stringify(lote.map(arma))});
+        lote.forEach((r,j)=>{ if(resp&&resp[j]){ r.id=resp[j].id; r.orig=ppSnap(r); } });   // si falla un lote, reintentar no duplica los ya guardados
+      }
+      for(let i=0;i<mods.length;i+=10){
+        await Promise.all(mods.slice(i,i+10).map(r=>sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(arma(r)),prefer:'return=minimal'}).then(()=>{ r.orig=ppSnap(r); })));
+      }
+      if(dels.length) await sbFetch('/compras_panol_egresos?id=in.('+dels.map(r=>r.id).join(',')+')',{method:'DELETE',prefer:'return=minimal'});
+      await reloadDB();
+    }
+    const dep=PANOL_PLAN.dep; if(dep) PANOL_LAST_DEP=dep;
+    toast('Guardado: '+nuevas.length+' nuevas, '+mods.length+' editadas, '+dels.length+' eliminadas');
+    PANOL_PLAN=null; closeModal(); renderPanol();
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='Guardar'; }
+    toast('No se pudo guardar todo: '+(e.message||e)+'. Lo ya guardado no se duplica si reintentás.');
+    renderPanol(); closeModal();
+  }
+}
+window.ppGuardar=ppGuardar;
+
+/* ---- Excel: plantilla, exportar, pegar e importar ---- */
+const PP_HEADERS=['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','PROCESO','GALPÓN','SOLP','ARTÍCULO','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO'];
+function panolDescargarPlantilla(){
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([PP_HEADERS,[new Date().toISOString().slice(0,10),'08:00','PL0096','','HABITUAL','','','TORNILLO N°14',100,'UNI','','','']]), 'Erogaciones');
+  const dep=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>d.codigo+' · '+d.descripcion), gal=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre);
+  const n=Math.max(PANOL_PROCESOS.length,dep.length,gal.length), listas=[['PROCESOS','GALPONES','DEPÓSITOS (usar el código)']];
+  for(let i=0;i<n;i++) listas.push([PANOL_PROCESOS[i]||'', gal[i]||'', dep[i]||'']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(listas), 'Listas');
+  XLSX.writeFile(wb,'Plantilla_Erogaciones_Panol.xlsx');
+}
+window.panolDescargarPlantilla=panolDescargarPlantilla;
+function panolExportErogExcel(){
+  const rows=_PANOL_SHOWN; if(!rows.length){ toast('No hay filas para exportar'); return; }
+  const aoa=[['FECHA','HORA','DESTINO (IF / OBRA)','SERIE / MÓDULO','PROCESO','GALPÓN','SOLP','ARTÍCULO','DESCRIPCIÓN','CANTIDAD','U.M.','OPERARIO','DEPÓSITO','COMENTARIO','PRECIO ARS','PRECIO USD','TOTAL ARS','TOTAL USD','FUENTE PRECIO','ALARMA','EXPORTADO A TANGO']]
+    .concat(rows.map(r=>[r.fecha,r.horario||'',r.proyecto_cod||'',r.serie||'',r.proceso||'',r.galpon||'',r.solp||'',r.cod_articulo||r.articulo_libre||'',r.cod_articulo?(artDesc(r.cod_articulo)||''):'',+r.cantidad||0,r.um||'',r.operario||'',r.cod_deposito||'',r.comentario||'',+r.costo_unit_ars||0,+r.costo_unit_usd||0,+r.total_ars||0,+r.total_usd||0,r.fuente_precio||'',r.alerta||'',r.exportado?'Sí':'No']));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Erogaciones');
+  XLSX.writeFile(wb,'Erogaciones_Panol_'+PANOL_PERIODO+'.xlsx'); toast('Exportado: '+rows.length+' filas');
+}
+window.panolExportErogExcel=panolExportErogExcel;
+function ppResolverDestino(txt){
+  const t=String(txt||'').trim(); if(!t) return null;
+  const T=t.toUpperCase(), first=T.split(/[\s—]+/)[0], sinIF=first.replace(/^IF/,'');
+  const src=panolObras(), up=v=>String(v||'').toUpperCase().trim();
+  return src.find(o=>up(o.cod)===T) || src.find(o=>up(o.cod)===first) || src.find(o=>up(o.desc)===T)
+    || src.find(o=>up(o.cod+' '+o.desc)===T || up(o.cod+' — '+o.desc)===T) || src.find(o=>up(o.cod)===sinIF) || null;
+}
+function ppHora(v){
+  if(typeof v==='number' && v>=0 && v<1){ const m=Math.round(v*1440); return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
+  const m=String(v||'').match(/(\d{1,2}):(\d{2})/); return m?m[1].padStart(2,'0')+':'+m[2]:'';
+}
+// aoa = filas de celdas (con o sin fila de títulos). Devuelve la cantidad de filas agregadas a la planilla.
+function ppImportarAoa(aoa){
+  aoa=aoa.filter(f=>f.some(c=>String(c==null?'':c).trim()!==''));
+  if(!aoa.length) return 0;
+  let col={}, ini=0;
+  const H=aoa[0].map(x=>String(x==null?'':x).trim());
+  if(_syncIdx(H,...PP_COLS.art)>=0 && _syncIdx(H,...PP_COLS.cant)>=0){ Object.keys(PP_COLS).forEach(c=>{ const i=_syncIdx(H,...PP_COLS[c]); if(i>=0) col[c]=i; }); ini=1; }
+  else{ Object.keys(PP_COLS).forEach(c=>{ col[c]=['fecha','horario','dest','serie','proceso','galpon','solp','art','cant','um','oper','dep','coment'].indexOf(c); }); }
+  const get=(f,c)=>{ const v=col[c]!=null?f[col[c]]:''; return v==null?'':v; };
+  const txt=(f,c)=>String(get(f,c)).trim();
+  const deps=DIC.depositos||[], gal=DIC.panol_galpones||[];
+  const nuevas=[];
+  for(let i=ini;i<aoa.length;i++){
+    const f=aoa[i], r=ppNuevaFila();
+    r.fecha=_pnFecha(get(f,'fecha'))||''; r.horario=ppHora(get(f,'horario'))||'';
+    r.art=txt(f,'art'); const cn=parseFloat(String(get(f,'cant')).replace(',','.')); r.cant=isNaN(cn)?'':cn;
+    r.um=txt(f,'um')||'UNI'; r.solp=txt(f,'solp'); r.oper=txt(f,'oper'); r.coment=txt(f,'coment');
+    const d=ppResolverDestino(txt(f,'dest')); if(d){ r.destCod=d.cod; r.dest=d.cod+' — '+(d.desc||''); } else r.dest=txt(f,'dest');
+    const st=txt(f,'serie');
+    if(st){ const T=st.toUpperCase();
+      if(T===PANOL_MODULO_GENERICO){ r.serie=PANOL_MODULO_GENERICO; r.serieTxt=PANOL_MODULO_GENERICO; }
+      else{ const s=panolSeriesSrc().find(x=>String(x.serie).toUpperCase()===T)||panolSeriesSrc().find(x=>String(x.adicional_1||'').trim().toUpperCase()===T);
+        if(s){ r.serie=s.serie; r.serieTxt=s.serie+' — '+panolSerieNombre(s); } else r.serieTxt=st; } }
+    const pr=txt(f,'proceso').toUpperCase(); r.proceso=PANOL_PROCESOS.includes(pr)?pr:'HABITUAL';
+    const g=txt(f,'galpon'); if(g){ const m=gal.find(x=>String(x.nombre).trim().toUpperCase()===g.toUpperCase()); r.galpon=m?m.nombre:g; }
+    const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; }
+    nuevas.push(r);
+  }
+  PANOL_PLAN.rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r)).concat(nuevas);
+  return nuevas.length;
+}
+function openPpPegar(){
+  openModal('Pegar desde Excel',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Copiá las celdas en Excel (con la fila de títulos, o sin ella en el orden de la plantilla) y pegalas acá. Sirve también la hoja EROGACIONES: se toman FECHA, IF, SERIE, GALPON, PROCESO, SOLP, Articulo, U.M., CANTIDAD ENTREGADA, OPERARIO, HORARIO y COMENTARIO. Las filas se agregan a la planilla sin guardarse.</div>'
+    +'<textarea id="pp_pegar" style="width:100%;height:220px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:8px;font-size:12px;font-family:monospace" placeholder="Pegá acá (Ctrl+V)"></textarea>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="ppPegarOk()">Agregar a la planilla</button>','wide');
+}
+window.openPpPegar=openPpPegar;
+function ppPegarOk(){
+  const t=(document.getElementById('pp_pegar')||{}).value||'';
+  const aoa=t.replace(/\r/g,'').split('\n').map(l=>l.split('\t'));
+  const n=ppImportarAoa(aoa); if(!n){ toast('No encontré filas para agregar'); return; }
+  closeModal(); renderPanol(); toast(n+' filas agregadas a la planilla. Revisalas en rojo y guardá.');
+}
+window.ppPegarOk=ppPegarOk;
+function openPpImportar(){
+  openModal('Importar archivo Excel',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí la plantilla completada (o un Excel con columnas FECHA, ARTÍCULO, CANTIDAD, etc.). Las filas se agregan a la planilla para que las revises; nada se guarda todavía. Si el Excel es muy pesado, copiá la hoja a un archivo nuevo o usá "Pegar desde Excel".</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="pp_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="ppFileMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="ppImportarOk()">Importar</button>');
+}
+window.openPpImportar=openPpImportar;
+async function ppImportarOk(){
+  const f=(document.getElementById('pp_file').files||[])[0], msg=document.getElementById('ppFileMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo… (si es grande puede tardar)';
+  try{
+    const wb=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=e=>{ try{ res(XLSX.read(new Uint8Array(e.target.result),{type:'array'})); }catch(er){ rej(er); } }; fr.onerror=()=>rej(new Error('No se pudo abrir el archivo')); fr.readAsArrayBuffer(f); });
+    let aoa=null;
+    for(const name of wb.SheetNames){
+      const r=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:''});
+      if(r.length){ const h=r[0].map(x=>String(x).trim()); if(_syncIdx(h,...PP_COLS.art)>=0 && _syncIdx(h,...PP_COLS.cant)>=0){ aoa=r; break; } }
+    }
+    if(!aoa) throw new Error('No encontré una hoja con columnas ARTÍCULO y CANTIDAD.');
+    const n=ppImportarAoa(aoa); if(!n) throw new Error('No encontré filas con datos.');
+    closeModal(); renderPanol(); toast(n+' filas agregadas a la planilla. Revisalas en rojo y guardá.');
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.ppImportarOk=ppImportarOk;
 
 /* ---- Importar historial de compras ("Informe APP Costeos" de Tango) ----
    Mismo filtro que el Excel: artículos GC*, con fecha, cantidad > 0, total > 0, cotización > 0 y renglón en
@@ -8637,8 +9185,8 @@ function exportDicTab(){
     let rows=SERIES_ACTIVAS.filter(r=>r.familia==='modulo').filter(r=>dicRowPass('modulos',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('modulos',rows);
-    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Comentario','Adicional 2','Código de Barras','Adicional 1','Auxiliar 04','Partida','N° Despacho'],
-      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.comentario,r.adicional_2,r.codigo_barras,r.adicional_1,r._aux||'—',r.partida,r.numero_despacho])];
+    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Adicional 1','Comentario','Adicional 2','Código de Barras','Auxiliar 04','Partida','N° Despacho'],
+      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.adicional_1,r.comentario,r.adicional_2,r.codigo_barras,r._aux||'—',r.partida,r.numero_despacho])];
     sheetName='Módulos'; fname='Diccionario_Modulos_'+hoy+'.xlsx';
   } else if(DIC_TAB==='opcog'){
     const filt=arr=>{ let rows=arr; if(q) rows=rows.filter(x=>String(x).toLowerCase().includes(q)); return rows; };
@@ -10195,17 +10743,17 @@ function paintDic(){
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Módulos (alquiler)</h3><span class="meta">'+rows.length+' de '+base.length+'</span>'+modTag
       +'<span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center">'+limpiarBtn+syncBtn+'</span></div>'
       +'<div class="dic-scroll"><table class="grid" style="font-size:9.5px;table-layout:auto;width:100%">'
-      +'<thead><tr>'+dicTh('modulos','Depósito','cod_deposito')+dicTh('modulos','Descripción depósito','desc_deposito')+dicTh('modulos','Artículo','cod_articulo')+dicTh('modulos','Descripción','descripcion')+dicTh('modulos','Serie','serie')+dicTh('modulos','Comentario','comentario')+dicTh('modulos','Adic. 2','adicional_2')+dicTh('modulos','Cód. Barras','codigo_barras')+dicTh('modulos','Adic. 1','adicional_1')+dicTh('modulos','Auxiliar 04','_aux')+'</tr></thead><tbody>'
+      +'<thead><tr>'+dicTh('modulos','Depósito','cod_deposito')+dicTh('modulos','Descripción depósito','desc_deposito')+dicTh('modulos','Artículo','cod_articulo')+dicTh('modulos','Descripción','descripcion')+dicTh('modulos','Serie','serie')+dicTh('modulos','Adic. 1','adicional_1')+dicTh('modulos','Comentario','comentario')+dicTh('modulos','Adic. 2','adicional_2')+dicTh('modulos','Cód. Barras','codigo_barras')+dicTh('modulos','Auxiliar 04','_aux')+'</tr></thead><tbody>'
       +rows.slice(0,500).map(r=>'<tr>'
         +'<td style="'+nowrap+'">'+esc(r.cod_deposito||'—')+'</td>'
         +'<td style="font-size:10.5px">'+esc(r.desc_deposito||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.cod_articulo||'—')+'</td>'
         +'<td style="'+nowrap+'" title="'+esc(r.descripcion||'')+'">'+esc(r.descripcion||'—')+'</td>'
         +'<td style="'+nowrap+'"><strong>'+esc(r.serie)+'</strong></td>'
+        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)" title="'+esc(r.comentario||'')+'">'+esc(r.comentario||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_2||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.codigo_barras||'—')+'</td>'
-        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+';color:'+(r._aux==='—'?'#b3261e':'var(--muted)')+'">'+esc(r._aux)+'</td></tr>').join('')+'</tbody></table></div>'
       +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);padding:8px 15px">Mostrando 500 de '+rows.length+'. Usá el buscador o los filtros de columna (▼).</div>':'')
       +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dónde está cada módulo hoy (stock, cliente, mantenimiento, venta) y su Auxiliar 04 real, cruzado por serie. El selector de Módulo al cargar una OG ya muestra este mismo depósito y excluye los vendidos. Tocá la flechita ▼ de cada columna para filtrar, como en Excel.</div></div>';
@@ -12717,6 +13265,14 @@ async function reloadDicts(background){
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const pg = await sbFetchAll('/compras_panol_galpones?select=*&order=nombre.asc');
+        if(pg) DIC.panol_galpones = pg;
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const po = await sbFetchAll('/compras_panol_operarios?select=*&order=nombre.asc');
+        if(po) DIC.panol_operarios = po;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const hp = await sbFetchAll('/compras_hist_precios?select=*&order=id.asc');
