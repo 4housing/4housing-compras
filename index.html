@@ -2960,7 +2960,7 @@ function panolErogPrecio(resetManual){
   const umSel=document.getElementById('pe_um'), umNote=document.getElementById('pe_umNote');
   if(umSel && ra.cod && !umSel.dataset.manual){
     const u=panolUmSugerida(ra.cod);
-    if(u){ panolUmFijar(umSel,u); if(umNote) umNote.textContent='U.M. sugerida según Tango para este artículo: '+u; } else if(umNote) umNote.textContent='';
+    if(u){ panolUmFijar(umSel,u); if(umNote) umNote.textContent='U.M. sugerida para este artículo: '+u; } else if(umNote) umNote.textContent='';
   }
   const per=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
   const p=ra.cod?panolPrecioMes(ra.cod, per):null;
@@ -3160,9 +3160,11 @@ function panolUmResolver(txt){
   if(m) return m.codigo;
   return l.length?'':(UM_LIST.find(x=>x.toUpperCase()===T)||'');
 }
-// U.M. del artículo: la de los saldos de Tango ("U.M. control stock"); si no está ahí, la de su última erogación
+// U.M. del artículo: la asignada en el diccionario de artículos (viene del maestro de Tango); si no tiene, la de los saldos de Tango ("U.M. control stock"); si no está ahí, la de su última erogación
 function panolUmSugerida(cod){
   if(!cod) return '';
+  const art=(DIC.articulos||[]).find(x=>x.codigo===cod);
+  if(art&&art.um){ const u=panolUmResolver(art.um); if(u) return u; }
   const s=(DIC.stock_saldos||[]).find(x=>x.cod_articulo===cod&&x.um);
   if(s){ const u=panolUmResolver(s.um); if(u) return u; }
   const e=(DIC.panol_egresos||[]).filter(r=>r.cod_articulo===cod&&r.um).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0];
@@ -9294,8 +9296,8 @@ function exportDicTab(){
     sheetName='Proveedores'; fname='Diccionario_Proveedores_'+hoy+'.xlsx';
   } else if(DIC_TAB==='articulos'){
     let rows=DIC.articulos.filter(r=>dicRowPass('articulos',r)); if(q) rows=rows.filter(r=>dicMatch(r,q)); rows=dicApplySort('articulos',rows);
-    aoa=[['Código','Descripción','Descripción adicional','Sinónimo','N° cuenta','Cuenta','Precio ARS','Precio USD','TC','Proveedor ref.','Fecha ref.'],
-      ...rows.map(r=>[r.codigo,r.descripcion,r.desc_adicional,r.sinonimo,r.cuenta_cod,r.cuenta,r.costo_ars,r.costo_usd,(r.costo_ars&&r.costo_usd)?r.costo_ars/r.costo_usd:'',r.costo_proveedor,r.costo_fecha])];
+    aoa=[['Código','Descripción','Descripción adicional','Sinónimo','U.M.','N° cuenta','Cuenta','Precio ARS','Precio USD','TC','Proveedor ref.','Fecha ref.'],
+      ...rows.map(r=>[r.codigo,r.descripcion,r.desc_adicional,r.sinonimo,r.um||'',r.cuenta_cod,r.cuenta,r.costo_ars,r.costo_usd,(r.costo_ars&&r.costo_usd)?r.costo_ars/r.costo_usd:'',r.costo_proveedor,r.costo_fecha])];
     sheetName='Artículos'; fname='Diccionario_Articulos_'+hoy+'.xlsx';
   } else if(DIC_TAB==='depositos'){
     let rows=(DIC.depositos||[]).filter(r=>dicRowPass('depositos',r)); if(q) rows=rows.filter(r=>dicMatch(r,q)); rows=dicApplySort('depositos',rows);
@@ -9445,6 +9447,17 @@ async function confirmDelProv(cod){
 window.askDelProv=askDelProv; window.confirmDelProv=confirmDelProv;
 
 /* ===== Editar costo de referencia de un artículo (a mano) ===== */
+// Escribe en compras_articulos; si la columna um todavía no existe (falta correr sql/2026-10_articulos_um.sql) reintenta sin ella y avisa
+let ART_UM_FALTA=false;
+async function sbArtUm(path, method, body, prefer){
+  const sinUm=b=>Array.isArray(b)?b.map(x=>{ const y={...x}; delete y.um; return y; }):(()=>{ const y={...b}; delete y.um; return y; })();
+  const opts=b=>({method, body:JSON.stringify(b), ...(prefer?{prefer}:{})});
+  if(!ART_UM_FALTA){
+    try{ return await sbFetch(path, opts(body)); }
+    catch(e){ if(!/\bum\b/i.test(String(e.message||e))) throw e; ART_UM_FALTA=true; toast('Falta correr sql/2026-10_articulos_um.sql: la U.M. no se guardó (el resto sí).'); }
+  }
+  return sbFetch(path, opts(sinUm(body)));
+}
 function openEditarCostoArt(codigo){
   if(!ROLE.admin){ toast('Solo un administrador puede editar el costo de referencia.'); return; }
   const a=(DIC.articulos||[]).find(x=>x.codigo===codigo); if(!a) return;
@@ -9452,8 +9465,9 @@ function openEditarCostoArt(codigo){
     +'<div class="frow c2"><div class="field"><label>Precio ARS</label><input id="ca_ars" type="number" step="0.01" value="'+(a.costo_ars!=null?a.costo_ars:'')+'"></div>'
     +'<div class="field"><label>Precio USD</label><input id="ca_usd" type="number" step="0.01" value="'+(a.costo_usd!=null?a.costo_usd:'')+'"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Proveedor ref.</label><input id="ca_prov" type="text" value="'+esc(a.costo_proveedor||'')+'"></div>'
-    +'<div class="field"><label>Fecha ref.</label><input id="ca_fecha" type="date" value="'+esc(a.costo_fecha||'')+'"></div></div>';
-  openModal('Editar costo de referencia', body,
+    +'<div class="field"><label>Fecha ref.</label><input id="ca_fecha" type="date" value="'+esc(a.costo_fecha||'')+'"></div></div>'
+    +'<div class="field"><label>Unidad de medida (la que se sugiere al cargar)</label><select id="ca_um"><option value="">— sin asignar —</option>'+panolUmOptionsHtml(a.um||'')+'</select></div>';
+  openModal('Editar costo de referencia y U.M.', body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCostoArt(\''+esc(codigo)+'\')">Guardar</button>');
 }
 window.openEditarCostoArt=openEditarCostoArt;
@@ -9465,13 +9479,14 @@ async function guardarCostoArt(codigo){
     costo_usd: usdRaw===''?null:+usdRaw,
     costo_proveedor: (document.getElementById('ca_prov').value||'').trim(),
     costo_fecha: document.getElementById('ca_fecha').value||null,
+    um: (document.getElementById('ca_um').value||'')||null,
   };
   if(!DEMO_MODE){
-    try{ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(codigo),{method:'PATCH',body:JSON.stringify(obj),prefer:'return=minimal'}); }
+    try{ await sbArtUm('/compras_articulos?codigo=eq.'+encodeURIComponent(codigo),'PATCH',obj,'return=minimal'); }
     catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
   }
-  Object.assign(a,obj);
-  closeModal(); toast('Costo de referencia actualizado'); renderDic();
+  Object.assign(a,obj); a.um=obj.um||''; if(ART_UM_FALTA&&!DEMO_MODE) a.um='';
+  closeModal(); toast('Artículo actualizado'); renderDic();
 }
 window.guardarCostoArt=guardarCostoArt;
 
@@ -9549,17 +9564,20 @@ async function syncAnalizar(){
     const [wbM,wbP]=await Promise.all([_syncReadWb(fm),_syncReadWb(fp)]);
     const rm=_syncSheetRows(wbM, h=>_syncIdx(h,'Código')>=0 && _syncIdx(h,'Descripción')>=0);
     if(!rm) throw new Error('En el maestro no encontré una hoja con columnas "Código" y "Descripción".');
-    const hM=rm[0], iCod=_syncIdx(hM,'Código'), iDesc=_syncIdx(hM,'Descripción'), iAdic=_syncIdx(hM,'Descripción adicional'), iSin=_syncIdx(hM,'Sinónimo');
+    const hM=rm[0], iCod=_syncIdx(hM,'Código'), iDesc=_syncIdx(hM,'Descripción'), iAdic=_syncIdx(hM,'Descripción adicional'), iSin=_syncIdx(hM,'Sinónimo'),
+          iUm=_syncIdx(hM,'Descripción de UM de stock 1 (Precios y costos)','Descripción de UM de stock 1','UM de stock 1');
     const rp=_syncSheetRows(wbP, h=>_syncIdx(h,'Código de artículo')>=0 && _syncIdx(h,'Código de cuenta contable de compras')>=0);
     if(!rp) throw new Error('En la parametrización no encontré "Código de artículo" y "Código de cuenta contable de compras".');
     const hP=rp[0], pCod=_syncIdx(hP,'Código de artículo'), pCta=_syncIdx(hP,'Código de cuenta contable de compras'), pCtaD=_syncIdx(hP,'Descripción de cuenta contable de compras');
     const param={};
     for(let i=1;i<rp.length;i++){ const c=_syncNorm(rp[i][pCod]); if(!c) continue; param[c]={cuenta_cod:_syncNorm(rp[i][pCta]), cuenta:pCtaD>=0?_syncNorm(rp[i][pCtaD]):''}; }
-    const tango={};
+    const tango={}, umSinDic=new Set();
     for(let i=1;i<rm.length;i++){
       const c=_syncNorm(rm[i][iCod]); if(!c) continue;
       const p=param[c]||{cuenta_cod:'',cuenta:''};
-      tango[c]={ codigo:c, descripcion:_syncNorm(rm[i][iDesc]), desc_adicional:iAdic>=0?_syncNorm(rm[i][iAdic]):'', sinonimo:iSin>=0?_syncNorm(rm[i][iSin]):'', cuenta_cod:p.cuenta_cod, cuenta:p.cuenta };
+      const umD=iUm>=0?_syncNorm(rm[i][iUm]):'', um=umD?panolUmResolver(umD):'';
+      if(umD && !um) umSinDic.add(umD);
+      tango[c]={ codigo:c, descripcion:_syncNorm(rm[i][iDesc]), desc_adicional:iAdic>=0?_syncNorm(rm[i][iAdic]):'', sinonimo:iSin>=0?_syncNorm(rm[i][iSin]):'', cuenta_cod:p.cuenta_cod, cuenta:p.cuenta, um };
     }
     const huerfanas=Object.keys(param).filter(c=>!tango[c]);
     const app={}; DIC.articulos.forEach(a=>{ app[_syncNorm(a.codigo)]=a; });
@@ -9572,12 +9590,13 @@ async function syncAnalizar(){
       if(t.descripcion && _syncNorm(a.descripcion)!==t.descripcion) diffs.push(['Descripción', a.descripcion, t.descripcion]);
       if(t.desc_adicional && _syncNorm(a.desc_adicional)!==t.desc_adicional) diffs.push(['Desc. adicional', a.desc_adicional, t.desc_adicional]);
       if(t.cuenta_cod && _syncNorm(a.cuenta_cod)!==t.cuenta_cod) diffs.push(['Cuenta', (a.cuenta_cod||'—')+' '+(a.cuenta||''), t.cuenta_cod+' '+t.cuenta]);
+      if(t.um && !_syncNorm(a.um)) diffs.push(['U.M.', '—', t.um]);   // solo completa las vacías: una U.M. cambiada a mano en la app no se pisa
       if(diffs.length) modificados.push({t, diffs});
     });
     const enAppNoTango=Object.keys(app).filter(c=>!tango[c] && /^GC/i.test(c)).map(c=>app[c]); // export es GC-only: los de venta (PV*/V*) no cuentan como baja
     SYNC_RESULT={nuevos, modificados, sinParam, huerfanas, enAppNoTango, totTango:Object.keys(tango).length};
     msg.style.color='var(--muted)';
-    msg.textContent='Tango: '+SYNC_RESULT.totTango+' artículos · App: '+DIC.articulos.length+' artículos.';
+    msg.textContent='Tango: '+SYNC_RESULT.totTango+' artículos · App: '+DIC.articulos.length+' artículos.'+(iUm<0?' (El maestro no trae la columna de U.M. de stock 1.)':'')+(umSinDic.size?' U.M. sin equivalente en el diccionario de unidades: '+[...umSinDic].join(', ')+'.':'');
     renderSyncReport();
   }catch(e){ setErr('Error: '+(e.message||e)); }
 }
@@ -9598,7 +9617,7 @@ function renderSyncReport(){
      '<table class="grid"><thead><tr><th>Código</th><th>Descripción</th><th>Cuenta</th></tr></thead><tbody>'
      + R.nuevos.slice(0,400).map(t=>'<tr><td><strong>'+esc(t.codigo)+'</strong></td><td>'+esc(t.descripcion)+'</td><td style="font-size:12px">'+(t.cuenta_cod?esc(t.cuenta_cod)+' · '+esc(t.cuenta):'<span class="badge b-rojo">sin cuenta</span>')+'</td></tr>').join('')
      + '</tbody></table>'+_syncMore(R.nuevos.length,400), true);
-  h+=_syncSection('Modificados — cambió Descripción, Desc. adicional o Cuenta', R.modificados.length,
+  h+=_syncSection('Modificados — cambió Descripción, Desc. adicional, Cuenta o falta la U.M.', R.modificados.length,
      '<table class="grid"><thead><tr><th>Código</th><th>Campo</th><th>Antes (app)</th><th>Ahora (Tango)</th></tr></thead><tbody>'
      + R.modificados.slice(0,400).map(m=>m.diffs.map((d,k)=>'<tr><td>'+(k===0?'<strong>'+esc(m.t.codigo)+'</strong>':'')+'</td><td style="font-size:12px">'+esc(d[0])+'</td><td style="font-size:11.5px;color:var(--muted)">'+esc(d[1]||'—')+'</td><td style="font-size:11.5px">'+esc(d[2]||'—')+'</td></tr>').join('')).join('')
      + '</tbody></table>'+_syncMore(R.modificados.length,400), true);
@@ -9630,19 +9649,23 @@ async function syncAplicar(){
   const btn=document.getElementById('syncAplicarBtn'); if(btn){ btn.disabled=true; btn.textContent='Aplicando…'; }
   try{
     if(nuevos.length){
-      const payload=nuevos.map(t=>({codigo:t.codigo, descripcion:t.descripcion, desc_adicional:t.desc_adicional, sinonimo:t.sinonimo, cuenta_cod:t.cuenta_cod, cuenta:t.cuenta}));
-      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbFetch('/compras_articulos',{method:'POST', body:JSON.stringify(payload.slice(i,i+500))}); } }
-      payload.forEach(p=>{ if(!DIC.articulos.some(a=>_syncNorm(a.codigo)===p.codigo)) DIC.articulos.push({codigo:p.codigo, descripcion:p.descripcion, desc_adicional:p.desc_adicional, sinonimo:p.sinonimo, cuenta_cod:p.cuenta_cod, cuenta:p.cuenta}); });
+      const payload=nuevos.map(t=>({codigo:t.codigo, descripcion:t.descripcion, desc_adicional:t.desc_adicional, sinonimo:t.sinonimo, cuenta_cod:t.cuenta_cod, cuenta:t.cuenta, um:t.um||null}));
+      if(!DEMO_MODE){ for(let i=0;i<payload.length;i+=500){ await sbArtUm('/compras_articulos','POST',payload.slice(i,i+500)); } }
+      payload.forEach(p=>{ if(!DIC.articulos.some(a=>_syncNorm(a.codigo)===p.codigo)) DIC.articulos.push({codigo:p.codigo, descripcion:p.descripcion, desc_adicional:p.desc_adicional, sinonimo:p.sinonimo, cuenta_cod:p.cuenta_cod, cuenta:p.cuenta, um:ART_UM_FALTA?'':(p.um||'')}); });
     }
     let okMod=0;
-    for(const m of modificados){
-      const t=m.t;
-      const upd={descripcion:t.descripcion, desc_adicional:t.desc_adicional};
-      if(t.cuenta_cod){ upd.cuenta_cod=t.cuenta_cod; upd.cuenta=t.cuenta; } // nunca borra una cuenta existente con un vacío
-      if(!DEMO_MODE){ await sbFetch('/compras_articulos?codigo=eq.'+encodeURIComponent(t.codigo),{method:'PATCH', body:JSON.stringify(upd)}); }
-      const a=DIC.articulos.find(x=>_syncNorm(x.codigo)===t.codigo);
-      if(a){ a.descripcion=t.descripcion; a.desc_adicional=t.desc_adicional; if(t.cuenta_cod){ a.cuenta_cod=t.cuenta_cod; a.cuenta=t.cuenta; } }
-      okMod++;
+    for(let i=0;i<modificados.length;i+=10){          // de a 10 en paralelo (antes de a uno) y con avance
+      if(btn) btn.textContent='Aplicando '+Math.min(i+10,modificados.length)+' de '+modificados.length+'…';
+      await Promise.all(modificados.slice(i,i+10).map(async m=>{
+        const t=m.t, a=DIC.articulos.find(x=>_syncNorm(x.codigo)===t.codigo);
+        const upd={descripcion:t.descripcion, desc_adicional:t.desc_adicional};
+        if(t.cuenta_cod){ upd.cuenta_cod=t.cuenta_cod; upd.cuenta=t.cuenta; } // nunca borra una cuenta existente con un vacío
+        const poneUm=!!(t.um && !_syncNorm(a&&a.um));                             // solo completa la U.M. si estaba vacía
+        if(poneUm) upd.um=t.um;
+        if(!DEMO_MODE){ await sbArtUm('/compras_articulos?codigo=eq.'+encodeURIComponent(t.codigo),'PATCH',upd); }
+        if(a){ a.descripcion=t.descripcion; a.desc_adicional=t.desc_adicional; if(t.cuenta_cod){ a.cuenta_cod=t.cuenta_cod; a.cuenta=t.cuenta; } if(poneUm && !ART_UM_FALTA) a.um=t.um; }
+        okMod++;
+      }));
     }
     DIC.articulos.sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
     closeModal();
@@ -10792,10 +10815,11 @@ function paintDic(){
     rows.forEach(r=>{ r._tc=(r.costo_ars&&r.costo_usd)?r.costo_ars/r.costo_usd:null; });
     rows=dicApplySort('articulos', rows);
     const artCap=DIC_SHOWALL.articulos?rows.length:500;
-    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+dicTh('articulos','Precio ARS','costo_ars')+dicTh('articulos','Precio USD','costo_usd')+dicTh('articulos','TC','_tc')+dicTh('articulos','Proveedor ref.','costo_proveedor')+dicTh('articulos','Fecha ref.','costo_fecha')+(ROLE.admin?'<th></th>':'')+'</tr></thead><tbody>'
+    const artTbl='<div class="dic-scroll"><table class="grid"><thead><tr>'+dicTh('articulos','Código','codigo')+dicTh('articulos','Descripción','descripcion')+dicTh('articulos','Descripción adicional','desc_adicional')+dicTh('articulos','Sinónimo','sinonimo')+dicTh('articulos','U.M.','um')+dicTh('articulos','N° cuenta','cuenta_cod')+dicTh('articulos','Cuenta','cuenta')+dicTh('articulos','Precio ARS','costo_ars')+dicTh('articulos','Precio USD','costo_usd')+dicTh('articulos','TC','_tc')+dicTh('articulos','Proveedor ref.','costo_proveedor')+dicTh('articulos','Fecha ref.','costo_fecha')+(ROLE.admin?'<th></th>':'')+'</tr></thead><tbody>'
       +rows.slice(0,artCap).map(r=>'<tr><td><strong>'+esc(r.codigo)+'</strong></td><td>'+esc(r.descripcion)+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.desc_adicional||'—')+'</td>'
         +'<td style="font-size:11.5px">'+esc(r.sinonimo||'—')+'</td>'
+        +'<td style="font-size:11.5px">'+esc(r.um||'—')+'</td>'
         +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.cuenta_cod||'—')+'</td>'
         +'<td style="font-size:12px">'+esc(r.cuenta||'—')+'</td>'
         +'<td style="text-align:right;font-size:11.5px">'+(r.costo_ars?('$ '+fmtNum(r.costo_ars,2)):'—')+'</td>'
@@ -13412,10 +13436,13 @@ async function reloadDicts(background){
       // reciente: si la columna todavía no existe en producción, cae al select clásico.
       (async()=>{ try{
         let arts;
-        try{ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }
-        catch(colErr){ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
+        try{ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor,um&order=codigo.asc'); }
+        catch(umErr){
+          try{ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta,costo_ars,costo_usd,costo_fecha,costo_proveedor&order=codigo.asc'); }   // todavía sin la columna um
+          catch(colErr){ arts = await sbFetchAll('/compras_articulos?select=codigo,descripcion,desc_adicional,sinonimo,cuenta_cod,cuenta&order=codigo.asc'); }
+        }
         if(arts && arts.length) DIC.articulos = arts.map(a=>({codigo:a.codigo, descripcion:a.descripcion||'', desc_adicional:a.desc_adicional||'', sinonimo:a.sinonimo||'', cuenta_cod:a.cuenta_cod||'', cuenta:a.cuenta||'',
-          costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||''}));
+          costo_ars:a.costo_ars!=null?+a.costo_ars:null, costo_usd:a.costo_usd!=null?+a.costo_usd:null, costo_fecha:a.costo_fecha||'', costo_proveedor:a.costo_proveedor||'', um:a.um||''}));
       }catch(e){ /* queda el ejemplo embebido */ } })(),
       // Depósitos: diccionario nuevo, sincronizado desde Tango
       (async()=>{ try{
