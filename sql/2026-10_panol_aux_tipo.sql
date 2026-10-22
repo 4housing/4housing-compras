@@ -1,0 +1,13 @@
+-- =====================================================================
+-- Pañol · tipo de auxiliar de cada erogación (oct 2026)
+-- Proyecto Supabase: wcpkpwxhqdcdljfwzcmy. Correr A MANO en el SQL Editor,
+-- ANTES de publicar el index.html que usa esta columna.
+--
+-- Qué hace (aditivo): agrega compras_panol_egresos.aux_tipo = tipo de auxiliar de Tango al que pertenece
+-- aux_modulo ('4' contenedor/módulo, '5' mant. bienes de uso, '6' muebles y útiles, '7' herramientas, '8' rodados).
+-- Según la clasificación de destino, la app pide el auxiliar de ese tipo (MANMOD / MANTRF / DTM → 4, MANBSU → 5, ...).
+-- Las erogaciones anteriores quedan con aux_tipo vacío: la app lo toma como '4' cuando tienen aux_modulo.
+--
+-- Reversible: alter table public.compras_panol_egresos drop column aux_tipo;
+-- =====================================================================
+alter table public.compras_panol_egresos add column if not exists aux_tipo text;
