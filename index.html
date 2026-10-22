@@ -2739,6 +2739,12 @@ const PANOL_MODULO_GENERICO='GENERICO MODULO';
 const PANOL_PROCESOS=['HABITUAL','RE TRABAJO','DESVIO'];
 const PANOL_ALERTA_SIN_ALTA='ARTICULO SIN ALTA';
 let PANOL_LAST_DEP='';
+// Depósito por defecto mientras no se defina el de cada artículo: 02 · Ferretería industrial (si no existe ese código, el primero habilitado que diga FERRETER…)
+function panolDepDefecto(){
+  const l=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
+  const d=l.find(x=>String(x.codigo).trim()==='02')||l.find(x=>/FERRETER/i.test(x.descripcion||''));
+  return d?d.codigo:'';
+}
 
 function panolDestinoPideModulo(cod){ const c=String(cod||'').toUpperCase().trim(); return PANOL_DESTINOS_MODULO.some(d=>c===d||c.startsWith(d+' ')); }
 function panolFinMes(per){ const y=Math.floor(per/100), m=per%100; return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10); }
@@ -2936,7 +2942,7 @@ function openPanolErogForm(id){
   if(cur && cur.exportado){ toast('Esta erogación ya se exportó a Tango; no se puede editar.'); return; }
   if(cur && panolBloqueoCierre(cur.periodo)) return;
   const hoy=new Date().toISOString().slice(0,10), ahora=new Date().toTimeString().slice(0,5);
-  const dep0=cur?cur.cod_deposito:PANOL_LAST_DEP;
+  const dep0=cur?cur.cod_deposito:(PANOL_LAST_DEP||panolDepDefecto());
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
   const galList=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre);
   if(cur&&cur.galpon&&!galList.includes(cur.galpon)) galList.push(cur.galpon);   // si el valor guardado ya no está activo, se conserva
@@ -3445,7 +3451,7 @@ function ppDesdeEgreso(e){
   return r;
 }
 function openPanolPlanilla(){
-  PANOL_PLAN={rows:[ppNuevaFila()], dep:PANOL_LAST_DEP||''};
+  PANOL_PLAN={rows:[ppNuevaFila()], dep:PANOL_LAST_DEP||panolDepDefecto()};
   renderPanol();
 }
 window.openPanolPlanilla=openPanolPlanilla;
