@@ -2885,7 +2885,9 @@ function anVistaArticulos(rows){
   const cols=[{k:'a',h:'Artículo'}].concat(cant?[{k:'um',h:'U.M.'}]:[]).concat(colsG.map((g,i)=>({k:'g'+i,h:g,num:1,blank:1,dec:cant?2:2}))).concat([{k:'t',h:'Total',num:1}]);
   const tr=list.map(o=>{ const r={a:o.a,um:[...o.um].filter(Boolean).join('/')||'',t:o.t}; colsG.forEach((g,i)=>{ r['g'+i]=o.c[g]||0; }); return r; });
   const tot={a:'TOTAL',t:list.reduce((a,o)=>a+o.t,0)}; colsG.forEach((g,i)=>{ tot['g'+i]=list.reduce((a,o)=>a+(o.c[g]||0),0); });
-  return '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(cant?'Cantidad entregada':'Importe en '+anMonLbl())+' de cada artículo (filas) en cada '+({dest:'destino',cat:'categoría',eerr:'rubro EERR'})[PANOL_AN.agr]+' (columnas, los '+top.length+' más grandes'+(gs.length>top.length?', el resto en "(otros)"':'')+').'+(cortado?' Se muestran los 400 artículos de mayor total.':'')+'</div>'
+  const seg=(v,l)=>'<button class="btn sm'+(PANOL_AN.med===v?'':' ghost')+'" onclick="anSet(\'med\',\''+v+'\')">'+l+'</button>';
+  return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span style="font-size:12.5px;font-weight:600">Ver:</span>'+seg('imp','Monto ('+anMonLbl()+')')+seg('cant','Cantidad de unidades')+'</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(cant?'Cantidad entregada':'Importe en '+anMonLbl())+' de cada artículo (filas) en cada '+({dest:'destino',cat:'categoría',eerr:'rubro EERR'})[PANOL_AN.agr]+' (columnas, los '+top.length+' más grandes'+(gs.length>top.length?', el resto en "(otros)"':'')+').'+(cortado?' Se muestran los 400 artículos de mayor total.':'')+'</div>'
     +anTabla('tblAn','Artículos x destino',cols,tr,tot);
 }
 function anVistaSolicitantes(rows){
