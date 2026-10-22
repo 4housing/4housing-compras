@@ -162,6 +162,11 @@ table.grid.tbl-angosta td{padding:6px 6px;}
 .idx-evol-tbl table.grid th{white-space:normal;padding:7px 8px;line-height:1.3;}
 .idx-evol-tbl table.grid td{white-space:nowrap;padding:7px 8px;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
+/* Tablas de Pañol: celdas en una sola línea y columnas lo más angostas posible; los títulos pueden ir en 2 renglones */
+table.grid.tbl-ajustada td{white-space:nowrap;}
+table.grid.tbl-ajustada th{white-space:normal!important;line-height:1.25;}
+table.grid.tbl-ajustada td.tx-largo{max-width:340px;overflow:hidden;text-overflow:ellipsis;}
+.mon{font-size:.82em;opacity:.7;margin-right:2px;font-weight:500;}
 .iconbtn{background:none;border:1px solid var(--line-strong);border-radius:7px;padding:5px 7px;color:var(--muted);display:inline-flex;}
 .iconbtn svg{width:15px;height:15px;}
 .iconbtn:hover{color:var(--olive-deep);border-color:var(--olive);}
@@ -2803,7 +2808,7 @@ function anTabla(id, titulo, cols, rows, total){
   const S=PANOL_AN.sort;
   if(S){ const c=cols.find(x=>x.k===S.k); if(c) rows=rows.slice().sort((a,b)=>{ const x=a[S.k], y=b[S.k]; return (c.num?((+x||0)-(+y||0)):String(x==null?'':x).localeCompare(String(y==null?'':y),'es'))*S.dir; }); }
   _AN_LAST={titulo, cols, rows, total};
-  const cell=(c,v)=>c.num?((c.blank&&!(+v))?'':fmtNum(v,c.dec==null?2:c.dec)):esc(v==null?'':v);
+  const cell=(c,v)=>c.num?((c.blank&&!(+v))?'':(c.mon?panolMon(c.mon,fmtNum(v,2)):fmtNum(v,c.dec==null?2:c.dec))):esc(v==null?'':v);
   const th=cols.map(c=>'<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="anSort(\''+c.k+'\')">'+esc(c.h)+(S&&S.k===c.k?(S.dir===1?' ▲':' ▼'):'')+'</th>').join('');
   const tr=rows.map(r=>'<tr>'+cols.map(c=>'<td'+(c.num?' style="text-align:right"':'')+'>'+cell(c,r[c.k])+'</td>').join('')+'</tr>').join('');
   const tf=total?'<tfoot><tr style="font-weight:700;background:var(--bg-soft,#f4f6f4)">'+cols.map(c=>'<td'+(c.num?' style="text-align:right"':'')+'>'+cell(c,total[c.k])+'</td>').join('')+'</tr></tfoot>':'';
@@ -2824,7 +2829,7 @@ function anVistaResumen(rows){
   const g=anSumar(rows,anGrupo,anMonto), art=anSumar(rows,anArtTxt,anMonto), totV=g.reduce((a,x)=>a+x.v,0);
   const kpi=(l,v)=>'<div style="flex:1;min-width:150px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 14px;background:#fff"><div style="font-size:11px;color:var(--muted)">'+l+'</div><div style="font-size:18px;font-weight:700">'+v+'</div></div>';
   const ars=rows.reduce((a,r)=>a+(+r.total_ars||0),0), usd=rows.reduce((a,r)=>a+(+r.total_usd||0),0);
-  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]},{k:'n',h:'Movimientos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1},{k:'usd',h:'Total USD',num:1},{k:'pct',h:'% del total',num:1,dec:1}];
+  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]},{k:'n',h:'Movimientos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'},{k:'pct',h:'% del total',num:1,dec:1}];
   const tr=g.map(x=>({g:x.k,n:x.n,ars:x.ars,usd:x.usd,pct:totV?x.v/totV*100:0}));
   return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+kpi('Total ARS','$ '+fmtNum(ars,2))+kpi('Total USD','US$ '+fmtNum(usd,2))+kpi('Movimientos',fmtNum(rows.length,0))+kpi('Destinos / grupos',g.length)+kpi('Artículos distintos',art.length)+'</div>'
     +'<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px"><div style="flex:1;min-width:360px"><h4 style="margin:0 0 6px;font-size:13px">Total por '+({dest:'destino',cat:'categoría',eerr:'rubro EERR'})[PANOL_AN.agr]+' ('+anMonLbl()+')</h4>'+anBarras(g.slice(0,15).map(x=>({l:x.k,v:x.v})))+'</div>'
@@ -2857,7 +2862,7 @@ function anVistaArticulos(rows){
 }
 function anVistaSolicitantes(rows){
   const g=anSumar(rows,r=>r.operario||'(sin operario)',anMonto);
-  const cols=[{k:'o',h:'Solicitante'},{k:'n',h:'Movimientos',num:1,dec:0},{k:'art',h:'Artículos distintos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1},{k:'usd',h:'Total USD',num:1},{k:'dest',h:'Destino donde más retira'}];
+  const cols=[{k:'o',h:'Solicitante'},{k:'n',h:'Movimientos',num:1,dec:0},{k:'art',h:'Artículos distintos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'},{k:'dest',h:'Destino donde más retira'}];
   const tr=g.map(x=>{ const rr=rows.filter(r=>(r.operario||'(sin operario)')===x.k), d=anSumar(rr,r=>anDestTxt(r.proyecto_cod),anMonto)[0];
     return {o:x.k,n:x.n,art:new Set(rr.map(anArtTxt)).size,ars:x.ars,usd:x.usd,dest:d?d.k:''}; });
   return '<h4 style="margin:0 0 6px;font-size:13px">Quién retira más ('+anMonLbl()+')</h4>'+anBarras(g.slice(0,15).map(x=>({l:x.k,v:x.v})),AN_COLORS[2])+'<div style="height:12px"></div>'
@@ -2865,7 +2870,7 @@ function anVistaSolicitantes(rows){
 }
 function anVistaDetalle(rows){
   const l=rows.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id)), cortado=l.length>1000;
-  const cols=[{k:'f',h:'Fecha'},{k:'d',h:'Destino'},{k:'a',h:'Artículo'},{k:'q',h:'Cantidad',num:1},{k:'um',h:'U.M.'},{k:'o',h:'Solicitante'},{k:'ars',h:'Total ARS',num:1},{k:'usd',h:'Total USD',num:1}];
+  const cols=[{k:'f',h:'Fecha'},{k:'d',h:'Destino'},{k:'a',h:'Artículo'},{k:'q',h:'Cantidad',num:1},{k:'um',h:'U.M.'},{k:'o',h:'Solicitante'},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'}];
   const tr=l.slice(0,1000).map(r=>({f:fmtDate(r.fecha),d:anDestTxt(r.proyecto_cod),a:anArtTxt(r),q:+r.cantidad||0,um:r.um||'',o:r.operario||'',ars:+r.total_ars||0,usd:+r.total_usd||0}));
   return (cortado?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Se muestran los primeros 1.000 de '+l.length+' movimientos (el Excel exportado trae los mismos 1.000: acotá con los filtros).</div>':'')
     +anTabla('tblAn','Detalle',cols,tr,{f:'TOTAL',ars:rows.reduce((a,r)=>a+(+r.total_ars||0),0),usd:rows.reduce((a,r)=>a+(+r.total_usd||0),0)});
@@ -3157,6 +3162,10 @@ function panolAlertaDe(p, sinAlta, opSinAlta){
 const PANOL_ALERTAS_APROBABLES=['REVISAR vs TANGO','REVISAR TC','FECHA POSTERIOR AL MES'];
 let PANOL_AUTO_APROBAR=true;
 function panolUsuario(){ return (AUTH_USER&&AUTH_USER.email)||'demo'; }
+const panolMon=(sym,txt)=>'<span class="mon">'+sym+'</span>'+txt;
+const PANOL_PROC_ABREV={'HABITUAL':'H','RE TRABAJO':'R','DESVIO':'D'};
+// Galpón que se propone cuando no se indica otro (el que esté en el diccionario y diga HUELLA 610)
+function panolGalDefecto(){ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false); const g=l.find(x=>/HUELLA\s*610|^HUE\.?\s*610/i.test(x.nombre||'')); return g?g.nombre:''; }
 function panolCsv(v){ return String(v||'').split(',').map(x=>x.trim()).filter(Boolean); }
 function panolOkPrevio(e){ const l=panolCsv(e&&e.alerta_ok); return l.length?{lista:l, precio:+e.alerta_ok_precio||0, por:e.alerta_ok_por||'', en:e.alerta_ok_en||''}:null; }
 function panolAplicarAprobacion(all, precio, auto, previo){
@@ -3294,13 +3303,13 @@ function renderPanolErog(){
   const pMes=String(PANOL_PERIODO).slice(4,6), pAnio=String(PANOL_PERIODO).slice(0,4);
   const periodoInput='<input type="month" value="'+pAnio+'-'+pMes+'" onchange="setPanolPeriodo(this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:4px 6px;font-size:12.5px">';
   const histN=(DIC.hist_precios||[]).length;
-  const num=v=>v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
+  const num=(v,sym)=>v?panolMon(sym,fmtNum(v,2)):'<span style="color:var(--muted)">—</span>';
   const filas=shown.length ? shown.map(r=>'<tr'+(r.alerta?' style="background:#fff6f4"':'')+'>'
       +'<td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.horario||'')+'</td>'
-      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(panolAuxFila(r))+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
-      +'<td>'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.operario||'')+'</td>'
-      +'<td style="text-align:right">'+num(r.costo_unit_ars)+'</td><td style="text-align:right">'+num(r.costo_unit_usd)+'</td>'
-      +'<td style="text-align:right">'+num(r.total_ars)+'</td><td style="text-align:right">'+num(r.total_usd)+'</td>'
+      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(panolAuxFila(r))+'</td><td>'+esc(r.galpon||'')+'</td><td style="font-size:10px;text-align:center" title="'+esc(r.proceso||'')+'">'+esc(PANOL_PROC_ABREV[r.proceso]||r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
+      +'<td class="tx-largo" title="'+esc(panolErogArt(r))+'">'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.operario||'')+'</td>'
+      +'<td style="text-align:right">'+num(r.costo_unit_ars,'$')+'</td><td style="text-align:right">'+num(r.costo_unit_usd,'US$')+'</td>'
+      +'<td style="text-align:right">'+num(r.total_ars,'$')+'</td><td style="text-align:right">'+num(r.total_usd,'US$')+'</td>'
       +'<td title="'+esc([r.precio_proveedor,r.precio_oc?('OC '+r.precio_oc):'',r.precio_fecha_ref?fmtDate(r.precio_fecha_ref):''].filter(Boolean).join(' · '))+'">'+esc(r.fuente_precio||'')+'</td>'
       +'<td>'+panolAlertaBadges(r)+'</td>'
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
@@ -3320,7 +3329,7 @@ function renderPanolErog(){
       +'<button class="btn ghost sm" onclick="openPanolPlanilla()">Planilla de carga</button>'
       +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
       +aviso
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid" id="tblPanolErog"><thead><tr>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid tbl-ajustada" id="tblPanolErog"><thead><tr>'
       +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Auxiliar',null,'aux')+_pnTh('Galpón',null,'gal')
       +_pnTh('Proceso','proc','proc')+_pnTh('SOLP',null,'solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad',null,'cant')+_pnTh('Operario','oper','oper')
       +_pnTh('Precio ARS',null,'pars')+_pnTh('Precio USD',null,'pusd')+_pnTh('Total ARS',null,'tars')+_pnTh('Total USD',null,'tusd')
@@ -3362,7 +3371,7 @@ function openPanolErogForm(id){
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
   const galList=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre);
   if(cur&&cur.galpon&&!galList.includes(cur.galpon)) galList.push(cur.galpon);   // si el valor guardado ya no está activo, se conserva
-  const galOpts='<option value="">— ninguno —</option>'+galList.map(n=>'<option value="'+esc(n)+'"'+(cur&&cur.galpon===n?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const galOpts='<option value="">— ninguno —</option>'+galList.map(n=>'<option value="'+esc(n)+'"'+((cur?cur.galpon===n:n===panolGalDefecto())?' selected':'')+'>'+esc(n)+'</option>').join('');
   const procOpts=PANOL_PROCESOS.map(p=>'<option'+((cur?cur.proceso:'HABITUAL')===p?' selected':'')+'>'+p+'</option>').join('');
   const artVal=cur?(cur.cod_articulo?panolArtTxt(cur.cod_articulo):(cur.articulo_libre||'')):'';
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
@@ -3914,6 +3923,7 @@ const PP_COLS={
 function ppNuevaFila(base){
   const r={k:++_PP_SEQ, id:null, fecha:'', horario:'', art:'', cant:'', um:'UNI', dest:'', destCod:'', serie:'', serieTxt:'', proceso:'HABITUAL', galpon:'', solp:'', oper:'', dep:'', coment:'', manual:null, del:false, orig:null};
   if(base) PP_COPIA.forEach(c=>{ r[c]=base[c]; });
+  if(!r.galpon) r.galpon=panolGalDefecto();
   else{ r.fecha=new Date().toISOString().slice(0,10); r.horario=new Date().toTimeString().slice(0,5); }
   if(!r.dep && PANOL_PLAN && PANOL_PLAN.dep) r.dep=PANOL_PLAN.dep;   // cada fila muestra su depósito (el de la lista de arriba mientras no se cambie a mano)
   return r;
@@ -3980,7 +3990,7 @@ function ppResHtml(r,c0){
 function ppPrecioHtml(r,c,campo){
   if(ppVacia(r)||!c.pr) return '';
   const v=+c.pr[campo]||0;
-  return v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
+  return v?panolMon(campo==='costo_unit_usd'?'US$':'$',fmtNum(v,2)):'<span style="color:var(--muted)">—</span>';
 }
 function ppRecalc(k,sinResumen){
   const r=ppFila(k); if(!r) return;
@@ -4162,7 +4172,7 @@ function renderPanolPlanilla(){
         +'<button class="btn ghost sm" onclick="ppFiltroLimpiar()">Limpiar filtros</button>'
         +'<span id="ppFiltroInfo" style="font-size:12px;color:var(--muted)"></span>'
         +'<span style="font-size:11.5px;color:var(--muted)">⤓ en un título copia el primer valor a todas las filas. Nada se guarda hasta "Revisar y guardar".</span></div>'
-      +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid" id="tblPanolPlan"><thead><tr><th>#</th>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolPlan"><thead><tr><th>#</th>'
         +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo / auxiliar','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio ARS')+th('Precio USD')+th('Alarma')+'<th></th>'
       +'</tr></thead><tbody>'+PANOL_PLAN.rows.map(ppRowHtml).join('')+'</tbody></table></div></div>';
   PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true));
