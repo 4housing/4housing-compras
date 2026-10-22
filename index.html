@@ -270,9 +270,10 @@ table.grid.usub .row-actions{gap:4px;}
 @keyframes busyslide{0%{left:-40%}100%{left:100%}}
 .busy-pill{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;background:#2f3a26;color:#fff;padding:8px 16px;border-radius:999px;font-size:12.5px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.22);opacity:0;pointer-events:none;transition:opacity .2s;}
 .busy-pill.on{opacity:1;}
-.ppin{width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:5px;padding:4px 6px;font-size:12px;background:#fff;font-family:inherit;}
+.ppin{width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:5px;padding:3px 5px;font-size:11px;background:#fff;font-family:inherit;}
 .ppin:focus{outline:2px solid #9bb98f;}
-#tblPanolPlan td{padding:3px 4px;}
+#tblPanolPlan td{padding:2px 3px;font-size:11px;}
+#tblPanolPlan th{font-size:9.5px;padding:6px 4px;}
 /* ===== TOAST ===== */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -3523,11 +3524,11 @@ function ppRowHtml(r,i){
   const deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
   return '<tr id="pp_tr_'+K+'">'
     +'<td style="white-space:nowrap;color:var(--muted)">'+(i+1)+' <span id="'+id('n')+'" style="font-size:10.5px"></span></td>'
-    +inp('fecha','date',r.fecha,'onchange="ppSet('+K+',\'fecha\',this.value)"',120)
-    +inp('horario','time',r.horario,'onchange="ppSet('+K+',\'horario\',this.value)"',90)
+    +inp('fecha','date',r.fecha,'onchange="ppSet('+K+',\'fecha\',this.value)"',108)
+    +inp('horario','time',r.horario,'onchange="ppSet('+K+',\'horario\',this.value)"',78)
     +'<td><input class="ppin" id="'+id('art')+'" value="'+esc(r.art)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:260px" placeholder="código, nombre o sinónimo" onfocus="comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" oninput="ppSet('+K+',\'art\',this.value);comboPanolArt(\''+id('art')+'\',()=>ppSet('+K+',\'art\',document.getElementById(\''+id('art')+'\').value))" onblur="comboHideDelayed()"></td>'
     +inp('cant','number',r.cant,'step="0.01" oninput="ppSet('+K+',\'cant\',this.value)"',70)
-    +sel('um',panolUmOptionsHtml(r.um),r.um,'onchange="ppSetUm('+K+',this.value)"')
+    +sel('um',panolUmOptionsHtml(r.um),r.um,'style="min-width:112px" onchange="ppSetUm('+K+',this.value)"')
     +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="IF / obra" onfocus="panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)"></td>'
     +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
     +sel('proceso',PANOL_PROCESOS.map(p=>opt(p,p,r.proceso)).join(''),r.proceso,'onchange="ppSet('+K+',\'proceso\',this.value)"')
