@@ -3292,6 +3292,15 @@ function renderPanolErog(){
   const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO);
   xlfRegister('pnl',{ rows:()=>base, onChange:renderPanol, dateVal:r=>String(r.fecha||'').slice(0,10),
     val:(r,col)=>{
+      if(col==='hora') return r.horario||'(sin hora)';
+      if(col==='aux') return panolAuxFila(r)||'(sin auxiliar)';
+      if(col==='gal') return r.galpon||'(sin galpón)';
+      if(col==='solp') return r.solp||'(sin SOLP)';
+      if(col==='cant') return fmtNum(r.cantidad,2)+' '+(r.um||'');
+      if(col==='pars') return fmtNum(r.costo_unit_ars,2);
+      if(col==='pusd') return fmtNum(r.costo_unit_usd,2);
+      if(col==='tars') return fmtNum(r.total_ars,2);
+      if(col==='tusd') return fmtNum(r.total_usd,2);
       if(col==='dest') return r.proyecto_cod||'(sin destino)';
       if(col==='serie') return r.serie||'(sin módulo)';
       if(col==='proc') return r.proceso||'(sin proceso)';
@@ -3341,9 +3350,9 @@ function renderPanolErog(){
       +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
       +aviso
       +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid tbl-ajustada" id="tblPanolErog"><thead><tr>'
-      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Auxiliar',null,'aux')+_pnTh('Galpón',null,'gal')
-      +_pnTh('Proceso','proc','proc')+_pnTh('SOLP',null,'solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad',null,'cant')+_pnTh('Operario','oper','oper')
-      +_pnTh('Precio ARS',null,'pars')+_pnTh('Precio USD',null,'pusd')+_pnTh('Total ARS',null,'tars')+_pnTh('Total USD',null,'tusd')
+      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora','hora','hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Auxiliar','aux','aux')+_pnTh('Galpón','gal','gal')
+      +_pnTh('Proceso','proc','proc')+_pnTh('SOLP','solp','solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad','cant','cant')+_pnTh('Operario','oper','oper')
+      +_pnTh('Precio ARS','pars','pars')+_pnTh('Precio USD','pusd','pusd')+_pnTh('Total ARS','tars','tars')+_pnTh('Total USD','tusd','tusd')
       +_pnTh('Fuente precio','fuente','fuente')+_pnTh('Alarma','alerta','alerta')+_pnTh('Exportado','exp','exp')+'<th style="width:80px"></th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
 }
 window.renderPanolErog=renderPanolErog;
