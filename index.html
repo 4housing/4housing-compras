@@ -9348,8 +9348,8 @@ function exportDicTab(){
     let rows=SERIES_ACTIVAS.filter(r=>r.familia==='otros').filter(r=>dicRowPass('series',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('series',rows);
-    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Comentario','Adicional 2','Código de Barras','Adicional 1','Clasificación','Auxiliar','Partida','N° Despacho'],
-      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.comentario,r.adicional_2,r.codigo_barras,r.adicional_1,r._clasif||'—',r._aux||'—',r.partida,r.numero_despacho])];
+    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Adicional 1','Comentario','Adicional 2','Código de Barras','Clasificación','Auxiliar','Partida','N° Despacho'],
+      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.adicional_1,r.comentario,r.adicional_2,r.codigo_barras,r._clasif||'—',r._aux||'—',r.partida,r.numero_despacho])];
     sheetName='Series activas'; fname='Diccionario_SeriesActivas_'+hoy+'.xlsx';
   } else if(DIC_TAB==='clasif'){
     const idxAuxCod=_clasifCodigoAGrupos(); _clasifApplyRules();
@@ -10919,17 +10919,17 @@ function paintDic(){
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Series activas</h3><span class="meta">'+rows.length+' de '+base.length+'</span>'+seriesTag
       +'<span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center">'+limpiarBtn+syncBtn+'</span></div>'
       +'<div class="dic-scroll"><table class="grid" style="font-size:9.5px;table-layout:auto;width:100%">'
-      +'<thead><tr>'+dicTh('series','Depósito','cod_deposito')+dicTh('series','Descripción depósito','desc_deposito')+dicTh('series','Artículo','cod_articulo')+dicTh('series','Descripción','descripcion')+dicTh('series','Serie','serie')+dicTh('series','Comentario','comentario')+dicTh('series','Adic. 2','adicional_2')+dicTh('series','Cód. Barras','codigo_barras')+dicTh('series','Adic. 1','adicional_1')+dicTh('series','Clasificación','_clasif')+dicTh('series','Auxiliar','_aux')+'</tr></thead><tbody>'
+      +'<thead><tr>'+dicTh('series','Depósito','cod_deposito')+dicTh('series','Descripción depósito','desc_deposito')+dicTh('series','Artículo','cod_articulo')+dicTh('series','Descripción','descripcion')+dicTh('series','Serie','serie')+dicTh('series','Adic. 1','adicional_1')+dicTh('series','Comentario','comentario')+dicTh('series','Adic. 2','adicional_2')+dicTh('series','Cód. Barras','codigo_barras')+dicTh('series','Clasificación','_clasif')+dicTh('series','Auxiliar','_aux')+'</tr></thead><tbody>'
       +rows.slice(0,500).map(r=>'<tr>'
         +'<td style="'+nowrap+'">'+esc(r.cod_deposito||'—')+'</td>'
         +'<td style="font-size:10.5px">'+esc(r.desc_deposito||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.cod_articulo||'—')+'</td>'
         +'<td style="'+nowrap+'" title="'+esc(r.descripcion||'')+'">'+esc(r.descripcion||'—')+'</td>'
         +'<td style="'+nowrap+'"><strong>'+esc(r.serie)+'</strong></td>'
+        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)" title="'+esc(r.comentario||'')+'">'+esc(r.comentario||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_2||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.codigo_barras||'—')+'</td>'
-        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+(r._clasif==='—'?';color:#b3261e':'')+'">'+esc(r._clasif)+'</td>'
         +'<td style="'+nowrap+';color:'+(r._aux==='—'?'#b3261e':'var(--muted)')+'">'+esc(r._aux)+'</td></tr>').join('')+'</tbody></table></div>'
       +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);padding:8px 15px">Mostrando 500 de '+rows.length+'. Usá el buscador o los filtros de columna (▼).</div>':'')
