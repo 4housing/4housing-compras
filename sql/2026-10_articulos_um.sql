@@ -1,0 +1,13 @@
+-- =====================================================================
+-- Artículos · unidad de medida por defecto (oct 2026)
+-- Proyecto Supabase: wcpkpwxhqdcdljfwzcmy. Correr A MANO en el SQL Editor,
+-- ANTES de publicar el index.html que usa esta columna.
+--
+-- Qué hace (aditivo): agrega compras_articulos.um = código de la unidad de medida por defecto del artículo
+-- (de compras_unidades_medida). La app la completa al sincronizar el maestro de Tango (columna
+-- "Descripción de UM de stock 1 (Precios y costos)") y se puede cambiar a mano; Pañol la sugiere al cargar una erogación.
+-- Requiere haber corrido antes sql/2026-10_unidades_medida.sql (para traducir "UNIDAD" -> UNI, etc.).
+--
+-- Reversible: alter table public.compras_articulos drop column um;
+-- =====================================================================
+alter table public.compras_articulos add column if not exists um text;
