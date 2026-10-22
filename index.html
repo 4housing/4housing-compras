@@ -3174,8 +3174,8 @@ let PANOL_AUTO_APROBAR=true;
 function panolUsuario(){ return (AUTH_USER&&AUTH_USER.email)||'demo'; }
 const panolMon=(sym,txt)=>'<span class="mon">'+sym+'</span>'+txt;
 const PANOL_PROC_ABREV={'HABITUAL':'H','RE TRABAJO':'R','DESVIO':'D'};
-// Galpón que se propone cuando no se indica otro (el que esté en el diccionario y diga HUELLA 610)
-function panolGalDefecto(){ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false); const g=l.find(x=>/HUELLA\s*610|^HUE\.?\s*610/i.test(x.nombre||'')); return g?g.nombre:''; }
+// Galpón que se propone cuando no se indica otro: HUE 610 (si no está en el diccionario, uno que diga HUELLA 610)
+function panolGalDefecto(){ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false); const g=l.find(x=>/^HUE\.?\s*610$/i.test(String(x.nombre||'').trim()))||l.find(x=>/HUELLA\s*610/i.test(x.nombre||'')); return g?g.nombre:''; }
 function panolCsv(v){ return String(v||'').split(',').map(x=>x.trim()).filter(Boolean); }
 function panolOkPrevio(e){ const l=panolCsv(e&&e.alerta_ok); return l.length?{lista:l, precio:+e.alerta_ok_precio||0, por:e.alerta_ok_por||'', en:e.alerta_ok_en||''}:null; }
 function panolAplicarAprobacion(all, precio, auto, previo){
