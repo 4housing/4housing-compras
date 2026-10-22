@@ -2625,6 +2625,7 @@ function panolResumenPor(rows, key){
   return Object.values(m).sort((a,b)=>b.ars-a.ars);
 }
 function renderPanol(){
+  if(PANOL_TAB==='erog') return renderPanolErog();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
   const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
@@ -2655,7 +2656,7 @@ function renderPanol(){
      :'<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--muted)">Sin datos.</td></tr>')
     +'</tbody></table></div>';
 
-  C().innerHTML =
+  C().innerHTML = panolTabs() +
     '<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px">'
       +'<h3 style="margin:0">Saldos actuales (Tango)</h3><span class="meta">'+saldos.length+' filas'+(saldos[0]&&saldos[0].actualizado_en?' · última importación: '+fmtDate(String(saldos[0].actualizado_en).slice(0,10)):'')+'</span>'
       +'<span style="margin-left:auto"><button class="btn ghost sm" onclick="openPanolSyncSaldos()">Importar saldos de Tango</button></span></div>'
@@ -2675,6 +2676,355 @@ function renderPanol(){
     +'</div>';
 }
 window.renderPanol=renderPanol;
+
+/* ===== Pañol · solapa Erogaciones =====
+   Lógica del Excel "EROGACIONES CONSUMIBLES": el pañol registra el destino (IF / obra / módulo) de cada
+   material entregado. Usa la misma tabla que los egresos (compras_panol_egresos) con columnas extra
+   (sql/2026-10_panol_erogaciones.sql), así sigue valiendo "Generar egreso para Tango".
+   PRECIO DEL MES (igual que la hoja "Precios Mes" del Excel): última compra del artículo con fecha <= fin de
+   mes (historial de OC = compras_hist_precios, sale del "Informe APP Costeos" + último costo de Tango del
+   diccionario). Si no hay ninguna anterior al fin de mes, usa la primera que exista y avisa. Si hay varias el
+   mismo día, gana la última cargada (Tango pisa a OC).
+   ALARMAS: SIN PRECIO · FECHA POSTERIOR AL MES · REVISAR vs TANGO (OC difiere > 5% del último costo Tango) ·
+   REVISAR TC (TC implícito ARS/USD se aparta > 5% del BNA venta) · ARTICULO SIN ALTA. */
+let PANOL_TAB='egresos';
+function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
+window.setPanolTab=setPanolTab;
+function panolTabs(){
+  const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+'</div>';
+}
+const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
+const PANOL_DESTINOS_MODULO=['MODALQ','MANMOD'];          // destinos que piden indicar el módulo
+const PANOL_MODULO_GENERICO='GENERICO MODULO';
+const PANOL_PROCESOS=['HABITUAL','RE TRABAJO','DESVIO'];
+const PANOL_ALERTA_SIN_ALTA='ARTICULO SIN ALTA';
+let PANOL_LAST_DEP='';
+
+function panolDestinoPideModulo(cod){ const c=String(cod||'').toUpperCase().trim(); return PANOL_DESTINOS_MODULO.some(d=>c===d||c.startsWith(d+' ')); }
+function panolFinMes(per){ const y=Math.floor(per/100), m=per%100; return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10); }
+// Dólar oficial BNA venta vigente a esa fecha (último dato igual o anterior), como el XLOOKUP -1 del Excel
+function panolTcOficial(fechaISO){
+  let best=null;
+  (DIC.usd_diario_oficial||[]).forEach(r=>{ if(r.fecha<=fechaISO && (!best||r.fecha>best.fecha)) best=r; });
+  const v=best&&best.venta!=null&&best.venta!==''?+best.venta:null;
+  return v>0?v:null;
+}
+// Historial por artículo: OC (compras_hist_precios) + último costo Tango del diccionario, ordenado por fecha
+let _PNL_HIST=null, _PNL_KEY=null;
+function panolHistIdx(){
+  const h=DIC.hist_precios||[], a=DIC.articulos||[];
+  if(_PNL_HIST && _PNL_KEY && _PNL_KEY[0]===h && _PNL_KEY[1]===a && _PNL_KEY[2]===h.length) return _PNL_HIST;
+  const m=new Map();
+  const add=r=>{ if(!m.has(r.cod)) m.set(r.cod,[]); m.get(r.cod).push(r); };
+  h.forEach(r=>{ const ars=+r.precio_ars; if(r.cod_articulo && r.fecha && ars>0) add({cod:r.cod_articulo, fecha:String(r.fecha).slice(0,10), fuente:'OC', prov:r.proveedor||'', oc:r.nro_oc||'', ars, usd:+r.precio_usd||0}); });
+  a.forEach(x=>{ if(x.costo_fecha && +x.costo_ars>0) add({cod:x.codigo, fecha:String(x.costo_fecha).slice(0,10), fuente:'Tango', prov:x.costo_proveedor||'', oc:'', ars:+x.costo_ars, usd:+x.costo_usd||0}); });
+  m.forEach(l=>l.sort((p,q)=>p.fecha<q.fecha?-1:p.fecha>q.fecha?1:0));   // sort estable: dentro del mismo día queda el orden de carga
+  _PNL_HIST=m; _PNL_KEY=[h,a,h.length];
+  return m;
+}
+function panolOcCorto(oc){ const s=String(oc||'').trim(); return s.startsWith('0000100') ? String(+s.slice(7)) : s; }
+// → {ars, usd, fecha, fuente, prov, oc, desvioTC, varTango, control}
+function panolPrecioMes(cod, periodo){
+  const out={ars:0, usd:0, fecha:'', fuente:'', prov:'', oc:'', desvioTC:null, varTango:null, control:'SIN PRECIO'};
+  const lst=cod?panolHistIdx().get(cod):null; if(!lst||!lst.length) return out;
+  const fin=panolFinMes(periodo);
+  let ref=''; lst.forEach(r=>{ if(r.fecha<=fin && r.fecha>ref) ref=r.fecha; });
+  if(!ref) ref=lst[0].fecha;
+  let row=null; lst.forEach(r=>{ if(r.fecha===ref) row=r; });
+  const tcImp=row.usd>0?row.ars/row.usd:null, bna=panolTcOficial(row.fecha);
+  const desv=(tcImp&&bna)?tcImp/bna-1:null;
+  const art=(DIC.articulos||[]).find(x=>x.codigo===cod);
+  const tango=art&&+art.costo_ars>0?+art.costo_ars:null;
+  const varT=(row.fuente==='OC'&&tango)?row.ars/tango-1:null;
+  let control;
+  if(row.fecha>fin) control='FECHA POSTERIOR AL MES';
+  else if(varT!=null && Math.abs(varT)>PANOL_TOL_TANGO) control='REVISAR vs TANGO';
+  else if(desv!=null && Math.abs(desv)<=PANOL_TOL_TC) control='OK';
+  else if(row.usd<1) control='OK';                              // USD < 1: el TC no es evaluable
+  else control='REVISAR TC';
+  return Object.assign(out,{ars:row.ars, usd:row.usd, fecha:row.fecha, fuente:row.fuente, prov:row.prov, oc:panolOcCorto(row.oc), desvioTC:desv, varTango:varT, control});
+}
+function panolAlertaDe(p, sinAlta){
+  const a=[]; if(sinAlta) a.push(PANOL_ALERTA_SIN_ALTA);
+  if(p && p.control!=='OK') a.push(p.control);
+  return a.join(', ');
+}
+// Campos de precio de una erogación (cod puede ser '' si el artículo no está dado de alta)
+function panolCamposPrecio(cod, periodo, cant, manual){
+  let p, ars, usd, fuente;
+  if(manual){
+    ars=+manual.ars||0; usd=+manual.usd||0; fuente='Manual';
+    p={control:ars>0?'OK':'SIN PRECIO', fecha:'', prov:'', oc:'', desvioTC:null, varTango:null};
+  }else{
+    p=panolPrecioMes(cod, periodo); ars=p.ars; usd=p.usd; fuente=p.fuente;
+  }
+  return { costo_unit_ars:ars, costo_unit_usd:usd, total_ars:+(cant*ars).toFixed(2), total_usd:+(cant*usd).toFixed(2),
+    fuente_precio:fuente||null, precio_fecha_ref:p.fecha||null, precio_proveedor:p.prov||null, precio_oc:p.oc||null,
+    desvio_tc:p.desvioTC!=null?+p.desvioTC.toFixed(4):null, var_tango:p.varTango!=null?+p.varTango.toFixed(4):null,
+    _control:p.control };
+}
+function panolSinPrecioNum(r){ return !(+r.costo_unit_ars>0); }
+
+/* ---- Tabla ---- */
+function panolErogArt(r){
+  if(r.cod_articulo) return r.cod_articulo+' · '+(artDesc(r.cod_articulo)||'');
+  return '⚠ '+(r.articulo_libre||'(sin artículo)');
+}
+function panolAlertaBadges(r){
+  const a=String(r.alerta||'').split(',').map(s=>s.trim()).filter(Boolean);
+  return a.length?a.map(x=>'<span class="badge b-rojo" title="'+esc(x)+'">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>';
+}
+function panolSort(ev, ns, k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  const cur=SP_SORT[ns]; SP_SORT[ns]={k, dir:(cur&&cur.k===k&&cur.dir===1)?-1:1};
+  renderPanol();
+}
+window.panolSort=panolSort;
+function _pnTh(label, col, k){ return _spTh('pnl', label, col, k).replace('spSort(','panolSort('); }
+function renderPanolErog(){
+  if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
+  const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO);
+  xlfRegister('pnl',{ rows:()=>base, onChange:renderPanol, dateVal:r=>String(r.fecha||'').slice(0,10),
+    val:(r,col)=>{
+      if(col==='dest') return r.proyecto_cod||'(sin destino)';
+      if(col==='serie') return r.serie||'(sin módulo)';
+      if(col==='proc') return r.proceso||'(sin proceso)';
+      if(col==='art') return panolErogArt(r);
+      if(col==='oper') return r.operario||'(sin operario)';
+      if(col==='fuente') return r.fuente_precio||'(sin precio)';
+      if(col==='alerta') return r.alerta?String(r.alerta).split(',').map(s=>s.trim()).filter(Boolean).join(' + '):'OK';
+      if(col==='exp') return r.exportado?'Sí':'No';
+      return '';
+    } });
+  if(!SP_SORT.pnl) SP_SORT.pnl={k:'fecha',dir:-1};
+  const shown=_spOrdenar('pnl', base.filter(r=>xlfPass('pnl',r)), {
+    fecha:r=>String(r.fecha||'')+' '+String(r.horario||''), hora:r=>r.horario, dest:r=>r.proyecto_cod, serie:r=>r.serie, gal:r=>r.galpon, proc:r=>r.proceso, solp:r=>r.solp,
+    art:r=>panolErogArt(r), cant:r=>+r.cantidad||0, oper:r=>r.operario, pars:r=>+r.costo_unit_ars||0, pusd:r=>+r.costo_unit_usd||0,
+    tars:r=>+r.total_ars||0, tusd:r=>+r.total_usd||0, fuente:r=>r.fuente_precio, alerta:r=>r.alerta||'', exp:r=>r.exportado?1:0 });
+  const conAlerta=base.filter(r=>r.alerta).length, sinAlta=base.filter(r=>r.articulo_libre&&!r.cod_articulo).length;
+  const totArs=shown.reduce((a,r)=>a+(+r.total_ars||0),0), totUsd=shown.reduce((a,r)=>a+(+r.total_usd||0),0);
+  const pMes=String(PANOL_PERIODO).slice(4,6), pAnio=String(PANOL_PERIODO).slice(0,4);
+  const periodoInput='<input type="month" value="'+pAnio+'-'+pMes+'" onchange="setPanolPeriodo(this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:4px 6px;font-size:12.5px">';
+  const histN=(DIC.hist_precios||[]).length;
+  const num=v=>v?fmtNum(v,2):'<span style="color:var(--muted)">—</span>';
+  const filas=shown.length ? shown.map(r=>'<tr'+(r.alerta?' style="background:#fff6f4"':'')+'>'
+      +'<td>'+fmtDate(r.fecha)+'</td><td>'+esc(r.horario||'')+'</td>'
+      +'<td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.serie||'')+'</td><td>'+esc(r.galpon||'')+'</td><td>'+esc(r.proceso||'')+'</td><td>'+esc(r.solp||'')+'</td>'
+      +'<td>'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.operario||'')+'</td>'
+      +'<td style="text-align:right">'+num(r.costo_unit_ars)+'</td><td style="text-align:right">'+num(r.costo_unit_usd)+'</td>'
+      +'<td style="text-align:right">'+num(r.total_ars)+'</td><td style="text-align:right">'+num(r.total_usd)+'</td>'
+      +'<td title="'+esc([r.precio_proveedor,r.precio_oc?('OC '+r.precio_oc):'',r.precio_fecha_ref?fmtDate(r.precio_fecha_ref):''].filter(Boolean).join(' · '))+'">'+esc(r.fuente_precio||'')+'</td>'
+      +'<td>'+panolAlertaBadges(r)+'</td>'
+      +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
+      +'<td><div class="row-actions">'+(r.exportado?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
+    : '<tr><td colspan="18" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
+  const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" para precios por mes.</div>':'')
+    +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Erogaciones de materiales</h3>'
+      +'<span class="meta">Período '+periodoInput+' · '+shown.length+' de '+base.length+' · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+(conAlerta?' · <b style="color:#b3261e">'+conAlerta+' con alarma</b>':'')+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pnl')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
+      +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
+      +'<button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button>'
+      +'<button class="btn sm" onclick="openPanolErogForm()">'+ICO.plus+'Cargar erogación</button></span></div>'
+      +aviso
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:62vh"><table class="grid" id="tblPanolErog"><thead><tr>'
+      +_pnTh('Fecha','__fecha__','fecha')+_pnTh('Hora',null,'hora')+_pnTh('Destino (IF / obra)','dest','dest')+_pnTh('Serie / módulo','serie','serie')+_pnTh('Galpón',null,'gal')
+      +_pnTh('Proceso','proc','proc')+_pnTh('SOLP',null,'solp')+_pnTh('Artículo','art','art')+_pnTh('Cantidad',null,'cant')+_pnTh('Operario','oper','oper')
+      +_pnTh('Precio ARS',null,'pars')+_pnTh('Precio USD',null,'pusd')+_pnTh('Total ARS',null,'tars')+_pnTh('Total USD',null,'tusd')
+      +_pnTh('Fuente precio','fuente','fuente')+_pnTh('Alarma','alerta','alerta')+_pnTh('Exportado','exp','exp')+'<th style="width:80px"></th></tr></thead><tbody>'+filas+'</tbody></table></div></div>';
+}
+window.renderPanolErog=renderPanolErog;
+
+/* ---- Alta / edición ---- */
+function panolArtResolver(txt){
+  const t=String(txt||'').trim(); if(!t) return {cod:'', libre:''};
+  const first=t.split(' · ')[0].trim().toUpperCase();
+  const a=(DIC.articulos||[]).find(x=>String(x.codigo).toUpperCase()===first)
+       || (DIC.articulos||[]).find(x=>String(x.descripcion||'').toUpperCase()===t.toUpperCase());
+  return a?{cod:a.codigo, libre:''}:{cod:'', libre:t};
+}
+function openPanolErogForm(id){
+  const cur=id!=null?(DIC.panol_egresos||[]).find(r=>String(r.id)===String(id)):null;
+  if(cur && cur.exportado){ toast('Esta erogación ya se exportó a Tango; no se puede editar.'); return; }
+  const hoy=new Date().toISOString().slice(0,10), ahora=new Date().toTimeString().slice(0,5);
+  const dep0=cur?cur.cod_deposito:PANOL_LAST_DEP;
+  const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
+  const mods=[...new Set((SERIES_ACTIVAS||[]).filter(s=>s.familia==='modulo').map(s=>s.serie))].sort();
+  const modOpts='<option value="">— ninguno —</option><option value="'+PANOL_MODULO_GENERICO+'"'+(cur&&cur.serie===PANOL_MODULO_GENERICO?' selected':'')+'>'+PANOL_MODULO_GENERICO+'</option>'
+    +mods.map(s=>'<option value="'+esc(s)+'"'+(cur&&cur.serie===s?' selected':'')+'>'+esc(s)+'</option>').join('');
+  const procOpts=PANOL_PROCESOS.map(p=>'<option'+((cur?cur.proceso:'HABITUAL')===p?' selected':'')+'>'+p+'</option>').join('');
+  const artVal=cur?(cur.cod_articulo?(cur.cod_articulo+' · '+(artDesc(cur.cod_articulo)||'')):(cur.articulo_libre||'')):'';
+  const dl='<datalist id="pn_art_dl">'+(DIC.articulos||[]).map(a=>'<option value="'+esc(a.codigo+' · '+a.descripcion)+'"></option>').join('')+'</datalist>';
+  const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
+    +'<div class="field"><label>Hora</label><input id="pe_horario" type="time" value="'+esc(cur?(cur.horario||''):ahora)+'"></div></div>'
+    +'<div class="field"><label>Artículo</label><input id="pe_art" list="pn_art_dl" value="'+esc(artVal)+'" placeholder="Escribí código o nombre…" autocomplete="off" oninput="panolErogPrecio(true)">'+dl
+    +'<div id="pe_artNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
+    +'<div class="field"><label>Unidad de medida</label><input id="pe_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
+    +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
+    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><select id="pe_serie">'+modOpts+'</select>'
+    +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
+    +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Galpón</label><input id="pe_galpon" type="text" value="'+esc(cur?(cur.galpon||''):'')+'"></div>'
+    +'<div class="field"><label>SOLP</label><input id="pe_solp" type="text" value="'+esc(cur?(cur.solp||''):'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Nombre, o vacío = Genérico"></div>'
+    +'<div class="field"><label>Depósito</label><select id="pe_dep"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Precio unit. ARS</label><input id="pe_pars" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div>'
+    +'<div class="field"><label>Precio unit. USD</label><input id="pe_pusd" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div></div>'
+    +'<div id="pe_precioNote" style="font-size:12px;margin:2px 0 10px;min-height:16px"></div>'
+    +'<div class="field"><label>Comentario</label><input id="pe_coment" type="text" value="'+esc(cur?(cur.comentario||''):'')+'"></div>';
+  openModal((cur?'Editar':'Cargar')+' erogación', body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolErog('+(cur?cur.id:'null')+')">Guardar</button>');
+  panolErogDestino();
+  if(cur && cur.fuente_precio==='Manual'){ document.getElementById('pe_pars').value=cur.costo_unit_ars||''; document.getElementById('pe_pusd').value=cur.costo_unit_usd||''; document.getElementById('pe_pars').dataset.manual=1; document.getElementById('pe_pusd').dataset.manual=1; panolErogTotal(); }
+  else panolErogPrecio();
+}
+window.openPanolErogForm=openPanolErogForm;
+// Si el destino pide módulo y no se eligió, se guarda GENERICO MODULO (se avisa en el formulario)
+function panolErogDestino(){
+  const n=document.getElementById('pe_serieNote'); if(!n) return;
+  const pide=panolDestinoPideModulo((document.getElementById('pn_obra')||{}).value||((document.getElementById('pn_obra_q')||{}).value||'').split(' — ')[0]);
+  n.textContent=pide?'Este destino pide indicar el módulo. Si no elegís ninguno se guarda como '+PANOL_MODULO_GENERICO+'.':'';
+}
+window.panolErogDestino=panolErogDestino;
+function panolErogPrecio(resetManual){
+  const fecha=(document.getElementById('pe_fecha')||{}).value; if(!fecha) return;
+  const ra=panolArtResolver(document.getElementById('pe_art').value), note=document.getElementById('pe_artNote');
+  const pars=document.getElementById('pe_pars'), pusd=document.getElementById('pe_pusd');
+  if(!ra.cod && !ra.libre){ note.textContent=''; }
+  else if(ra.libre){ note.style.color='#b3261e'; note.textContent='⚠ Ese artículo no está en el diccionario. Se guarda igual, con alarma "'+PANOL_ALERTA_SIN_ALTA+'", para que se cree como corresponde.'; }
+  else{ note.style.color='var(--muted)'; note.textContent=artDesc(ra.cod); }
+  if(resetManual){ delete pars.dataset.manual; delete pusd.dataset.manual; }
+  const per=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
+  const p=ra.cod?panolPrecioMes(ra.cod, per):null;
+  if(!pars.dataset.manual && !pusd.dataset.manual){ pars.value=p&&p.ars?p.ars.toFixed(2):''; pusd.value=p&&p.usd?p.usd.toFixed(2):''; }
+  const pn=document.getElementById('pe_precioNote');
+  if(ra.cod && p){
+    const ok=p.control==='OK';
+    pn.style.color=ok?'var(--muted)':'#b3261e';
+    pn.textContent=(p.fuente?('Precio de '+per+': '+(p.fuente==='OC'&&p.oc?'OC '+p.oc:p.fuente)+(p.prov?' · '+p.prov:'')+' · '+fmtDate(p.fecha)+' · '):'')+(ok?'OK':'⚠ '+p.control);
+  }else pn.textContent='';
+  panolErogTotal();
+}
+window.panolErogPrecio=panolErogPrecio;
+function panolErogTotal(){
+  const pn=document.getElementById('pe_precioNote'); if(!pn) return;
+  const c=+(document.getElementById('pe_cant')||{}).value||0, a=+(document.getElementById('pe_pars')||{}).value||0, u=+(document.getElementById('pe_pusd')||{}).value||0;
+  pn.dataset.tot='Total: $ '+fmtNum(c*a,2)+' ARS · US$ '+fmtNum(c*u,2);
+  let t=document.getElementById('pe_totalLine');
+  if(!t){ t=document.createElement('div'); t.id='pe_totalLine'; t.style.cssText='font-size:12px;color:var(--muted);margin:0 0 10px'; pn.insertAdjacentElement('afterend',t); }
+  t.textContent=pn.dataset.tot;
+}
+window.panolErogTotal=panolErogTotal;
+async function guardarPanolErog(id){
+  const g=k=>(document.getElementById(k)||{}).value||'';
+  const fecha=g('pe_fecha'), cant=+g('pe_cant')||0, proyecto_cod=g('pn_obra'), cod_deposito=g('pe_dep');
+  const ra=panolArtResolver(g('pe_art'));
+  if(!fecha){ toast('Elegí una fecha'); return; }
+  if(!ra.cod && !ra.libre){ toast('Indicá el artículo'); return; }
+  if(!cant){ toast('Ingresá una cantidad'); return; }
+  if(!proyecto_cod){ toast('Elegí el destino de la lista (escribí código o nombre)'); return; }
+  if(ra.cod && !cod_deposito){ toast('Elegí el depósito'); return; }
+  const periodo=(+fecha.slice(0,4))*100+(+fecha.slice(5,7));
+  const pars=document.getElementById('pe_pars'), pusd=document.getElementById('pe_pusd');
+  const manual=(pars.dataset.manual||pusd.dataset.manual)?{ars:+pars.value||0, usd:+pusd.value||0}:null;
+  const pr=panolCamposPrecio(ra.cod, periodo, cant, manual);
+  let serie=g('pe_serie'); if(!serie && panolDestinoPideModulo(proyecto_cod)) serie=PANOL_MODULO_GENERICO;
+  const row={ fecha, periodo, horario:g('pe_horario')||null, cod_deposito:ra.cod?cod_deposito:(cod_deposito||null), cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:ra.libre,
+    cantidad:cant, um:g('pe_um').trim()||'UNI', proyecto_cod, serie:serie||null, galpon:g('pe_galpon').trim()||null, proceso:g('pe_proceso')||null, solp:g('pe_solp').trim()||null,
+    operario:g('pe_oper').trim()||'Genérico', comentario:g('pe_coment').trim(), exportado:false,
+    alerta:panolAlertaDe({control:pr._control}, !ra.cod)||null };
+  ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
+  if(ra.cod && cod_deposito) PANOL_LAST_DEP=cod_deposito;
+  try{
+    if(DEMO_MODE){
+      DIC.panol_egresos=DIC.panol_egresos||[];
+      if(id==null){ row.id=Math.max(0,...DIC.panol_egresos.map(r=>+r.id||0))+1; DIC.panol_egresos.push(row); }
+      else{ const r=DIC.panol_egresos.find(x=>String(x.id)===String(id)); if(r) Object.assign(r,row); }
+    }else{
+      if(id==null) await sbFetch('/compras_panol_egresos',{method:'POST',body:JSON.stringify(row)});
+      else await sbFetch('/compras_panol_egresos?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row)});
+      await reloadDB();
+    }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_erogaciones.sql?)'); return; }
+  closeModal(); toast(row.alerta?'Guardado con alarma: '+row.alerta:'Guardado'); renderPanol();
+}
+window.guardarPanolErog=guardarPanolErog;
+
+// Vuelve a calcular el precio de las erogaciones del período que no estén exportadas ni tengan precio manual
+async function panolRecalcularPrecios(){
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO && !r.exportado && r.fuente_precio!=='Manual' && r.cod_articulo);
+  if(!rows.length){ toast('No hay erogaciones para recalcular en este período'); return; }
+  let n=0;
+  for(const r of rows){
+    const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
+    const alerta=panolAlertaDe({control:pr._control}, false)||null;
+    const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; }); upd.alerta=alerta;
+    if(DEMO_MODE){ Object.assign(r,upd); n++; continue; }
+    try{ await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); n++; }
+    catch(e){ toast('No se pudo recalcular: '+(e.message||e)); break; }
+  }
+  if(!DEMO_MODE) await reloadDB();
+  toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
+}
+window.panolRecalcularPrecios=panolRecalcularPrecios;
+
+/* ---- Importar historial de compras ("Informe APP Costeos" de Tango) ----
+   Mismo filtro que el Excel: artículos GC*, con fecha, cantidad > 0, total > 0, cotización > 0 y renglón en
+   estado CUMPLIDA / CERRADA / EMITIDA Y CERRADA / EMITIDA / AUTORIZADA. Precio ARS = Total / cantidad pedida;
+   USD = ARS / cotización. Reemplaza todo el historial anterior. */
+const PANOL_HIST_ESTADOS=['CUMPLIDA','CERRADA','EMITIDA Y CERRADA','EMITIDA','AUTORIZADA'];
+function openPanolHistImport(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el informe de Tango "Informe APP Costeos" (puede tardar unos segundos: son decenas de miles de filas). Reemplaza todo el historial de precios de compra anterior. Solo se guardan los renglones de artículos GC* con precio válido.</div>'
+    +'<div class="field"><label>Informe APP Costeos (.xlsx) *</label><input id="pnh_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
+    +'<div id="pnhMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  openModal('Importar historial de compras', body, '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolHistImportar()">Importar</button>');
+}
+window.openPanolHistImport=openPanolHistImport;
+function _pnFecha(v){
+  if(typeof v==='number' && v>20000 && v<60000) return new Date(Date.UTC(1899,11,30)+Math.floor(v)*86400000).toISOString().slice(0,10);
+  return _syncFechaISO(v);
+}
+async function panolHistImportar(){
+  const f=(document.getElementById('pnh_file').files||[])[0], msg=document.getElementById('pnhMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=e=>{ try{ res(XLSX.read(new Uint8Array(e.target.result),{type:'array'})); }catch(er){ rej(er); } }; fr.onerror=()=>rej(new Error('No se pudo abrir el archivo')); fr.readAsArrayBuffer(f); });
+    let rows=null;
+    for(const name of wb.SheetNames){
+      const r=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:''});
+      if(r.length){ const h=r[0].map(x=>_syncNorm(x)); if(_syncIdx(h,'Cód. Artículo','Cod. Articulo')>=0 && _syncIdx(h,'Cantidad pedida')>=0 && _syncIdx(h,'Cotización','Cotizacion')>=0){ rows=r; break; } }
+    }
+    if(!rows) throw new Error('No encontré una hoja con columnas "Cód. Artículo", "Cantidad pedida" y "Cotización".');
+    const H=rows[0].map(x=>_syncNorm(x));
+    const iCod=_syncIdx(H,'Cód. Artículo','Cod. Articulo'), iFec=_syncIdx(H,'Fecha de emisión','Fecha de emision'), iProv=_syncIdx(H,'Cód. proveedor','Cod. proveedor'),
+          iOC=_syncIdx(H,'Nro. Orden de Compra'), iCant=_syncIdx(H,'Cantidad pedida'), iTot=_syncIdx(H,'Total'), iEst=_syncIdx(H,'Estado (renglón)','Estado (renglon)'), iCot=_syncIdx(H,'Cotización','Cotizacion');
+    if([iFec,iTot,iEst].some(i=>i<0)) throw new Error('Faltan columnas: "Fecha de emisión", "Total" o "Estado (renglón)".');
+    const ahora=new Date().toISOString(), por=(AUTH_USER&&AUTH_USER.email)||null, out=[];
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i], cod=_syncNorm(r[iCod]); if(!cod.startsWith('GC')) continue;
+      const fecha=_pnFecha(r[iFec]), cant=+r[iCant], tot=+r[iTot], cot=+r[iCot], est=_syncNorm(r[iEst]);
+      if(!fecha||!(cant>0)||!(tot>0)||!(cot>0)||!PANOL_HIST_ESTADOS.includes(est)) continue;
+      const ars=tot/cant;
+      out.push({cod_articulo:cod, fecha, proveedor:iProv>=0?_syncNorm(r[iProv]):null, nro_oc:iOC>=0?_syncNorm(r[iOC]):null, cantidad:cant,
+        precio_ars:+ars.toFixed(4), precio_usd:+(ars/cot).toFixed(4), tc:cot, estado:est, importado_en:ahora, importado_por:por});
+    }
+    if(!out.length) throw new Error('No encontré renglones válidos (artículos GC* con cantidad, total y cotización > 0 en estados válidos).');
+    msg.textContent='Guardando '+out.length+' renglones…';
+    if(DEMO_MODE){ DIC.hist_precios=out.map((r,i)=>({id:i+1,...r})); }
+    else{
+      await sbFetch('/compras_hist_precios?cod_articulo=not.is.null',{method:'DELETE',prefer:'return=minimal'});
+      for(let i=0;i<out.length;i+=500){ await sbFetch('/compras_hist_precios',{method:'POST',body:JSON.stringify(out.slice(i,i+500)),prefer:'return=minimal'}); msg.textContent='Guardando '+Math.min(i+500,out.length)+' de '+out.length+'…'; }
+      DIC.hist_precios=await sbFetchAll('/compras_hist_precios?select=*&order=id.asc')||[];
+    }
+    closeModal(); toast('Historial importado: '+out.length+' renglones'); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolHistImportar=panolHistImportar;
 
 /* ================================================================
    GESTIÓN DE PROYECTOS
@@ -4002,8 +4352,12 @@ async function confirmPanolEgresoDel(id){
 window.confirmPanolEgresoDel=confirmPanolEgresoDel;
 
 function panolGenerarEgresoTango(){
-  const pendientes=(DIC.panol_egresos||[]).filter(r=>!r.exportado);
-  if(!pendientes.length){ toast('No hay egresos pendientes de exportar'); return; }
+  const todosPend=(DIC.panol_egresos||[]).filter(r=>!r.exportado);
+  // Las erogaciones con artículo sin alta (solo nombre libre) o sin depósito no se pueden exportar a Tango: quedan pendientes
+  const pendientes=todosPend.filter(r=>r.cod_articulo && r.cod_deposito);
+  const omitidas=todosPend.length-pendientes.length;
+  if(!pendientes.length){ toast(omitidas?('No hay egresos exportables: '+omitidas+' tienen artículo sin alta o sin depósito'):'No hay egresos pendientes de exportar'); return; }
+  if(omitidas) toast(omitidas+' erogación(es) quedan pendientes: artículo sin alta o sin depósito');
   const agg={};
   pendientes.forEach(r=>{ const k=r.cod_deposito+'||'+r.cod_articulo; agg[k]=agg[k]||{cod_deposito:r.cod_deposito, cod_articulo:r.cod_articulo, cantidad:0, um:r.um}; agg[k].cantidad+=+r.cantidad||0; });
   const filas=[['Código','Descripción','Depósito','Informar partida','Número partida','Unidad medida','Cantidad','Unidad medida 2','Cantidad 2','Precio','Error']];
@@ -12312,6 +12666,10 @@ async function reloadDicts(background){
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const hp = await sbFetchAll('/compras_hist_precios?select=*&order=id.asc');
+        if(hp) DIC.hist_precios = hp;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const sal = await sbFetchAll('/compras_stock_saldos?select=*&order=cod_articulo.asc');
