@@ -2679,6 +2679,7 @@ function renderPanol(){
   if(PANOL_TAB==='erog') return renderPanolErog();
   if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_TAB==='cierres') return renderPanolCierres();
+  if(PANOL_TAB==='sol') return renderPanolSolicitudes();
   if(PANOL_TAB==='precios') return renderPanolPrecios();
   if(PANOL_TAB==='anal') return renderPanolAnalisis();
   if(PANOL_TAB==='conc') return renderPanolConc();
@@ -3196,13 +3197,374 @@ async function panolPrecioQuitar(i){
 }
 window.panolPrecioQuitar=panolPrecioQuitar;
 
+/* ===================== Solicitudes de OT ↔ Pañol =====================
+   Flujo: el solicitante baja el Excel de solicitud, lo completa (N° de OT, destino, fecha de necesidad y los materiales) y lo sube a la app.
+   Pañol ve la lista ordenada por fecha de necesidad, la prepara y, al entregar, la registra: cada entrega genera los egresos (erogaciones) con el
+   precio del mes y queda lo que falta como parcial. Una OT por archivo. Cada solicitante ve solo las suyas; Pañol (comprador / admin) ve todas. */
+let PANOL_SOL_ERR='', PANOL_SOL={f:{est:'abiertas', q:''}};
+const PANOL_SOL_ESTADOS=['Pendiente','En preparación','Parcial','Entregada','Anulada'];
+const solItems=id=>(DIC.panol_solicitud_items||[]).filter(i=>String(i.solicitud_id)===String(id));
+const solEsMia=s=>!!(AUTH_USER&&AUTH_USER.email&&s.solicitante_email===AUTH_USER.email) || (DEMO_MODE&&!AUTH_USER);
+const solPuedeGestionar=()=>canEditOG();
+function solVisibles(){ const l=DIC.panol_solicitudes||[]; return solPuedeGestionar()?l:l.filter(solEsMia); }
+// Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
+const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
+const solPend=i=>Math.max(0,solVig(i)-(+i.cantidad_entregada||0));
+function solProgreso(s){ const it=solItems(s.id), ped=it.reduce((a,i)=>a+solVig(i),0), ent=it.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0); return {it, ped, ent, pct:ped?Math.round(ent/ped*100):(it.length?100:0), pend:it.filter(i=>solPend(i)>1e-9).length}; }
+function solEstadoCalc(s, items){
+  if(s.estado==='Anulada') return 'Anulada';
+  const ped=items.reduce((a,i)=>a+solVig(i),0), ent=items.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0);
+  if(items.length && ped<=1e-9 && ent<=1e-9) return 'Anulada';          // se anuló todo y no se entregó nada
+  if(ped>0 && ent>=ped-1e-9) return 'Entregada';
+  if(ent>0) return 'Parcial';
+  return s.estado==='En preparación'?'En preparación':'Pendiente';
+}
+// Historial con usuario, fecha y hora de cada movimiento de la solicitud
+const solHist=(s,accion,detalle)=>(Array.isArray(s.historial)?s.historial:[]).concat([{accion, detalle:detalle||'', por:panolUsuario(), fecha:new Date().toISOString()}]);
+const solPuedeEditar=s=>!['Entregada','Anulada'].includes(s.estado) && (solPuedeGestionar() || (solEsMia(s) && !s.bloqueada));
+function solBadge(e){ const c={'Pendiente':'b-ambar','En preparación':'b-gris','Parcial':'b-ambar','Entregada':'b-verde','Anulada':'b-rojo'}[e]||'b-gris'; return '<span class="badge '+c+'">'+esc(e)+'</span>'; }
+function solFechaHtml(s){
+  if(!s.fecha_necesidad) return '—'; const hoy=new Date().toISOString().slice(0,10), f=String(s.fecha_necesidad).slice(0,10), cerrada=(s.estado==='Entregada'||s.estado==='Anulada');
+  const d=Math.round((new Date(f+'T12:00:00')-new Date(hoy+'T12:00:00'))/86400000);
+  const col=cerrada?'':(d<0?'color:#b3261e;font-weight:700':d<=1?'color:#b26a00;font-weight:600':'');
+  return '<span style="'+col+'" title="'+(cerrada?'':(d<0?'Vencida hace '+(-d)+' día(s)':d===0?'Es hoy':d===1?'Es mañana':'Faltan '+d+' días'))+'">'+fmtDate(f)+'</span>';
+}
+function panolSaldo(cod,dep){ const l=(DIC.stock_saldos||[]).filter(x=>x.cod_articulo===cod&&(!dep||String(x.cod_deposito)===String(dep))); return l.length?l.reduce((a,x)=>a+(+x.saldo||0),0):null; }
+
+/* ---- Lista ---- */
+function renderPanolSolicitudes(){
+  const F=PANOL_SOL.f, todas=solVisibles(), hoy=new Date().toISOString().slice(0,10);
+  const abiertas=s=>['Pendiente','En preparación','Parcial'].includes(s.estado);
+  xlfRegister('psol',{rows:()=>todas, onChange:renderPanol, val:(s,c)=>c==='sol'?(s.solicitante||'(sin nombre)'):c==='dest'?(s.destino_cod||s.destino_txt||'(sin destino)'):'' });
+  if(!SP_SORT.psol) SP_SORT.psol={k:'fnec',dir:1};
+  const q=(F.q||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const lista=todas.filter(s=>(F.est==='todas'||(F.est==='abiertas'?abiertas(s):s.estado===F.est))&&xlfPass('psol',s)&&(!q.length||q.every(w=>[s.nro_ot,s.solicitante,s.destino_cod,s.destino_txt,s.comentario].join(' ').toLowerCase().includes(w))));
+  const shown=_spOrdenar('psol',lista,{ot:s=>s.nro_ot, sol:s=>s.solicitante, dest:s=>s.destino_cod||s.destino_txt, fsol:s=>s.creado_en, fnec:s=>s.fecha_necesidad||'9999', items:s=>solItems(s.id).length, est:s=>s.estado, av:s=>solProgreso(s).pct});
+  const nAb=todas.filter(abiertas).length, nVenc=todas.filter(s=>abiertas(s)&&s.fecha_necesidad&&String(s.fecha_necesidad).slice(0,10)<hoy).length;
+  const gest=solPuedeGestionar();
+  const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b>'+(s.bloqueada?' <span title="Pañol la bloqueó: ya no se puede editar">🔒</span>':'')+'</td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
+    +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td style="text-align:right">'+p.it.length+'</td><td>'+solBadge(s.estado)+'</td>'
+    +'<td style="min-width:110px"><div style="height:7px;background:#e6ece8;border-radius:4px;overflow:hidden"><div style="height:7px;width:'+p.pct+'%;background:#2f6f5e"></div></div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+p.pct+'% · faltan '+p.pend+' renglón(es)</div></td>'
+    +'<td style="font-size:11.5px;color:var(--muted)" class="tx-largo" title="'+esc(s.comentario||'')+'">'+esc(s.comentario||'')+'</td>'
+    +'<td><button class="btn ghost sm" onclick="openPanolSolDetalle('+s.id+')">'+(gest&&abiertas(s)?'Preparar / entregar':'Ver')+'</button></td></tr>'; }).join('');
+  const sel=(v,l)=>'<option value="'+v+'"'+(F.est===v?' selected':'')+'>'+l+'</option>';
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
+    +'<button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
+    +(PANOL_SOL_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer las solicitudes: '+esc(PANOL_SOL_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_solicitudes.sql</b> en Supabase?</div>':'')
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Ordenadas por fecha de necesidad (las vencidas en rojo). Doble clic en una fila para abrirla. Para pedir materiales: <b>Bajar Excel de solicitud</b>, completarlo y <b>Subir solicitud</b>.</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolSol"><thead><tr>'
+      +_pnTh('N° OT',null,'ot','psol')+_pnTh('Solicitante','sol','sol','psol')+_pnTh('Destino','dest','dest','psol')+_pnTh('Solicitada',null,'fsol','psol')+_pnTh('Fecha de necesidad',null,'fnec','psol')+_pnTh('Renglones',null,'items','psol')+_pnTh('Estado',null,'est','psol')+_pnTh('Avance',null,'av','psol')+'<th>Comentario</th><th></th></tr></thead><tbody>'
+      +(filas||'<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">No hay solicitudes con este filtro.</td></tr>')+'</tbody></table></div></div>';
+}
+
+/* ---- Excel de solicitud (se baja con listas desplegables) ---- */
+async function panolSolPlantilla(){
+  let EJ; try{ EJ=await panolExcelJS(); }catch(e){ toast('No se pudo cargar el generador de Excel. Verificá tu conexión e intentá de nuevo.'); return; }
+  const wb=new EJ.Workbook(); wb.creator='4housing';
+  const ws=wb.addWorksheet('Solicitud',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}}), ls=wb.addWorksheet('Listas',{properties:{tabColor:{argb:'FF9CA3AF'}}});
+  const arts=(DIC.articulos||[]).filter(a=>a.codigo&&a.descripcion).slice().sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(a=>a.codigo+' — '+panolArtNombre(a));
+  const dests=panolDestinos().map(o=>o.cod+' — '+(o.desc||'')), ums=panolUmOpts();
+  ls.getCell('A1').value='Artículos'; ls.getCell('B1').value='Destinos'; ls.getCell('C1').value='U.M.'; [1,2,3].forEach(c=>{ ls.getCell(1,c).font={bold:true}; });
+  arts.forEach((v,i)=>{ ls.getCell(i+2,1).value=v; }); dests.forEach((v,i)=>{ ls.getCell(i+2,2).value=v; }); ums.forEach((v,i)=>{ ls.getCell(i+2,3).value=v; });
+  ls.getColumn(1).width=70; ls.getColumn(2).width=50; ls.getColumn(3).width=12;
+  ws.getColumn(1).width=64; ws.getColumn(2).width=14; ws.getColumn(3).width=10; ws.getColumn(4).width=22; ws.getColumn(5).width=40;
+  ws.mergeCells('A1:E1'); ws.getCell('A1').value='Solicitud de materiales a Pañol'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
+  ws.mergeCells('A2:E2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Pañol > Solicitudes > Subir solicitud). Un archivo = una OT.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
+  const amarillo={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}, borde={top:{style:'thin',color:{argb:'FFD1B96B'}},left:{style:'thin',color:{argb:'FFD1B96B'}},bottom:{style:'thin',color:{argb:'FFD1B96B'}},right:{style:'thin',color:{argb:'FFD1B96B'}}};
+  const campo=(fila,lbl,val)=>{ const a=ws.getCell(fila,1); a.value=lbl; a.font={bold:true,size:11}; a.alignment={horizontal:'right'}; ws.mergeCells(fila,2,fila,5); const b=ws.getCell(fila,2); b.value=val||null; b.fill=amarillo; b.border=borde; b.alignment={horizontal:'left'}; return b; };
+  campo(3,'N° de OT'); campo(4,'Solicitante',MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'');
+  const bd=campo(5,'Destino (IF / obra)'); bd.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$B$2:$B$'+(dests.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Destino',error:'Elegí un destino de la lista.'};
+  const bf=campo(6,'Fecha de necesidad'); bf.numFmt='dd/mm/yyyy'; bf.dataValidation={type:'date',operator:'greaterThan',allowBlank:false,formulae:[new Date(2020,0,1)],showErrorMessage:true,errorTitle:'Fecha',error:'Ingresá una fecha (dd/mm/aaaa).'};
+  campo(7,'Comentario general');
+  const h=9; ['Artículo','Cantidad','U.M.','Fecha de necesidad (si es distinta)','Comentario'].forEach((t,i)=>{ const c=ws.getCell(h,i+1); c.value=t; c.font={bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; }); ws.getRow(h).height=30;
+  ws.views=[{showGridLines:false,state:'frozen',ySplit:h}];
+  for(let r=h+1;r<=h+200;r++){
+    for(let c=1;c<=5;c++){ const cell=ws.getCell(r,c); cell.fill=amarillo; cell.border=borde; }
+    ws.getCell(r,1).dataValidation={type:'list',allowBlank:true,formulae:['Listas!$A$2:$A$'+(arts.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Artículo',error:'Ese artículo no está en la lista. Si seguís, Pañol lo verá como "sin alta".'};
+    ws.getCell(r,2).dataValidation={type:'decimal',operator:'greaterThan',allowBlank:true,formulae:[0],showErrorMessage:true,errorTitle:'Cantidad',error:'La cantidad tiene que ser un número mayor a 0.'}; ws.getCell(r,2).numFmt='#,##0.##';
+    ws.getCell(r,3).dataValidation={type:'list',allowBlank:true,formulae:['Listas!$C$2:$C$'+(ums.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'U.M.',error:'Elegí una unidad de la lista.'};
+    ws.getCell(r,4).numFmt='dd/mm/yyyy'; ws.getCell(r,4).dataValidation={type:'date',operator:'greaterThan',allowBlank:true,formulae:[new Date(2020,0,1)],showErrorMessage:true,errorTitle:'Fecha',error:'Ingresá una fecha (dd/mm/aaaa).'};
+  }
+  try{
+    const buf=await wb.xlsx.writeBuffer(), blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='Solicitud_OT_Panol.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500); toast('Excel de solicitud descargado');
+  }catch(e){ toast('No se pudo armar el Excel: '+(e.message||e)); }
+}
+window.panolSolPlantilla=panolSolPlantilla;
+
+/* ---- Subir una solicitud ---- */
+let _SOL_PEND=null;
+function openPanolSolSubir(){
+  openModal('Subir solicitud de OT',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de solicitud completo (el que se baja con "Bajar Excel de solicitud"). Un archivo = una OT. Vas a ver una vista previa antes de enviarla a Pañol.</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="sol_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="solMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="panolSolLeer()">Revisar</button>');
+}
+window.openPanolSolSubir=openPanolSolSubir;
+async function panolSolLeer(){
+  const f=(document.getElementById('sol_file').files||[])[0], msg=document.getElementById('solMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f), nom=wb.SheetNames.find(n=>/solicitud/i.test(n))||wb.SheetNames[0];
+    const aoa=XLSX.utils.sheet_to_json(wb.Sheets[nom],{header:1,raw:true,defval:''});
+    const norm=t=>_syncFold(t).replace(/[^a-z0-9 ]/g,'').trim();
+    const val=lbl=>{ const r=aoa.find(x=>norm(x[0]).startsWith(norm(lbl))); if(!r) return ''; for(let c=1;c<r.length;c++) if(String(r[c]).trim()!=='') return r[c]; return ''; };
+    const ot=String(val('N de OT')||val('OT')).trim(), solicitante=String(val('Solicitante')||'').trim(), destTxt=String(val('Destino')||'').trim(), fnec=_syncFechaISO(val('Fecha de necesidad')), coment=String(val('Comentario general')||'').trim();
+    const hi=aoa.findIndex(x=>norm(x[0]).startsWith('articulo')&&norm(x[1]).startsWith('cantidad'));
+    if(hi<0) throw new Error('No encontré la tabla de materiales (columnas Artículo y Cantidad). ¿Es el Excel de solicitud de la app?');
+    const errs=[], warns=[], items=[];
+    if(!ot) errs.push('Falta el N° de OT.');
+    const d=destTxt?ppResolverDestino(destTxt):null; if(!destTxt) errs.push('Falta el destino.'); else if(!d) errs.push('No reconozco el destino "'+destTxt+'": elegilo de la lista.');
+    if(!fnec) errs.push('Falta la fecha de necesidad (o no es una fecha válida).');
+    for(let i=hi+1;i<aoa.length;i++){
+      const r=aoa[i], art=String(r[0]||'').trim(), cantRaw=r[1]; if(!art && (cantRaw===''||cantRaw==null)) continue;
+      const fila=i+1, cant=typeof cantRaw==='number'?cantRaw:parseFloat(String(cantRaw).replace(',','.'));
+      if(!art){ errs.push('Fila '+fila+': falta el artículo.'); continue; }
+      if(!(cant>0)){ errs.push('Fila '+fila+' ('+art.slice(0,30)+'): la cantidad tiene que ser un número mayor a 0.'); continue; }
+      const ra=panolArtResolver(art), umT=String(r[2]||'').trim(); let um=umT?panolUmResolver(umT):'';
+      if(umT&&!um) warns.push('Fila '+fila+': la U.M. "'+umT+'" no está en el diccionario; Pañol usará la del artículo.');
+      if(!um&&ra.cod) um=panolUmSugerida(ra.cod)||'UNI'; if(!um) um='UNI';
+      if(!ra.cod) warns.push('Fila '+fila+': "'+art+'" no está en el diccionario de artículos (queda "sin alta" para que Pañol lo resuelva).');
+      const fi=r[3]!==''?_syncFechaISO(r[3]):''; if(r[3]!==''&&!fi) warns.push('Fila '+fila+': la fecha de necesidad no es válida; se usa la general.');
+      items.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:art, cantidad:cant, um, fecha_necesidad:fi||fnec||null, comentario:String(r[4]||'').trim()||null, _txt:ra.cod?panolArtTxt(ra.cod):art});
+    }
+    if(!items.length) errs.push('No hay materiales cargados.');
+    const hoy=new Date().toISOString().slice(0,10); if(fnec&&fnec<hoy) warns.push('La fecha de necesidad ('+fmtDate(fnec)+') ya pasó.');
+    if(ot && (DIC.panol_solicitudes||[]).some(s=>String(s.nro_ot).trim().toUpperCase()===ot.toUpperCase()&&s.estado!=='Anulada')) errs.push('Ya existe una solicitud con el N° de OT "'+ot+'". Si es otra, usá otro número; si hay que rehacerla, pedí que anulen la anterior.');
+    _SOL_PEND={nro_ot:ot, solicitante:solicitante||MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:d?d.cod:null, destino_txt:destTxt, fecha_necesidad:fnec||null, comentario:coment||null, items};
+    panolSolPreview(errs,warns);
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolSolLeer=panolSolLeer;
+function panolSolPreview(errs,warns){
+  const S=_SOL_PEND, box=(t,l,bg,bd)=>l.length?'<div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:'+bg+';border:1px solid '+bd+';font-size:12.5px"><b>'+t+'</b><ul style="margin:4px 0 0 18px;padding:0">'+l.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>':'';
+  openModal('Revisar solicitud · OT '+(S.nro_ot||'(sin número)'),
+    '<div style="font-size:13px;line-height:1.7"><b>Solicitante:</b> '+esc(S.solicitante)+' · <b>Destino:</b> '+esc(S.destino_cod?anDestTxt(S.destino_cod):S.destino_txt)+' · <b>Fecha de necesidad:</b> '+(S.fecha_necesidad?fmtDate(S.fecha_necesidad):'—')+(S.comentario?'<br><b>Comentario:</b> '+esc(S.comentario):'')+'</div>'
+    +box('Hay que corregir esto en el Excel y volver a subirlo:',errs,'#fdecea','#f3b8b1')+box('Avisos (se puede enviar igual):',warns,'#fff6e5','#f0d9a8')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh;margin-top:8px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Fecha de necesidad</th><th>Comentario</th></tr></thead><tbody>'
+    +S.items.map(i=>'<tr><td>'+esc(i._txt)+(i.cod_articulo?'':' <span class="badge b-rojo">sin alta</span>')+'</td><td style="text-align:right">'+fmtNum(i.cantidad,2)+'</td><td>'+esc(i.um)+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>').join('')+'</tbody></table></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Pañol</button>'), 'wide');
+}
+async function panolSolEnviar(){
+  const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  const cab={nro_ot:S.nro_ot, solicitante:S.solicitante, solicitante_email:(AUTH_USER&&AUTH_USER.email)||null, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:[{accion:'Creada',detalle:S.items.length+' renglón(es) desde Excel',por:panolUsuario(),fecha:new Date().toISOString()}]};
+  const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
+  try{
+    if(DEMO_MODE){
+      DIC.panol_solicitudes=DIC.panol_solicitudes||[]; DIC.panol_solicitud_items=DIC.panol_solicitud_items||[];
+      const id=Math.max(0,...DIC.panol_solicitudes.map(s=>+s.id||0))+1; DIC.panol_solicitudes.push({id,...cab,creado_en:new Date().toISOString(),solicitante_email:cab.solicitante_email||'demo'});
+      let k=Math.max(0,...DIC.panol_solicitud_items.map(i=>+i.id||0)); its.forEach(i=>{ DIC.panol_solicitud_items.push({id:++k,solicitud_id:id,...i}); });
+    }else{
+      const r=await sbFetch('/compras_panol_solicitudes',{method:'POST',body:JSON.stringify(cab),prefer:'return=representation'}); const id=(Array.isArray(r)?r[0]:r).id;
+      try{ await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
+      catch(e){ try{ await sbFetch('/compras_panol_solicitudes?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} throw e; }
+      await panolSolCargar();
+    }
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } toast('No se pudo enviar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_solicitudes.sql?)'); return; }
+  _SOL_PEND=null; closeModal(); toast('Solicitud enviada a Pañol'); PANOL_TAB='sol'; renderPanol();
+}
+window.panolSolEnviar=panolSolEnviar;
+async function panolSolCargar(){
+  try{ DIC.panol_solicitudes=await sbFetchAll('/compras_panol_solicitudes?select=*&order=id.desc'); DIC.panol_solicitud_items=await sbFetchAll('/compras_panol_solicitud_items?select=*&order=id.asc'); PANOL_SOL_ERR=''; }
+  catch(e){ PANOL_SOL_ERR=String(e.message||e); }
+}
+
+/* ---- Detalle, preparación y entrega ---- */
+function openPanolSolDetalle(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const it=solItems(id), gest=solPuedeGestionar(), abierta=['Pendiente','En preparación','Parcial'].includes(s.estado), dep=panolDepDefecto();
+  const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
+    return '<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(i.cantidad,2)+' '+esc(i.um||'')+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,2)+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,2)+'</td>'
+      +'<td style="text-align:right;'+(pend>0?'font-weight:700':'')+'">'+fmtNum(pend,2)+'</td><td style="text-align:right;'+(sal!=null&&sal<pend?'color:#b3261e;font-weight:600':'')+'" title="Saldo en el depósito '+esc(dep||'')+'">'+(sal==null?'—':fmtNum(sal,2))+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>'; }).join('');
+  const hist=(Array.isArray(s.historial)?s.historial:[]).slice().reverse().map(h=>'<div style="padding:3px 0;border-bottom:1px solid var(--line)"><b>'+esc(h.accion)+'</b>'+(h.detalle?' · '+esc(h.detalle):'')+' <span style="color:var(--muted)">— '+_spCuando({autor:h.por,fecha:h.fecha})+'</span></div>').join('');
+  const acc=[];
+  if(gest&&abierta){ acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
+  if(solPuedeEditar(s)) acc.push('<button class="btn ghost" onclick="openPanolSolEditar('+id+')">Editar solicitud</button>');
+  if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
+  if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
+  openModal('Solicitud OT '+s.nro_ot,
+    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+'</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh;margin-top:10px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+    +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'wide');
+}
+window.openPanolSolDetalle=openPanolSolDetalle;
+async function panolSolGuardarCab(s,upd){
+  Object.assign(upd,{actualizado_en:new Date().toISOString(), actualizado_por:panolUsuario()});
+  if(!DEMO_MODE) await sbFetch('/compras_panol_solicitudes?id=eq.'+s.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'});
+  Object.assign(s,upd);
+}
+async function panolSolEstado(id,est){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  try{ await panolSolGuardarCab(s,{estado:est, historial:solHist(s,est==='Anulada'?'Anulada':'Cambio de estado',est==='Anulada'?'Se anuló toda la solicitud':'Pasó a '+est)}); }catch(e){ toast('No se pudo cambiar el estado: '+(e.message||e)); return; }
+  toast('Solicitud '+s.nro_ot+': '+est); closeModal(); renderPanol();
+}
+window.panolSolEstado=panolSolEstado;
+async function panolSolBloquear(id,bloq){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s||!solPuedeGestionar()) return;
+  try{ await panolSolGuardarCab(s,{bloqueada:!!bloq, bloqueada_por:bloq?panolUsuario():null, bloqueada_en:bloq?new Date().toISOString():null, historial:solHist(s,bloq?'Bloqueada':'Desbloqueada',bloq?'Ya no se puede editar':'Se puede volver a editar')}); }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; }
+  toast(bloq?'Solicitud bloqueada: el solicitante ya no puede editarla':'Solicitud desbloqueada'); closeModal(); renderPanol();
+}
+window.panolSolBloquear=panolSolBloquear;
+function panolSolAnular(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  openModal('Anular solicitud OT '+s.nro_ot,'<div style="font-size:14px;line-height:1.7">¿Anular <b>toda</b> la solicitud <b>'+esc(s.nro_ot)+'</b>?'+(solProgreso(s).ent>0?'<br>Ya tiene entregas registradas: esos egresos <b>no se borran</b>; solo se cierra lo que falta.':'')+'<br><span style="color:var(--muted);font-size:12.5px">Para anular solo algunas unidades de un material, usá "Editar solicitud".</span></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" style="background:#b3261e" onclick="panolSolEstado('+id+',\'Anulada\')">Anular todo</button>');
+}
+window.panolSolAnular=panolSolAnular;
+function openPanolSolEntrega(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  if(!solPuedeGestionar()){ toast('Solo Pañol puede registrar entregas.'); return; }
+  const dep=panolDepDefecto(), deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si'), ahora=new Date(), pad=n=>String(n).padStart(2,'0');
+  const fecha=ahora.getFullYear()+'-'+pad(ahora.getMonth()+1)+'-'+pad(ahora.getDate()), hora=pad(ahora.getHours())+':'+pad(ahora.getMinutes());
+  const it=solItems(id).filter(i=>solPend(i)>1e-9);
+  const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
+    return '<tr data-item="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(pend,2)+' '+esc(i.um||'')+'</td><td style="text-align:right" class="sol-saldo" data-cod="'+esc(i.cod_articulo||'')+'">'+(sal==null?'—':fmtNum(sal,2))+'</td>'
+      +'<td><input type="number" step="any" min="0" max="'+pend+'" value="'+pend+'" class="sol-qty" style="width:90px;text-align:right;border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px"></td><td style="text-align:center"><input type="checkbox" class="sol-cerrar" title="Si entregás menos de lo pendiente, lo que falta se da por cerrado (no queda pendiente)"></td></tr>'; }).join('');
+  openModal('Entregar · OT '+s.nro_ot,
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Cargá lo que entregás <b>ahora</b> (puede ser menos de lo pedido: queda parcial). Se generan los egresos con el precio del mes de la fecha de entrega.</div>'
+    +'<div class="frow c2"><div class="field"><label>Fecha de entrega</label><input id="se_fecha" type="date" value="'+fecha+'"></div><div class="field"><label>Hora</label><input id="se_hora" type="time" value="'+hora+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Depósito</label><select id="se_dep" onchange="panolSolSaldos()"><option value="">— elegí —</option>'+deps.map(d=>'<option value="'+esc(d.codigo)+'"'+(String(d.codigo)===String(dep)?' selected':'')+'>'+esc(d.codigo+' · '+d.descripcion)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Retira (operario)</label><input id="se_oper" type="text" value="'+esc(s.solicitante||'')+'"></div></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pendiente</th><th>Saldo en el depósito</th><th>Entregar ahora</th><th title="Si entregás menos de lo pendiente, lo que falta se da por cerrado">Cerrar el resto</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="seBtn" onclick="panolSolEntregarOk('+id+')">Registrar entrega</button>', 'wide');
+}
+window.openPanolSolEntrega=openPanolSolEntrega;
+function panolSolSaldos(){ const dep=(document.getElementById('se_dep')||{}).value; document.querySelectorAll('.sol-saldo').forEach(td=>{ const c=td.dataset.cod; if(!c){ td.textContent='—'; return; } const v=panolSaldo(c,dep); td.textContent=v==null?'—':fmtNum(v,2); }); }
+window.panolSolSaldos=panolSolSaldos;
+async function panolSolEntregarOk(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const g=i=>(document.getElementById(i)||{}).value||'', fecha=g('se_fecha'), hora=g('se_hora'), dep=g('se_dep'), oper=g('se_oper').trim();
+  if(!fecha){ toast('Elegí la fecha de entrega'); return; }
+  const per=(+fecha.slice(0,4))*100+(+fecha.slice(5,7)); if(panolBloqueoCierre(per)) return;
+  const todas=[...document.querySelectorAll('tr[data-item]')].map(tr=>({it:solItems(id).find(x=>String(x.id)===tr.dataset.item), q:+tr.querySelector('.sol-qty').value||0, cerrar:tr.querySelector('.sol-cerrar').checked})).filter(x=>x.it);
+  const lineas=todas.filter(x=>x.q>0);
+  if(!lineas.length){ toast('Ingresá al menos una cantidad a entregar'); return; }
+  const exceso=lineas.find(x=>x.q>solPend(x.it)+1e-9); if(exceso){ toast('Una cantidad supera lo pendiente'); return; }
+  if(lineas.some(x=>x.it.cod_articulo)&&!dep){ toast('Elegí el depósito'); return; }
+  const btn=document.getElementById('seBtn'); if(btn){ btn.disabled=true; btn.textContent='Registrando…'; }
+  const rows=lineas.map(x=>{ const ra=x.it.cod_articulo?{cod:x.it.cod_articulo,libre:''}:{cod:'',libre:x.it.articulo_libre||''};
+    const r=panolArmarFila({fecha, horario:hora, ra, cant:x.q, um:x.it.um||'UNI', dest:s.destino_cod||'', serie:'', galpon:panolGalDefecto(), proceso:'HABITUAL', solp:'', oper, dep, coment:'OT '+s.nro_ot+(x.it.comentario?' · '+x.it.comentario:''), manual:null, auto:PANOL_AUTO_APROBAR, okPrevio:null});
+    r.ot=s.nro_ot; r.solicitud_id=s.id; return r; });
+  if(rows.some(r=>!r.proyecto_cod)){ if(btn){ btn.disabled=false; btn.textContent='Registrar entrega'; } toast('La solicitud no tiene un destino válido: no se puede generar el egreso.'); return; }
+  try{
+    if(DEMO_MODE){ DIC.panol_egresos=DIC.panol_egresos||[]; let k=Math.max(0,...DIC.panol_egresos.map(r=>+r.id||0)); rows.forEach(r=>{ DIC.panol_egresos.push({id:++k,...r}); }); }
+    else await sbEgr('/compras_panol_egresos','POST',rows);
+    const cierres=[];
+    for(const x of todas){
+      const nueva=(+x.it.cantidad_entregada||0)+x.q, resto=Math.max(0,solPend(x.it)-x.q), cierra=x.cerrar&&resto>1e-9, upd={};
+      if(x.q>0) upd.cantidad_entregada=nueva; if(cierra){ upd.cantidad_anulada=(+x.it.cantidad_anulada||0)+resto; cierres.push((x.it.cod_articulo||x.it.articulo_libre)+': se cierran '+fmtNum(resto,2)); }
+      if(!Object.keys(upd).length) continue;
+      if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+x.it.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); Object.assign(x.it,upd);
+    }
+    await panolSolGuardarCab(s,{estado:solEstadoCalc(s,solItems(id)), historial:solHist(s,'Entrega',lineas.map(x=>(x.it.cod_articulo||x.it.articulo_libre)+' × '+fmtNum(x.q,2)).join(', ')+' · depósito '+dep+(cierres.length?' · Cerrado el resto: '+cierres.join('; '):''))});
+    if(!DEMO_MODE) await reloadDB();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Registrar entrega'; } toast('No se pudo registrar la entrega: '+(e.message||e)+'. Revisá la lista de Egresos antes de repetirla.'); return; }
+  closeModal(); toast('Entrega registrada: '+rows.length+' egreso(s). Solicitud '+s.estado); renderPanol();
+}
+window.panolSolEntregarOk=panolSolEntregarOk;
+
+
+/* ---- Editar la solicitud (hasta que Pañol la bloquee): datos, cantidades, anular unidades, agregar o quitar materiales ---- */
+let _SOL_ED=null;
+function openPanolSolEditar(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  if(!solPuedeEditar(s)){ toast(s.bloqueada?'Pañol bloqueó esta solicitud: ya no se puede editar.':'Esta solicitud ya no se puede editar.'); return; }
+  _SOL_ED={id, k:0, quitar:new Set(), nuevos:[]};
+  const it=solItems(id), ds=panolDestinos(), inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
+  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(s.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
+  const filas=it.map(i=>{ const pend=solPend(i), fija=(+i.cantidad_entregada||0)+(+i.cantidad_anulada||0);
+    return '<tr data-id="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td>'
+      +'<td><input type="number" step="any" min="'+fija+'" value="'+i.cantidad+'" class="ed-cant" style="width:80px;text-align:right;'+inp+'" title="Cantidad pedida. No puede ser menor a lo entregado más lo ya anulado ('+fmtNum(fija,2)+')"></td>'
+      +'<td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,2)+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,2)+'</td>'
+      +'<td><input type="number" step="any" min="0" value="" placeholder="0" class="ed-anul" style="width:80px;text-align:right;'+inp+'" title="Unidades que se anulan ahora (hasta '+fmtNum(pend,2)+' pendientes)"></td>'
+      +'<td><input type="date" value="'+esc(String(i.fecha_necesidad||'').slice(0,10))+'" class="ed-fec" style="'+inp+'"></td><td><input type="text" value="'+esc(i.comentario||'')+'" class="ed-com" style="width:150px;'+inp+'"></td>'
+      +'<td>'+((+i.cantidad_entregada||0)+(+i.cantidad_anulada||0)===0?'<button class="iconbtn del" title="Quitar este material" onclick="panolSolEdQuitar(this,'+i.id+')">'+ICO.del+'</button>':'')+'</td></tr>'; }).join('');
+  openModal('Editar solicitud OT '+s.nro_ot,
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(s.bloqueada?'Pañol la tiene bloqueada, pero vos podés editarla por ser de Pañol. ':'Podés cambiarla hasta que Pañol la bloquee. ')+'Para <b>anular unidades</b> de un material cargá cuántas en "Anular ahora"; lo ya entregado no se toca. Todo queda en el historial.</div>'
+    +'<div class="frow c2"><div class="field"><label>Destino (IF / obra)</label><select id="ed_dest">'+destOpts+'</select></div><div class="field"><label>Fecha de necesidad</label><input id="ed_fnec" type="date" value="'+esc(String(s.fecha_necesidad||'').slice(0,10))+'"></div></div>'
+    +'<div class="field"><label>Comentario general</label><input id="ed_com" type="text" value="'+esc(s.comentario||'')+'"></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh"><table class="grid" style="font-size:11.5px" id="tblSolEd"><thead><tr><th>Artículo</th><th>Cantidad pedida</th><th>Entregado</th><th>Ya anulado</th><th>Anular ahora</th><th>Fecha de necesidad</th><th>Comentario</th><th></th></tr></thead><tbody id="edBody">'+filas+'</tbody></table></div>'
+    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="panolSolEdNuevo()">'+ICO.plus+'Agregar material</button></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Cancelar</button><button class="btn" id="edBtn" onclick="panolSolEditarGuardar()">Guardar cambios</button>', 'xwide');
+}
+window.openPanolSolEditar=openPanolSolEditar;
+function panolSolEdQuitar(btn,itemId){ _SOL_ED.quitar.add(String(itemId)); const tr=btn.closest('tr'); tr.style.display='none'; }
+window.panolSolEdQuitar=panolSolEdQuitar;
+function panolSolEdNuevo(){
+  const k=++_SOL_ED.k, inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px', tr=document.createElement('tr'); tr.dataset.nuevo=k;
+  tr.innerHTML='<td><input id="ed_art_'+k+'" class="ed-art" style="width:300px;'+inp+'" placeholder="Código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt(\'ed_art_'+k+'\')" oninput="comboPanolArt(\'ed_art_'+k+'\')" onkeydown="panolComboKey(event)" onblur="comboHideDelayed()"></td>'
+    +'<td><input type="number" step="any" min="0" class="ed-cant" style="width:80px;text-align:right;'+inp+'"></td><td colspan="3"><select class="ed-um" style="'+inp+'">'+panolUmOptionsHtml('UNI')+'</select></td>'
+    +'<td><input type="date" class="ed-fec" value="'+(document.getElementById('ed_fnec')||{}).value+'" style="'+inp+'"></td><td><input type="text" class="ed-com" style="width:150px;'+inp+'"></td><td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td>';
+  document.getElementById('edBody').appendChild(tr);
+}
+window.panolSolEdNuevo=panolSolEdNuevo;
+async function panolSolEditarGuardar(){
+  const E=_SOL_ED, s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(E.id)); if(!s) return;
+  if(!solPuedeEditar(s)){ toast('Esta solicitud ya no se puede editar.'); return; }
+  const g=i=>(document.getElementById(i)||{}).value||'', dest=g('ed_dest'), fnec=g('ed_fnec'), coment=g('ed_com').trim();
+  if(!dest){ toast('Elegí el destino'); return; } if(!fnec){ toast('Ingresá la fecha de necesidad'); return; }
+  const items=solItems(E.id), cambios=[], upds=[], nuevos=[], quitados=[];
+  for(const tr of document.querySelectorAll('#edBody tr[data-id]')){
+    const it=items.find(x=>String(x.id)===tr.dataset.id); if(!it) continue;
+    const nom=(it.cod_articulo||it.articulo_libre||'');
+    if(E.quitar.has(String(it.id))){ quitados.push(it); cambios.push('Se quitó '+nom); continue; }
+    const cant=+tr.querySelector('.ed-cant').value, anul=+tr.querySelector('.ed-anul').value||0, fec=tr.querySelector('.ed-fec').value||null, com=tr.querySelector('.ed-com').value.trim()||null;
+    if(!(cant>0)){ toast('La cantidad de '+nom+' tiene que ser mayor a 0 (para sacarlo, usá el tachito)'); return; }
+    if(anul<0){ toast('No se puede anular una cantidad negativa'); return; }
+    const anulTot=(+it.cantidad_anulada||0)+anul;
+    if(cant-anulTot < (+it.cantidad_entregada||0)-1e-9){ toast(nom+': la cantidad vigente no puede ser menor a lo ya entregado ('+fmtNum(it.cantidad_entregada||0,2)+')'); return; }
+    const u={}; 
+    if(Math.abs(cant-(+it.cantidad))>1e-9){ u.cantidad=cant; cambios.push(nom+': pedido '+fmtNum(it.cantidad,2)+' → '+fmtNum(cant,2)); }
+    if(anul>0){ u.cantidad_anulada=anulTot; cambios.push(nom+': se anulan '+fmtNum(anul,2)+' unidad(es)'); }
+    if((fec||'')!==String(it.fecha_necesidad||'').slice(0,10)){ u.fecha_necesidad=fec; cambios.push(nom+': fecha de necesidad '+(fec?fmtDate(fec):'—')); }
+    if((com||'')!==(it.comentario||'')){ u.comentario=com; cambios.push(nom+': comentario'); }
+    if(Object.keys(u).length) upds.push({it,u});
+  }
+  for(const tr of document.querySelectorAll('#edBody tr[data-nuevo]')){
+    const txt=tr.querySelector('.ed-art').value.trim(), cant=+tr.querySelector('.ed-cant').value;
+    if(!txt&&!cant) continue; if(!txt){ toast('Falta el artículo en un material nuevo'); return; } if(!(cant>0)){ toast('Falta la cantidad de '+txt); return; }
+    const ra=panolArtResolver(txt);
+    nuevos.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', fecha_necesidad:tr.querySelector('.ed-fec').value||fnec, comentario:tr.querySelector('.ed-com').value.trim()||null, cantidad_entregada:0, cantidad_anulada:0});
+    cambios.push('Se agregó '+(ra.cod||txt)+' × '+fmtNum(cant,2));
+  }
+  const dTxt=ppResolverDestino(dest); const nuevoDest=dTxt?dTxt.cod:dest;
+  const cab={}; if(String(nuevoDest)!==String(s.destino_cod||'')){ cab.destino_cod=nuevoDest; cab.destino_txt=(dTxt&&dTxt.desc)?nuevoDest+' — '+dTxt.desc:nuevoDest; cambios.push('Destino: '+nuevoDest); }
+  if(fnec!==String(s.fecha_necesidad||'').slice(0,10)){ cab.fecha_necesidad=fnec; cambios.push('Fecha de necesidad: '+fmtDate(fnec)); }
+  if(coment!==(s.comentario||'')){ cab.comentario=coment||null; cambios.push('Comentario general'); }
+  if(!cambios.length){ toast('No hay cambios para guardar'); return; }
+  if(!items.length&&!nuevos.length){ toast('La solicitud tiene que quedar con al menos un material'); return; }
+  const btn=document.getElementById('edBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  try{
+    if(DEMO_MODE){
+      upds.forEach(x=>Object.assign(x.it,x.u)); DIC.panol_solicitud_items=(DIC.panol_solicitud_items||[]).filter(i=>!quitados.includes(i));
+      let k=Math.max(0,...(DIC.panol_solicitud_items||[]).map(i=>+i.id||0)); nuevos.forEach(n=>{ DIC.panol_solicitud_items.push({id:++k,solicitud_id:s.id,...n}); });
+    }else{
+      for(const x of upds) await sbFetch('/compras_panol_solicitud_items?id=eq.'+x.it.id,{method:'PATCH',body:JSON.stringify(x.u),prefer:'return=minimal'});
+      for(const q of quitados) await sbFetch('/compras_panol_solicitud_items?id=eq.'+q.id,{method:'DELETE',prefer:'return=minimal'});
+      if(nuevos.length) await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(nuevos.map(n=>({...n,solicitud_id:s.id}))),prefer:'return=minimal'});
+      DIC.panol_solicitud_items=await sbFetchAll('/compras_panol_solicitud_items?select=*&order=id.asc');
+    }
+    await panolSolGuardarCab(s,Object.assign(cab,{estado:solEstadoCalc(s,solItems(s.id)), historial:solHist(s,'Editada',cambios.join(' · '))}));
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Guardar cambios'; } if(!DEMO_MODE) await panolSolCargar(); toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió el SQL de solicitudes actualizado?)'); return; }
+  toast('Solicitud actualizada ('+cambios.length+' cambio'+(cambios.length>1?'s':'')+')'); _SOL_ED=null; openPanolSolDetalle(s.id); renderPanol();
+}
+window.panolSolEditarGuardar=panolSolEditarGuardar;
+
 let PANOL_EGQ='';
 let PANOL_TAB='egresos';
 function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
@@ -3329,7 +3691,7 @@ function panolCamposAprobacion(res, precio){
 function panolPendAprobables(r){ return panolCsv(r.alerta).filter(a=>PANOL_ALERTAS_APROBABLES.includes(a)); }
 // Escribe en compras_panol_egresos; si todavía faltan las columnas nuevas (aux_tipo, alerta_ok*) reintenta sin ellas y avisa
 let EGR_COL_FALTA=false;
-const EGR_COLS_NUEVAS=['aux_tipo','alerta_ok','alerta_ok_por','alerta_ok_en','alerta_ok_precio'];
+const EGR_COLS_NUEVAS=['aux_tipo','alerta_ok','alerta_ok_por','alerta_ok_en','alerta_ok_precio','ot','solicitud_id'];
 async function sbEgr(path, method, body, prefer){
   const q=x=>{ const y={...x}; EGR_COLS_NUEVAS.forEach(k=>delete y[k]); return y; };
   const sinNuevas=b=>Array.isArray(b)?b.map(q):q(b);
@@ -14784,6 +15146,7 @@ async function reloadDicts(background){
         const pg = await sbFetchAll('/compras_panol_galpones?select=*&order=nombre.asc');
         if(pg) DIC.panol_galpones = pg;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ await panolSolCargar(); })(),
       (async()=>{ try{
         const pm = await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
         if(pm){ DIC.panol_precios_mes = pm; PANOL_PRECIOS_ERR=''; }
