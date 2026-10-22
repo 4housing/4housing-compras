@@ -2767,7 +2767,10 @@ window.renderPanol=renderPanol;
 const AN_COLORS=['#2f6f5e','#d98e04','#3a6ea5','#b5483a','#7a5ca8','#4f9d9d','#9c8a3b','#c06a8f'];
 let PANOL_AN={vista:'resumen', desde:'', hasta:'', dest:'', art:'', oper:'', agr:'dest', mon:'ars', med:'imp', sort:null};
 let _AN_LAST=null;
-function anSet(k,v){ PANOL_AN[k]=v; if(k==='vista'||k==='agr'||k==='mon'||k==='med') PANOL_AN.sort=null; renderPanol(); }
+function anSet(k,v){
+  // Fechas: mientras se escribe el año el navegador avisa con años incompletos (0002, 0020…); se ignoran hasta que haya una fecha completa, para no pisar lo que se está tipeando
+  if((k==='desde'||k==='hasta') && v && !(/^\d{4}-\d{2}-\d{2}$/.test(v) && +v.slice(0,4)>=2000)) return;
+  PANOL_AN[k]=v; if(k==='vista'||k==='agr'||k==='mon'||k==='med') PANOL_AN.sort=null; renderPanol(); }
 function anLimpiar(){ Object.assign(PANOL_AN,{desde:'',hasta:'',dest:'',art:'',oper:''}); renderPanol(); }
 function anSort(ev,k){ if(ev&&ev.target&&ev.target.closest&&ev.target.closest('.xlfbtn,.col-resizer')) return; const c=PANOL_AN.sort; PANOL_AN.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
 window.anSet=anSet; window.anLimpiar=anLimpiar; window.anSort=anSort;
