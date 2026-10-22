@@ -3125,22 +3125,25 @@ function renderPanolDic(){
     +'<button class="btn ghost sm" onclick="panolDicToggle(\''+k+'\','+r.id+')">'+(r.activo===false?'Habilitar':'Inhabilitar')+'</button>'
     +(usos?'':'<button class="iconbtn del" title="Eliminar (nunca se usó)" onclick="askPanolDicDel(\''+k+'\','+r.id+')">'+ICO.del+'</button>')+'</div></td>';
   const badge=r=>r.activo===false?'<span class="badge b-gris">Inhabilitado</span>':'<span class="badge b-verde">Activo</span>';
-  const galRows=galS.length?galS.map(r=>{ const u=panolDicUsos('gal',r); return '<tr><td>'+esc(r.nombre)+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('gal',r,u)+'</tr>'; }).join('')
+  const galRows=galS.length?galS.map(r=>{ const u=panolDicUsos('gal',r); return '<tr data-q="'+esc(_syncFold([r.nombre,estado(r)].join(' ')))+'"><td>'+esc(r.nombre)+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('gal',r,u)+'</tr>'; }).join('')
     :'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">Sin galpones'+(gal.length?' con esos filtros':' cargados')+'.</td></tr>';
-  const opeRows=opeS.length?opeS.map(r=>{ const u=panolDicUsos('ope',r); return '<tr><td>'+esc(r.puesto||'')+'</td><td>'+esc(r.nombre)+'</td><td>'+esc(r.nombre_pila||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('ope',r,u)+'</tr>'; }).join('')
+  const opeRows=opeS.length?opeS.map(r=>{ const u=panolDicUsos('ope',r); return '<tr data-q="'+esc(_syncFold([r.puesto,r.nombre,r.nombre_pila,estado(r)].join(' ')))+'"><td>'+esc(r.puesto||'')+'</td><td>'+esc(r.nombre)+'</td><td>'+esc(r.nombre_pila||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('ope',r,u)+'</tr>'; }).join('')
     :'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted)">Sin operarios'+(ope.length?' con esos filtros':' cargados todavía: importalos desde el Excel o cargalos a mano')+'.</td></tr>';
   C().innerHTML=panolTabs()
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Galpones</h3><span class="meta">'+galS.length+' de '+gal.length+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pgal')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolGal\')">Auto-ajustar columnas</button>'
       +'<button class="btn sm" onclick="openPanolDicForm(\'gal\')">'+ICO.plus+'Nuevo galpón</button></span></div>'
++'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolGal" placeholder="Buscar galpón…" oninput="spFiltrar(this,\'tblPanolGal\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
       +'<div class="tbl-hscroll tbl-compact"><table class="grid" id="tblPanolGal"><thead><tr>'+_pnTh('Galpón',null,'nombre','pgal')+_pnTh('Estado','estado','estado','pgal')+_pnTh('Usos',null,'usos','pgal')+'<th style="width:230px"></th></tr></thead><tbody>'+galRows+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Operarios</h3><span class="meta">'+opeS.length+' de '+ope.length+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pope')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolOpe\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="openPanolOperImport()">Importar desde Excel</button>'
       +'<button class="btn sm" onclick="openPanolDicForm(\'ope\')">'+ICO.plus+'Nuevo operario</button></span></div>'
++'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolOpe" placeholder="Buscar por nombre, nombre de pila o puesto…" oninput="spFiltrar(this,\'tblPanolOpe\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
       +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>';
+  ['tblPanolGal','tblPanolOpe'].forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp&&SP_Q[t]){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
 }
 window.renderPanolDic=renderPanolDic;
 function openPanolDicForm(k,id){
