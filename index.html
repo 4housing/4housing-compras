@@ -2750,7 +2750,7 @@ let PANOL_AN={vista:'resumen', desde:'', hasta:'', dest:'', art:'', oper:'', agr
 let _AN_LAST=null;
 function anSet(k,v){ PANOL_AN[k]=v; if(k==='vista'||k==='agr'||k==='mon'||k==='med') PANOL_AN.sort=null; renderPanol(); }
 function anLimpiar(){ Object.assign(PANOL_AN,{desde:'',hasta:'',dest:'',art:'',oper:''}); renderPanol(); }
-function anSort(k){ const c=PANOL_AN.sort; PANOL_AN.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
+function anSort(ev,k){ if(ev&&ev.target&&ev.target.closest&&ev.target.closest('.xlfbtn,.col-resizer')) return; const c=PANOL_AN.sort; PANOL_AN.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
 window.anSet=anSet; window.anLimpiar=anLimpiar; window.anSort=anSort;
 function anClasif(cod){ return (typeof CLASIF_ALL!=='undefined'?CLASIF_ALL:[]).find(c=>String(c.cod)===String(cod)); }
 function anDestTxt(cod){ if(!cod) return '(sin destino)'; const d=anClasif(cod); return cod+(d&&d.desc?' · '+d.desc:''); }
@@ -2805,14 +2805,23 @@ function anApiladas(meses, series){
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px;height:auto" role="img">'+g+'</svg>'+leg;
 }
 function anTabla(id, titulo, cols, rows, total){
+  // Filtros tipo Excel por columna (las de texto y la fecha); los importes se ordenan con clic en el título
+  const ns='an_'+PANOL_AN.vista;
+  xlfRegister(ns,{ rows:()=>rows, onChange:renderPanol, dateVal:r=>r._fi||'', val:(r,col)=>{ const v=r[col]; return v==null||v===''?'(vacío)':String(v); } });
+  const todas=rows; rows=rows.filter(r=>xlfPass(ns,r));
   const S=PANOL_AN.sort;
   if(S){ const c=cols.find(x=>x.k===S.k); if(c) rows=rows.slice().sort((a,b)=>{ const x=a[S.k], y=b[S.k]; return (c.num?((+x||0)-(+y||0)):String(x==null?'':x).localeCompare(String(y==null?'':y),'es'))*S.dir; }); }
+  if(total && rows.length!==todas.length){ total=Object.assign({},total); cols.forEach(c=>{ if(c.num&&!c.nosum) total[c.k]=rows.reduce((a,r)=>a+(+r[c.k]||0),0); else if(c.num) total[c.k]=null; }); }
   _AN_LAST={titulo, cols, rows, total};
-  const cell=(c,v)=>c.num?((c.blank&&!(+v))?'':(c.mon?panolMon(c.mon,fmtNum(v,2)):fmtNum(v,c.dec==null?2:c.dec))):esc(v==null?'':v);
-  const th=cols.map(c=>'<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="anSort(\''+c.k+'\')">'+esc(c.h)+(S&&S.k===c.k?(S.dir===1?' ▲':' ▼'):'')+'</th>').join('');
+  const cell=(c,v)=>c.num?((c.blank&&!(+v))?'':(v==null?'':(c.mon?panolMon(c.mon,fmtNum(v,2)):fmtNum(v,c.dec==null?2:c.dec)))):esc(v==null?'':v);
+  const th=cols.map(c=>{
+    const fl=S&&S.k===c.k?(S.dir===1?' ▲':' ▼'):'';
+    if(c.num) return '<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="anSort(event,\''+c.k+'\')">'+esc(c.h)+fl+'</th>';
+    return xlfTh(ns,c.h,c.fecha?'__fecha__':c.k).replace('<th style="white-space:nowrap">'+esc(c.h),'<th style="white-space:nowrap;cursor:pointer" title="Ordenar" onclick="anSort(event,\''+c.k+'\')">'+esc(c.h)+fl);
+  }).join('');
   const tr=rows.map(r=>'<tr>'+cols.map(c=>'<td'+(c.num?' style="text-align:right"':'')+'>'+cell(c,r[c.k])+'</td>').join('')+'</tr>').join('');
   const tf=total?'<tfoot><tr style="font-weight:700;background:var(--bg-soft,#f4f6f4)">'+cols.map(c=>'<td'+(c.num?' style="text-align:right"':'')+'>'+cell(c,total[c.k])+'</td>').join('')+'</tr></tfoot>':'';
-  return '<div class="tbl-hscroll tbl-compact" style="max-height:480px"><table class="grid" id="'+id+'" style="font-size:11.5px"><thead><tr>'+th+'</tr></thead><tbody>'+(tr||'<tr><td colspan="'+cols.length+'" style="text-align:center;padding:16px;color:var(--muted)">Sin datos con estos filtros.</td></tr>')+'</tbody>'+tf+'</table></div>';
+  return '<div class="tbl-hscroll tbl-compact" style="max-height:480px"><table class="grid tbl-ajustada" id="'+id+'" style="font-size:11.5px"><thead><tr>'+th+'</tr></thead><tbody>'+(tr||'<tr><td colspan="'+cols.length+'" style="text-align:center;padding:16px;color:var(--muted)">Sin datos con estos filtros.</td></tr>')+'</tbody>'+tf+'</table></div>';
 }
 function anExport(){
   const t=_AN_LAST; if(!t||!t.rows.length){ toast('No hay datos para exportar'); return; }
@@ -2829,7 +2838,7 @@ function anVistaResumen(rows){
   const g=anSumar(rows,anGrupo,anMonto), art=anSumar(rows,anArtTxt,anMonto), totV=g.reduce((a,x)=>a+x.v,0);
   const kpi=(l,v)=>'<div style="flex:1;min-width:150px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 14px;background:#fff"><div style="font-size:11px;color:var(--muted)">'+l+'</div><div style="font-size:18px;font-weight:700">'+v+'</div></div>';
   const ars=rows.reduce((a,r)=>a+(+r.total_ars||0),0), usd=rows.reduce((a,r)=>a+(+r.total_usd||0),0);
-  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]},{k:'n',h:'Movimientos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'},{k:'pct',h:'% del total',num:1,dec:1}];
+  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]},{k:'n',h:'Movimientos',num:1,dec:0},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'},{k:'pct',h:'% del total',num:1,dec:1,nosum:1}];
   const tr=g.map(x=>({g:x.k,n:x.n,ars:x.ars,usd:x.usd,pct:totV?x.v/totV*100:0}));
   return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+kpi('Total ARS','$ '+fmtNum(ars,2))+kpi('Total USD','US$ '+fmtNum(usd,2))+kpi('Movimientos',fmtNum(rows.length,0))+kpi('Destinos / grupos',g.length)+kpi('Artículos distintos',art.length)+'</div>'
     +'<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px"><div style="flex:1;min-width:360px"><h4 style="margin:0 0 6px;font-size:13px">Total por '+({dest:'destino',cat:'categoría',eerr:'rubro EERR'})[PANOL_AN.agr]+' ('+anMonLbl()+')</h4>'+anBarras(g.slice(0,15).map(x=>({l:x.k,v:x.v})))+'</div>'
@@ -2842,7 +2851,7 @@ function anVistaMensual(rows){
   rows.forEach(r=>{ const k=anGrupo(r), m=String(r.fecha||'').slice(0,7); (mm[k]=mm[k]||{})[m]=(mm[k][m]||0)+anMonto(r); });
   const top=g.slice(0,7), resto=g.slice(7), series=top.map(x=>({n:x.k,vals:mm[x.k]||{}}));
   if(resto.length){ const o={}; resto.forEach(x=>Object.entries(mm[x.k]||{}).forEach(([m,v])=>{ o[m]=(o[m]||0)+v; })); series.push({n:'Otros ('+resto.length+')',vals:o,color:'#8a8f98'}); }
-  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]}].concat(meses.map(m=>({k:'m'+m.k,h:m.l,num:1,blank:1}))).concat([{k:'t',h:'Total',num:1},{k:'p',h:'Promedio mensual',num:1}]);
+  const cols=[{k:'g',h:({dest:'Destino',cat:'Categoría',eerr:'Rubro EERR'})[PANOL_AN.agr]}].concat(meses.map(m=>({k:'m'+m.k,h:m.l,num:1,blank:1}))).concat([{k:'t',h:'Total',num:1},{k:'p',h:'Promedio mensual',num:1,nosum:1}]);
   const tr=g.map(x=>{ const o={g:x.k,t:x.v,p:meses.length?x.v/meses.length:0}; meses.forEach(m=>{ o['m'+m.k]=(mm[x.k]||{})[m.k]||0; }); return o; });
   const tot={g:'TOTAL',t:g.reduce((a,x)=>a+x.v,0)}; tot.p=meses.length?tot.t/meses.length:0; meses.forEach(m=>{ tot['m'+m.k]=g.reduce((a,x)=>a+((mm[x.k]||{})[m.k]||0),0); });
   return '<h4 style="margin:0 0 6px;font-size:13px">Gasto mes a mes ('+anMonLbl()+')</h4>'+anApiladas(meses,series)+'<div style="height:12px"></div>'+anTabla('tblAn','Por mes',cols,tr,tot);
@@ -2870,8 +2879,8 @@ function anVistaSolicitantes(rows){
 }
 function anVistaDetalle(rows){
   const l=rows.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id)), cortado=l.length>1000;
-  const cols=[{k:'f',h:'Fecha'},{k:'d',h:'Destino'},{k:'a',h:'Artículo'},{k:'q',h:'Cantidad',num:1},{k:'um',h:'U.M.'},{k:'o',h:'Solicitante'},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'}];
-  const tr=l.slice(0,1000).map(r=>({f:fmtDate(r.fecha),d:anDestTxt(r.proyecto_cod),a:anArtTxt(r),q:+r.cantidad||0,um:r.um||'',o:r.operario||'',ars:+r.total_ars||0,usd:+r.total_usd||0}));
+  const cols=[{k:'f',h:'Fecha',fecha:1},{k:'d',h:'Destino'},{k:'a',h:'Artículo'},{k:'q',h:'Cantidad',num:1},{k:'um',h:'U.M.'},{k:'o',h:'Solicitante'},{k:'ars',h:'Total ARS',num:1,mon:'$'},{k:'usd',h:'Total USD',num:1,mon:'US$'}];
+  const tr=l.slice(0,1000).map(r=>({_fi:String(r.fecha||'').slice(0,10),f:fmtDate(r.fecha),d:anDestTxt(r.proyecto_cod),a:anArtTxt(r),q:+r.cantidad||0,um:r.um||'',o:r.operario||'',ars:+r.total_ars||0,usd:+r.total_usd||0}));
   return (cortado?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Se muestran los primeros 1.000 de '+l.length+' movimientos (el Excel exportado trae los mismos 1.000: acotá con los filtros).</div>':'')
     +anTabla('tblAn','Detalle',cols,tr,{f:'TOTAL',ars:rows.reduce((a,r)=>a+(+r.total_ars||0),0),usd:rows.reduce((a,r)=>a+(+r.total_usd||0),0)});
 }
@@ -2888,7 +2897,7 @@ function renderPanolAnalisis(){
   else cuerpo=({resumen:anVistaResumen,mensual:anVistaMensual,articulos:anVistaArticulos,solic:anVistaSolicitantes,detalle:anVistaDetalle})[A.vista](rows);
   C().innerHTML=panolTabs()
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Análisis de erogaciones</h3><span class="meta">'+fmtNum(rows.length,0)+' de '+fmtNum(todas.length,0)+' movimientos'+(hay?' (filtrado)':'')+'</span>'
-    +'<span style="margin-left:auto;display:flex;gap:8px"><button class="btn ghost sm" onclick="tblAutofit(\'#tblAn\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="anExport()">Exportar Excel</button></span></div>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center">'+xlfClearAllBtn('an_'+A.vista).replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblAn\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="anExport()">Exportar Excel</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
       +inp('desde',A.desde,'date','Desde')+inp('hasta',A.hasta,'date','Hasta')
       +sel('dest',A.dest,[['','Todos los destinos']].concat(dests.map(d=>[d.c,d.l])),'Destino / proyecto')
@@ -2912,7 +2921,7 @@ async function panolRefCargar(){
   catch(e){ PANOL_REF=[]; PANOL_REF_ERR=String(e.message||e); }
 }
 function concSet(k,v){ PANOL_CONC[k]=v; renderPanol(); }
-function concSort(k){ const c=PANOL_CONC.sort; PANOL_CONC.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
+function concSort(ev,k){ if(ev&&ev.target&&ev.target.closest&&ev.target.closest('.xlfbtn,.col-resizer')) return; const c=PANOL_CONC.sort; PANOL_CONC.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
 window.concSet=concSet; window.concSort=concSort;
 const _cnN=s=>String(s||'').replace(/\s+/g,' ').trim().toUpperCase();
 function panolConcCalcular(per){
@@ -2937,17 +2946,18 @@ function panolConcCuerpo(per){
   const totApp=R.dest.reduce((a,x)=>a+x.app,0), totRef=R.dest.reduce((a,x)=>a+x.ref,0);
   const nPrecio=R.art.filter(x=>x.estado==='Precio distinto').length, nCant=R.art.filter(x=>x.estado==='Cantidad distinta').length, nSolo=R.art.filter(x=>/^Solo/.test(x.estado)).length;
   const kpi=(l,v,warn)=>'<div style="flex:1;min-width:160px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 14px;background:#fff"><div style="font-size:11px;color:var(--muted)">'+l+'</div><div style="font-size:17px;font-weight:700;'+(warn?'color:#b3261e':'')+'">'+v+'</div></div>';
-  const th=(k,l)=>'<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="concSort(\''+k+'\')">'+l+(F.sort&&F.sort.k===k?(F.sort.dir===1?' ▲':' ▼'):'')+'</th>';
+  xlfRegister('concart',{ rows:()=>R.art, onChange:renderPanol, val:(r,col)=>col==='estado'?r.estado:r.nombre });
+  const th=(k,l)=>{ const fl=F.sort&&F.sort.k===k?(F.sort.dir===1?' ▲':' ▼'):''; if(k==='nombre'||k==='estado') return xlfTh('concart',l,k).replace('<th style="white-space:nowrap">'+esc(l),'<th style="white-space:nowrap;cursor:pointer" title="Ordenar" onclick="concSort(event,\''+k+'\')">'+esc(l)+fl); return '<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="concSort(event,\''+k+'\')">'+l+fl+'</th>'; };
   const ord=(rows,def)=>{ const S=F.sort; if(!S) return rows.sort(def); return rows.sort((a,b)=>{ const x=a[S.k], y=b[S.k]; return (typeof x==='number'||typeof y==='number'?((+x||0)-(+y||0)):String(x||'').localeCompare(String(y||''),'es'))*S.dir; }); };
   const dRows=R.dest.map(x=>({...x,dif:x.app-x.ref,dl:(x.k.startsWith('?')?'(sin resolver) '+x.k.slice(1):anDestTxt(x.k))})).sort((a,b)=>Math.abs(b.dif)-Math.abs(a.dif));
-  const tDest='<div class="tbl-hscroll tbl-compact" style="max-height:300px"><table class="grid" style="font-size:11.5px" id="tblConcDest"><thead><tr><th>Destino</th><th>Movs. app</th><th>Total app (ARS)</th><th>Total referencia (ARS)</th><th>Diferencia (app − ref.)</th></tr></thead><tbody>'
+  const tDest='<div class="tbl-hscroll tbl-compact" style="max-height:300px"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblConcDest"><thead><tr><th>Destino</th><th>Movs. app</th><th>Total app (ARS)</th><th>Total referencia (ARS)</th><th>Diferencia (app − ref.)</th></tr></thead><tbody>'
     +dRows.map(x=>'<tr><td>'+esc(x.dl)+'</td><td style="text-align:right">'+x.n+'</td><td style="text-align:right">'+fmtNum(x.app,2)+'</td><td style="text-align:right">'+fmtNum(x.ref,2)+'</td><td style="text-align:right;'+(Math.abs(x.dif)>=1?'color:#b3261e;font-weight:600':'color:#2f6f5e')+'">'+fmtNum(x.dif,2)+'</td></tr>').join('')
     +'</tbody><tfoot><tr style="font-weight:700"><td>TOTAL</td><td style="text-align:right">'+R.app.length+'</td><td style="text-align:right">'+fmtNum(totApp,2)+'</td><td style="text-align:right">'+fmtNum(totRef,2)+'</td><td style="text-align:right">'+fmtNum(totApp-totRef,2)+'</td></tr></tfoot></table></div>';
   const words=F.q.toLowerCase().split(/\s+/).filter(Boolean);
-  let aRows=R.art.filter(x=>(F.f==='todo'||(F.f==='dif'?x.estado!=='OK':F.f==='precio'?x.estado==='Precio distinto':F.f==='cant'?x.estado==='Cantidad distinta':/^Solo/.test(x.estado)))&&(!words.length||words.every(w=>x.nombre.toLowerCase().includes(w))));
+  let aRows=R.art.filter(x=>xlfPass('concart',x)&&(F.f==='todo'||(F.f==='dif'?x.estado!=='OK':F.f==='precio'?x.estado==='Precio distinto':F.f==='cant'?x.estado==='Cantidad distinta':/^Solo/.test(x.estado)))&&(!words.length||words.every(w=>x.nombre.toLowerCase().includes(w))));
   ord(aRows,(a,b)=>Math.abs(b.dt)-Math.abs(a.dt)); window._CONC_ROWS=aRows;
   const cerr=panolPeriodoCerrado(per), puede=canEditOG()&&!cerr;
-  const tArt='<div class="tbl-hscroll tbl-compact" style="max-height:520px"><table class="grid" style="font-size:11.5px" id="tblConcArt"><thead><tr>'+th('nombre','Artículo')+th('estado','Estado')+th('qa','Cant. app')+th('qr','Cant. ref.')+th('pu','Precio unit. app')+th('ru','Precio unit. ref.')+th('ta','Total app')+th('tr','Total ref.')+th('dt','Diferencia')+'<th></th></tr></thead><tbody>'
+  const tArt='<div class="tbl-hscroll tbl-compact" style="max-height:520px"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblConcArt"><thead><tr>'+th('nombre','Artículo')+th('estado','Estado')+th('qa','Cant. app')+th('qr','Cant. ref.')+th('pu','Precio unit. app')+th('ru','Precio unit. ref.')+th('ta','Total app')+th('tr','Total ref.')+th('dt','Diferencia')+'<th></th></tr></thead><tbody>'
     +(aRows.length?aRows.slice(0,600).map((x,i)=>'<tr><td>'+esc(x.nombre)+'</td><td><span class="badge '+(x.estado==='OK'?'b-verde':'b-rojo')+'">'+esc(x.estado)+'</span></td><td style="text-align:right">'+fmtNum(x.qa,2)+'</td><td style="text-align:right">'+fmtNum(x.qr,2)+'</td>'
       +'<td style="text-align:right"'+(x.multi?' title="Hay más de un precio para este artículo en la app (promedio ponderado)"':'')+'>'+fmtNum(x.pu,2)+(x.multi?' *':'')+'</td><td style="text-align:right">'+fmtNum(x.ru,2)+'</td><td style="text-align:right">'+fmtNum(x.ta,2)+'</td><td style="text-align:right">'+fmtNum(x.tr,2)+'</td>'
       +'<td style="text-align:right;'+(Math.abs(x.dt)>=1?'color:#b3261e;font-weight:600':'')+'">'+fmtNum(x.dt,2)+'</td>'
@@ -2960,7 +2970,7 @@ function panolConcCuerpo(per){
     +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Mostrar<select onchange="concSet(\'f\',this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+[['dif','Solo con diferencia'],['precio','Solo precio distinto'],['cant','Solo cantidad distinta'],['solo','Solo sin par'],['todo','Todos']].map(o=>'<option value="'+o[0]+'"'+(F.f===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select></label>'
     +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Destino<select onchange="concSet(\'dest\',this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px;max-width:240px">'+destOpts.map(o=>'<option value="'+esc(o[0])+'"'+(F.dest===o[0]?' selected':'')+'>'+esc(o[1])+'</option>').join('')+'</select></label>'
     +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar artículo<input value="'+esc(F.q)+'" onchange="concSet(\'q\',this.value)" placeholder="código o nombre…" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px;width:200px"></label>'
-    +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblConcArt\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="panolConcExportar()">Exportar Excel</button></div>'
+    +''+xlfClearAllBtn('concart').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblConcArt\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="panolConcExportar()">Exportar Excel</button></div>'
     +(cerr?'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Período cerrado: los precios están congelados, no se pueden cambiar desde acá.</div>':'')
     +tArt+'<div style="font-size:11px;color:var(--muted);padding:6px 4px">Diferencia = total app − total referencia. Los precios de la app salen del mes cargado; "Usar precio ref." los reemplaza (como precio manual) en todas las filas de ese artículo del período, previa confirmación.</div>';
 }
@@ -3324,6 +3334,7 @@ function renderPanolErog(){
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
       +'<button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button>'
+      +'<button class="btn ghost sm" onclick="openPanolAsiento('+PANOL_PERIODO+')">Asiento propuesto</button>'
       +(canEditOG()&&!cerr&&base.some(r=>panolPendAprobables(r).length)?'<button class="btn ghost sm" onclick="openPanolAprobar()">Aprobar observaciones de precio ('+base.filter(r=>panolPendAprobables(r).length).length+')</button>':'')
       +'<button class="btn ghost sm" onclick="panolExportErogExcel()">Exportar Excel</button>'
       +'<button class="btn ghost sm" onclick="openPanolPlanilla()">Planilla de carga</button>'
@@ -4445,6 +4456,71 @@ function renderPanolCierres(){
       +'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 window.renderPanolCierres=renderPanolCierres;
+/* ===================== Asiento propuesto para Tango (consumibles del mes) =====================
+   Armado con el modelo del asiento de septiembre que mostró Micaela (CONSUMIBLES 202609): una línea al Haber con el total contra
+   12400009 "Modulo Materiales Vs", y al Debe una línea por cuenta; los proyectos (12400009) y las cuentas con auxiliar propio (bienes de uso) van
+   separados por destino, el resto se junta por cuenta. Cuenta de cada destino: 1) las observadas en ese asiento, 2) la cuenta de la clasificación
+   si tiene, 3) un proyecto sin cuenta propia va a 12400009. Lo que no se puede resolver queda marcado para definirlo. Es una PROPUESTA: no se envía a Tango. */
+const PANOL_ASI_HABER={cod:'12400009', nombre:'Modulo Materiales Vs'};
+const PANOL_ASI_CTAS={ESTRUC:{cod:'54000006',nombre:'Gs limpieza'}, MANTEN:{cod:'52000004',nombre:'Mantenimiento Bs de Uso'}, IF4430:{cod:'52000011',nombre:'Gastos Mantenimiento Modulos'}};
+const PANOL_ASI_NOMBRES={'12400009':'Modulo Materiales Vs','52000004':'Mantenimiento Bs de Uso','52000011':'Gastos Mantenimiento Modulos','54000006':'Gs limpieza'};
+let _ASI={per:null, reg:{}};
+function panolAsiCuenta(cod){
+  const c=String(cod||'').trim(); if(!c) return null;
+  if(PANOL_ASI_CTAS[c]) return {...PANOL_ASI_CTAS[c], fuente:'asiento de septiembre'};
+  const rl=(typeof clasifRule==='function'&&clasifRule(c))||{};
+  if(rl.cuenta) return {cod:rl.cuenta, nombre:PANOL_ASI_NOMBRES[rl.cuenta]||'(ver nombre en Tango)', fuente:'clasificación'};
+  const d=anClasif(c);
+  if((d&&d.categoria==='PROYECTO')||/^(PL|IF)\d/i.test(c)) return {...PANOL_ASI_HABER, fuente:'proyecto'};
+  return null;
+}
+function panolAsiArmar(per){
+  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===+per), por=new Map();
+  rows.forEach(r=>{ const k=r.proyecto_cod||''; por.set(k,(por.get(k)||0)+(+r.total_ars||0)); });
+  const L=new Map();
+  [...por.entries()].forEach(([dest,imp])=>{
+    const cta=panolAsiCuenta(dest), rl=(typeof clasifRule==='function'&&clasifRule(dest))||{};
+    const sep=cta&&(cta.cod===PANOL_ASI_HABER.cod||rl.aux==='bsuso'||rl.aux==='herram'||rl.aux==='mueble'||rl.aux==='rodado');
+    const key=cta?cta.cod+'|'+(sep?dest:''):'?|'+dest;
+    const o=L.get(key)||{key, cod:cta?cta.cod:'', nombre:cta?cta.nombre:'', fuente:cta?cta.fuente:'', dests:[], imp:0};
+    o.dests.push(dest||'(sin destino)'); o.imp+=imp; L.set(key,o);
+  });
+  const lines=[...L.values()].sort((a,b)=>(a.cod||'~').localeCompare(b.cod||'~')||b.imp-a.imp);
+  const y=+String(per).slice(0,4), m=+String(per).slice(4,6), fin=new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);
+  return {per, fecha:fin, leyenda:'CONSUMIBLES '+per, lines, n:rows.length};
+}
+function panolAsiNeto(A){ return A.lines.map(l=>({...l, reg:+(_ASI.reg[l.key]||0), neto:+(l.imp-(+(_ASI.reg[l.key]||0))).toFixed(2)})); }
+function panolAsiHtml(){
+  const A=panolAsiArmar(_ASI.per), L=panolAsiNeto(A), tot=L.reduce((a,l)=>a+l.neto,0), sinCta=L.filter(l=>!l.cod), cerr=panolPeriodoCerrado(_ASI.per);
+  const f=v=>fmtNum(v,2);
+  const tr=['<tr style="background:#eef3ee"><td style="text-align:right">1</td><td>'+PANOL_ASI_HABER.cod+'</td><td>'+esc(PANOL_ASI_HABER.nombre)+'</td><td>Total del mes</td><td></td><td></td><td style="text-align:right;font-weight:700">'+f(tot)+'</td></tr>']
+    .concat(L.map((l,i)=>'<tr'+(l.cod?'':' style="background:#fdecea"')+'><td style="text-align:right">'+(i+2)+'</td><td>'+(l.cod||'<b style="color:#b3261e">definir</b>')+'</td><td>'+esc(l.nombre||'(sin cuenta)')+'</td><td title="'+esc(l.dests.join(', '))+'">'+esc(l.dests.map(d=>anDestTxt(d==='(sin destino)'?'':d)).join(', ').slice(0,70))+'</td>'
+      +'<td style="text-align:right"><input type="number" step="0.01" value="'+(l.reg||'')+'" placeholder="0" style="width:110px;text-align:right;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11.5px" onchange="panolAsiReg(\''+esc(l.key).replace(/'/g,"\\'")+'\',this.value)"></td>'
+      +'<td style="text-align:right;font-weight:600">'+f(l.neto)+'</td><td></td></tr>'));
+  return '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Período <b>'+panolPerTxt(_ASI.per)+'</b> · fecha del asiento <b>'+fmtDate(A.fecha)+'</b> · leyenda <b>'+esc(A.leyenda)+'</b> · '+A.n+' erogaciones'+(cerr?' · mes cerrado':' · mes abierto: los importes pueden cambiar')+'.<br>'
+    +'Si parte del mes ya está registrado en Tango, anotá en <b>Ya registrado</b> lo que ya cargaste en cada línea: el asiento queda con la diferencia.</div>'
+    +(sinCta.length?'<div style="margin-bottom:8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinCta.length+' destino(s) sin cuenta definida</b>: '+esc(sinCta.map(l=>l.dests.join(', ')).join(' · '))+'. Hay que decidir su cuenta antes de cargarlo.</div>':'')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:46vh"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblAsi"><thead><tr><th>Nro.</th><th>Código de cuenta</th><th>Descripción de cuenta</th><th>Destino(s)</th><th>Ya registrado</th><th>Debe</th><th>Haber</th></tr></thead><tbody>'+tr.join('')
+    +'</tbody><tfoot><tr style="font-weight:700"><td></td><td></td><td>TOTAL</td><td></td><td></td><td style="text-align:right">'+f(tot)+'</td><td style="text-align:right">'+f(tot)+'</td></tr></tfoot></table></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Cuentas: las del asiento de septiembre (54000006 Gs limpieza, 52000004 Mantenimiento Bs de Uso, 52000011 Gastos Mantenimiento Modulos, 12400009 Modulo Materiales Vs) y, para el resto, la cuenta de la clasificación; un proyecto sin cuenta propia va a 12400009. Revisalo antes de cargarlo: es una propuesta armada con un solo asiento de ejemplo.</div>';
+}
+function openPanolAsiento(per){
+  _ASI.per=+per; if(_ASI.perPrev!==_ASI.per){ _ASI.reg={}; _ASI.perPrev=_ASI.per; }
+  openModal('Asiento propuesto · consumibles '+panolPerTxt(per), '<div id="asiBody">'+panolAsiHtml()+'</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolAsiExportar()">Exportar Excel</button>', 'wide');
+}
+window.openPanolAsiento=openPanolAsiento;
+function panolAsiReg(key,v){ _ASI.reg[key]=+v||0; const b=document.getElementById('asiBody'); if(b) b.innerHTML=panolAsiHtml(); }
+window.panolAsiReg=panolAsiReg;
+function panolAsiExportar(){
+  const A=panolAsiArmar(_ASI.per), L=panolAsiNeto(A), tot=L.reduce((a,l)=>a+l.neto,0);
+  const aoa=[['Nro.','Código de cuenta','Descripción de cuenta','Debe','Haber','Fecha de origen','Leyenda','Destino(s)','Importe del mes','Ya registrado']]
+    .concat([[1,PANOL_ASI_HABER.cod,PANOL_ASI_HABER.nombre,'',+tot.toFixed(2),A.fecha,A.leyenda,'','','']])
+    .concat(L.map((l,i)=>[i+2,l.cod||'(definir)',l.nombre,+l.neto.toFixed(2),'',A.fecha,A.leyenda,l.dests.join(', '),+l.imp.toFixed(2),l.reg||'']));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Asiento');
+  XLSX.writeFile(wb,'Asiento_Consumibles_'+_ASI.per+'.xlsx'); toast('Asiento exportado');
+}
+window.panolAsiExportar=panolAsiExportar;
 function openPanolCerrar(per){
   if(!ROLE.admin){ toast('Solo un administrador puede cerrar un mes.'); return; }
   const r=panolResumenPeriodo(per), grave=r.sinPrecio+r.sinAlta;
@@ -4453,6 +4529,7 @@ function openPanolCerrar(per){
     +'Al cerrar, los precios quedan <b>congelados</b>: no se podrán crear, editar ni eliminar erogaciones de ese mes, y las compras nuevas no lo afectan. Reabrirlo queda registrado.</div>'
     +(avisos.length?'<div style="margin:12px 0;padding:8px 12px;border-radius:8px;background:'+(grave?'#fdecea':'#fff6e5')+';border:1px solid '+(grave?'#f3b8b1':'#f0d9a8')+';font-size:12.5px"><b>Antes de cerrar (estado actual):</b> '+avisos.join(' · ')+'.'+(grave?' Si cerrás igual, las que no tienen precio quedan valuadas en $0.':'')+'</div>':'')
     +'<label style="display:flex;gap:8px;align-items:center;margin:12px 0;font-size:13px"><input type="checkbox" id="pc_recalc" checked> Recalcular los precios de todas las erogaciones del mes antes de congelar (las de precio manual no se tocan)</label>'
+    +'<div style="margin:0 0 10px"><button class="btn ghost sm" onclick="openPanolAsiento('+per+')">Ver asiento propuesto para Tango</button></div>'
     +'<div class="field"><label>Comentario (opcional)</label><input id="pc_coment" type="text"></div>';
   openModal('Cerrar mes '+panolPerTxt(per), body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="pcOkBtn" onclick="panolCerrarMes('+per+')">'+(grave?'Cerrar igual':'Cerrar mes')+'</button>');
 }
