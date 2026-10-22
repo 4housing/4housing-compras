@@ -2924,7 +2924,7 @@ function openPanolErogForm(id){
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
     +'<div class="field"><label>Unidad de medida</label><select id="pe_um" onchange="this.dataset.manual=1;panolUmNote()">'+panolUmOptionsHtml(cur?(cur.um||'UNI'):'UNI')+'</select><div id="pe_umNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div></div>'
     +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onkeydown="panolComboKey(event)" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
-    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';comboPanolSerie()" onkeydown="panolComboKey(event)" onblur="panolSerieBlur()">'
+    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="this.select();comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';delete this.dataset.auto;comboPanolSerie()" onkeydown="panolComboKey(event)" onblur="panolSerieBlur()">'
     +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Galpón</label><select id="pe_galpon">'+galOpts+'</select></div>'
@@ -2943,11 +2943,21 @@ function openPanolErogForm(id){
   else panolErogPrecio();
 }
 window.openPanolErogForm=openPanolErogForm;
-// Si el destino pide módulo y no se eligió, se guarda GENERICO MODULO (se avisa en el formulario)
+// Destinos que piden módulo (MANMOD / MODALQ / DTM): se propone GENERICO MODULO ya cargado y se pide indicar el módulo que corresponde.
+// Si el usuario no lo cambia, queda GENERICO MODULO y se puede imputar después editando la erogación.
 function panolErogDestino(){
   const n=document.getElementById('pe_serieNote'); if(!n) return;
-  const pide=panolDestinoPideModulo((document.getElementById('pn_obra')||{}).value||((document.getElementById('pn_obra_q')||{}).value||'').split(' — ')[0]);
-  n.textContent=pide?'Este destino pide indicar el módulo. Si no elegís ninguno se guarda como '+PANOL_MODULO_GENERICO+'.':'';
+  const cod=(document.getElementById('pn_obra')||{}).value||((document.getElementById('pn_obra_q')||{}).value||'').split(' — ')[0];
+  const pide=panolDestinoPideModulo(cod);
+  const q=document.getElementById('pe_serie_q'), h=document.getElementById('pe_serie');
+  if(q&&h){
+    if(pide && !h.value && !q.value.trim()){ h.value=PANOL_MODULO_GENERICO; q.value=panolSerieTxt(PANOL_MODULO_GENERICO); q.dataset.auto='1'; }
+    else if(!pide && q.dataset.auto==='1'){ h.value=''; q.value=''; delete q.dataset.auto; }
+  }
+  const gen=!!(pide&&h&&h.value===PANOL_MODULO_GENERICO);
+  n.style.color=gen?'#b36b00':'var(--muted)';
+  n.textContent=pide?(gen?'Este destino pide indicar el módulo. Quedó GENERICO MODULO: escribí la serie o el Adic. 1 del módulo que corresponde para cambiarlo.':'Este destino pide indicar el módulo.'):'';
+  if(q) q.style.borderColor=gen?'#e0a030':'';
 }
 window.panolErogDestino=panolErogDestino;
 function panolErogPrecio(resetManual){
@@ -3077,7 +3087,7 @@ function comboPanolSerie(qId, hidId, after){
   if(words.length) list=list.filter(empieza).concat(list.filter(s=>!empieza(s)));
   const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
   if(!src.some(s=>String(s.serie).toUpperCase()===PANOL_MODULO_GENERICO) && (!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w)))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
-  comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; (after||panolErogDestino)(); });
+  comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById(hidId||'pe_serie').value=it.code; delete inp.dataset.auto; (after||panolErogDestino)(); });
   panolComboMark(inp);
 }
 window.comboPanolSerie=comboPanolSerie;
@@ -3090,8 +3100,8 @@ function panolSerieBlur(qId, hidId, after){
     const first=t.split(' — ')[0].trim().toUpperCase(), T=t.toUpperCase();
     const src=panolSeriesSrc();
     const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===T) || src.find(x=>String(x.aux||'').toUpperCase()===T);
-    if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); (after||panolErogDestino)(); }
-    else if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; (after||panolErogDestino)(); }
+    if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); delete inp.dataset.auto; (after||panolErogDestino)(); }
+    else if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; delete inp.dataset.auto; (after||panolErogDestino)(); }
   },160);
 }
 window.panolSerieBlur=panolSerieBlur;
@@ -3452,7 +3462,8 @@ function ppResHtml(r){
   const c=ppCalc(r);
   if(ppVacia(r)) return '';
   if(c.errs.length) return '<span style="color:#b3261e">'+esc(c.errs.join(' · '))+'</span>';
-  return '<span>'+(c.pr&&c.pr.costo_unit_ars?fmtNum(c.pr.costo_unit_ars,2)+' ARS':'<span style="color:var(--muted)">sin precio</span>')+'</span> '
+  const modGen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO?'<span class="badge b-ambar" title="Este destino pide módulo: quedó GENERICO MODULO; indicá la serie o el Adic. 1 del módulo">indicá el módulo</span> ':'';
+  return '<span>'+(c.pr&&c.pr.costo_unit_ars?fmtNum(c.pr.costo_unit_ars,2)+' ARS':'<span style="color:var(--muted)">sin precio</span>')+'</span> '+modGen
     +(c.alerta?c.alerta.split(', ').map(x=>'<span class="badge b-rojo">'+esc(x)+'</span>').join(' '):'<span class="badge b-verde">OK</span>');
 }
 function ppRecalc(k){
@@ -3462,6 +3473,8 @@ function ppRecalc(k){
   if(tr){ const cc=ppCalc(r), st=ppEstado(r);
     tr.style.background=r.del?'#f1f1ee':(!ppVacia(r)&&cc.errs.length?'#fdecea':(cc.alerta?'#fff6f4':''));
     tr.style.opacity=r.del?'.5':''; tr.style.textDecoration=r.del?'line-through':''; tr.dataset.st=st;
+    const si=document.getElementById('pp_'+k+'_serie'), gen=panolDestinoPideModulo(r.destCod)&&r.serie===PANOL_MODULO_GENERICO;
+    if(si){ si.style.borderColor=gen?'#e0a030':''; si.style.background=gen?'#fff8e6':''; }
     const n=document.getElementById('pp_'+k+'_n'); if(n) n.textContent=st==='new'?'nueva':st==='mod'?'editada':st==='del'?'a eliminar':''; }
   ppResumen();
 }
@@ -3480,8 +3493,23 @@ function ppSet(k,f,v){
 function ppSetUm(k,v){ const r=ppFila(k); if(!r) return; r.um=v; r.umManual=true; ppRecalc(k); }
 window.ppSetUm=ppSetUm;
 window.ppSet=ppSet;
-function ppSyncDest(k){ const r=ppFila(k); r.dest=document.getElementById('pp_'+k+'_dest').value; r.destCod=document.getElementById('pp_'+k+'_destcod').value; ppRecalc(k); }
-function ppSyncSerie(k){ const r=ppFila(k); r.serieTxt=document.getElementById('pp_'+k+'_serie').value; r.serie=document.getElementById('pp_'+k+'_seriecod').value; ppRecalc(k); }
+// Destinos que piden módulo: si la fila no tiene serie se propone GENERICO MODULO (visible, resaltado) para imputarlo al módulo que corresponda
+function ppAutoSerie(r){
+  const pide=panolDestinoPideModulo(r.destCod);
+  if(pide && !r.serie && !r.serieTxt){ r.serie=PANOL_MODULO_GENERICO; r.serieTxt=panolSerieTxt(PANOL_MODULO_GENERICO); r.serieAuto=true; return true; }
+  if(!pide && r.serieAuto){ r.serie=''; r.serieTxt=''; r.serieAuto=false; return true; }
+  return false;
+}
+function ppPintarSerie(r){
+  const q=document.getElementById('pp_'+r.k+'_serie'), h=document.getElementById('pp_'+r.k+'_seriecod'); if(!q||!h) return;
+  q.value=r.serieTxt; h.value=r.serie;
+}
+function ppSyncDest(k){
+  const r=ppFila(k); r.dest=document.getElementById('pp_'+k+'_dest').value; r.destCod=document.getElementById('pp_'+k+'_destcod').value;
+  if(ppAutoSerie(r)) ppPintarSerie(r);
+  ppRecalc(k);
+}
+function ppSyncSerie(k){ const r=ppFila(k); r.serieTxt=document.getElementById('pp_'+k+'_serie').value; r.serie=document.getElementById('pp_'+k+'_seriecod').value; r.serieAuto=false; ppRecalc(k); }
 window.ppSyncDest=ppSyncDest; window.ppSyncSerie=ppSyncSerie;
 function ppQuitar(k){
   const r=ppFila(k); if(!r) return;
@@ -3499,7 +3527,7 @@ window.ppAgregar=ppAgregar;
 function ppCompletarAbajo(c){
   const rows=PANOL_PLAN.rows.filter(r=>!r.del), src=rows.find(r=>String(r[c]||'').trim()!==''); if(!src){ toast('No hay valor para copiar'); return; }
   const cols=c==='dest'?['dest','destCod']:c==='serie'?['serie','serieTxt']:[c];
-  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); });
+  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); if(c==='dest') ppAutoSerie(r); });
   renderPanol(); toast('Completado hacia abajo con "'+src[c==='serie'?'serieTxt':c]+'"');
 }
 window.ppCompletarAbajo=ppCompletarAbajo;
@@ -3530,7 +3558,7 @@ function ppRowHtml(r,i){
     +inp('cant','number',r.cant,'step="0.01" oninput="ppSet('+K+',\'cant\',this.value)"',70)
     +sel('um',panolUmOptionsHtml(r.um),r.um,'style="min-width:112px" onchange="ppSetUm('+K+',this.value)"')
     +'<td><input type="hidden" id="'+id('destcod')+'" value="'+esc(r.destCod)+'"><input class="ppin" id="'+id('dest')+'" value="'+esc(r.dest)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="IF / obra" onfocus="panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" oninput="document.getElementById(\''+id('destcod')+'\').value=\'\';ppSyncDest('+K+');panolComboObra(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'))"" onblur="obraBlur(\''+id('dest')+'\',\''+id('destcod')+'\',()=>ppSyncDest('+K+'),panolObras)"></td>'
-    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
+    +'<td><input type="hidden" id="'+id('seriecod')+'" value="'+esc(r.serie)+'"><input class="ppin" id="'+id('serie')+'" value="'+esc(r.serieTxt)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:190px" placeholder="serie o Adic. 1" onfocus="this.select();comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" oninput="document.getElementById(\''+id('seriecod')+'\').value=\'\';ppSyncSerie('+K+');comboPanolSerie(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))" onblur="panolSerieBlur(\''+id('serie')+'\',\''+id('seriecod')+'\',()=>ppSyncSerie('+K+'))"></td>'
     +sel('proceso',PANOL_PROCESOS.map(p=>opt(p,p,r.proceso)).join(''),r.proceso,'onchange="ppSet('+K+',\'proceso\',this.value)"')
     +sel('galpon','<option value="">—</option>'+gl.map(n=>opt(n,n,r.galpon)).join(''),r.galpon,'onchange="ppSet('+K+',\'galpon\',this.value)"')
     +inp('solp','text',r.solp,'oninput="ppSet('+K+',\'solp\',this.value)"',70)
@@ -3676,6 +3704,7 @@ function ppImportarAoa(aoa){
     const pr=txt(f,'proceso').toUpperCase(); r.proceso=PANOL_PROCESOS.includes(pr)?pr:'HABITUAL';
     const g=txt(f,'galpon'); if(g){ const m=gal.find(x=>String(x.nombre).trim().toUpperCase()===g.toUpperCase()); r.galpon=m?m.nombre:g; }
     const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; }
+    ppAutoSerie(r);
     nuevas.push(r);
   }
   PANOL_PLAN.rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r)).concat(nuevas);
