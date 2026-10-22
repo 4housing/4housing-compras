@@ -567,6 +567,12 @@ function colResizeSig(table){
   let h=0; for(let i=0;i<ths.length;i++) h=(h*31+ths.charCodeAt(i))|0;
   return 'colw:'+ths.length+':'+h;
 }
+// Con el layout fijo la tabla tiene que tener un ancho explícito (suma de sus columnas); si no (tablas "compactas" en ancho automático) el navegador ignora el ancho de las columnas
+function colResizeFitWidth(table){
+  if(table.style.tableLayout!=='fixed') return;
+  const sum=[...table.querySelectorAll('thead th')].reduce((a,t)=>a+(parseFloat(t.style.width)||t.getBoundingClientRect().width),0);
+  table.style.width=Math.round(sum)+'px';
+}
 function colResizeApplySaved(table){
   const sig=colResizeSig(table);
   let saved=(UI_PREFS_COLW&&UI_PREFS_COLW[sig])||null;
@@ -575,6 +581,7 @@ function colResizeApplySaved(table){
   const ths=[...table.querySelectorAll('thead th')];
   table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
   ths.forEach((th,i)=>{ if(saved[i]) th.style.width=saved[i]+'px'; });
+  colResizeFitWidth(table);
 }
 function colResizeSave(table, ths){
   const sig=colResizeSig(table);
@@ -664,6 +671,7 @@ function colResizeInit(table){
         ths.forEach(t=>{ t.style.width=t.getBoundingClientRect().width+'px'; });
         table.style.tableLayout='fixed'; table.classList.add('grid-fixed');
       }
+      colResizeFitWidth(table);
       r.classList.add('active');
       COLRESIZE_DRAG={ th, r, table, ths, startX:e.clientX, startW:th.getBoundingClientRect().width };
       document.body.style.cursor='col-resize'; document.body.style.userSelect='none';
@@ -675,6 +683,7 @@ document.addEventListener('mousemove', e=>{
   if(!COLRESIZE_DRAG) return;
   const w=Math.max(32, COLRESIZE_DRAG.startW+(e.clientX-COLRESIZE_DRAG.startX));
   COLRESIZE_DRAG.th.style.width=w+'px';
+  colResizeFitWidth(COLRESIZE_DRAG.table);
 });
 document.addEventListener('mouseup', ()=>{
   if(!COLRESIZE_DRAG) return;
@@ -3466,6 +3475,7 @@ function ppNuevaFila(base){
   const r={k:++_PP_SEQ, id:null, fecha:'', horario:'', art:'', cant:'', um:'UNI', dest:'', destCod:'', serie:'', serieTxt:'', proceso:'HABITUAL', galpon:'', solp:'', oper:'', dep:'', coment:'', manual:null, del:false, orig:null};
   if(base) PP_COPIA.forEach(c=>{ r[c]=base[c]; });
   else{ r.fecha=new Date().toISOString().slice(0,10); r.horario=new Date().toTimeString().slice(0,5); }
+  if(!r.dep && PANOL_PLAN && PANOL_PLAN.dep) r.dep=PANOL_PLAN.dep;   // cada fila muestra su depósito (el de la lista de arriba mientras no se cambie a mano)
   return r;
 }
 function ppSnap(r){ return JSON.stringify([r.fecha,r.horario,r.art,r.cant,r.um,r.destCod,r.serie,r.proceso,r.galpon,r.solp,r.oper,r.dep,r.coment]); }
@@ -3473,12 +3483,13 @@ function ppDesdeEgreso(e){
   const r=ppNuevaFila();
   Object.assign(r,{ id:e.id, fecha:String(e.fecha||'').slice(0,10), horario:e.horario||'', art:e.cod_articulo?panolArtTxt(e.cod_articulo):(e.articulo_libre||''), cant:e.cantidad, um:e.um||'UNI',
     dest:obraInputVal(e.proyecto_cod,panolDestinoNom), destCod:e.proyecto_cod||'', serie:e.serie||'', serieTxt:panolSerieTxt(e.serie, panolAuxTipoFila(e)), proceso:e.proceso||'HABITUAL', galpon:e.galpon||'',
-    solp:e.solp||'', oper:e.operario||'', dep:e.cod_deposito||'', coment:e.comentario||'', manual:e.fuente_precio==='Manual'?{ars:+e.costo_unit_ars||0, usd:+e.costo_unit_usd||0}:null });
+    solp:e.solp||'', oper:e.operario||'', dep:e.cod_deposito||'', depManual:true, coment:e.comentario||'', manual:e.fuente_precio==='Manual'?{ars:+e.costo_unit_ars||0, usd:+e.costo_unit_usd||0}:null });
   r.orig=ppSnap(r);
   return r;
 }
 function openPanolPlanilla(){
-  PANOL_PLAN={rows:[ppNuevaFila()], dep:PANOL_LAST_DEP||panolDepDefecto()};
+  PANOL_PLAN={rows:[], dep:PANOL_LAST_DEP||panolDepDefecto(), f:{est:'todas', motivo:'', q:''}};
+  PANOL_PLAN.rows.push(ppNuevaFila());
   renderPanol();
 }
 window.openPanolPlanilla=openPanolPlanilla;
@@ -3554,6 +3565,7 @@ function ppResumen(){
 }
 function ppSet(k,f,v){
   const r=ppFila(k); if(!r) return; r[f]=v; if(f==='art'&&r.manual&&!r.id) r.manual=null;
+  if(f==='dep') r.depManual=true;
   if(f==='art' && !r.umManual){ const ra=panolArtResolver(v), u=ra.cod?panolUmSugerida(ra.cod):''; if(u){ r.um=u; const el=document.getElementById('pp_'+k+'_um'); if(el) panolUmFijar(el,u); } }
   ppRecalc(k);
 }
@@ -3594,11 +3606,16 @@ window.ppAgregar=ppAgregar;
 function ppCompletarAbajo(c){
   const rows=PANOL_PLAN.rows.filter(r=>!r.del), src=rows.find(r=>String(r[c]||'').trim()!==''); if(!src){ toast('No hay valor para copiar'); return; }
   const cols=c==='dest'?['dest','destCod']:c==='serie'?['serie','serieTxt']:[c];
-  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); if(c==='dest') ppAutoSerie(r); });
+  rows.forEach(r=>{ if(ppVacia(r)) return; cols.forEach(x=>{ r[x]=src[x]; }); if(c==='dest') ppAutoSerie(r); if(c==='dep') r.depManual=true; });
   renderPanol(); toast('Completado hacia abajo con "'+src[c==='serie'?'serieTxt':c]+'"');
 }
 window.ppCompletarAbajo=ppCompletarAbajo;
-function ppDepDefecto(v){ PANOL_PLAN.dep=v; PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true)); ppResumen(); }
+// Cambiar el "Depósito por defecto" actualiza las filas cuyo depósito no se eligió a mano
+function ppDepDefecto(v){
+  PANOL_PLAN.dep=v;
+  PANOL_PLAN.rows.forEach(r=>{ if(!r.depManual){ r.dep=v; const el=document.getElementById('pp_'+r.k+'_dep'); if(el) el.value=v; } ppRecalc(r.k,true); });
+  ppResumen();
+}
 window.ppDepDefecto=ppDepDefecto;
 function ppDescartar(){
   const cambios=PANOL_PLAN&&PANOL_PLAN.rows.some(r=>!ppVacia(r)&&ppEstado(r));
@@ -3610,6 +3627,39 @@ function ppDescartar(){
 }
 window.ppDescartar=ppDescartar;
 
+/* ---- Filtros de la planilla: estado (no OK / errores / alarma / OK), motivo y buscador. Solo ocultan filas; no cambian nada. ---- */
+function ppMotivosOpts(){
+  const F=PANOL_PLAN.f, cnt={};
+  PANOL_PLAN.rows.forEach(r=>{ if(ppVacia(r)||r.del) return; const c=ppCalc(r); c.errs.concat(c.alerta?c.alerta.split(', '):[]).forEach(m=>{ cnt[m]=(cnt[m]||0)+1; }); });
+  return '<option value="">Todos los motivos</option>'+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]).map(m=>'<option value="'+esc(m)+'"'+(F.motivo===m?' selected':'')+'>'+esc(m)+' ('+cnt[m]+')</option>').join('');
+}
+function ppAplicarFiltro(){
+  const F=PANOL_PLAN.f, q=_syncFold(F.q||''); let vis=0, tot=0;
+  PANOL_PLAN.rows.forEach(r=>{
+    const tr=document.getElementById('pp_tr_'+r.k); if(!tr) return; tot++;
+    const c=ppVacia(r)?null:ppCalc(r);
+    const sev=!c?'vacia':(r.del?'del':(c.errs.length?'err':(c.alerta?'al':'ok')));
+    let ok=true;
+    if(F.est==='noOk') ok=(sev==='err'||sev==='al'); else if(F.est==='err') ok=(sev==='err'); else if(F.est==='al') ok=(sev==='al'); else if(F.est==='ok') ok=(sev==='ok');
+    if(ok && F.motivo) ok=!!c && !r.del && c.errs.concat(c.alerta?c.alerta.split(', '):[]).includes(F.motivo);
+    if(ok && q) ok=_syncFold([r.art,r.dest,r.serieTxt,r.oper,r.solp,r.coment,r.galpon,r.um].join(' ')).includes(q);
+    tr.style.display=ok?'':'none'; if(ok) vis++;
+  });
+  const info=document.getElementById('ppFiltroInfo');
+  if(info) info.textContent=(F.est!=='todas'||F.motivo||q)?(vis+' de '+tot+' filas visibles'):'';
+}
+function ppFiltroSet(k,v){
+  PANOL_PLAN.f[k]=v;
+  if(k==='est'){ const m=document.getElementById('ppF_motivo'); if(m) m.innerHTML=ppMotivosOpts(); }
+  ppAplicarFiltro();
+}
+function ppFiltroActualizar(){ const m=document.getElementById('ppF_motivo'); if(m) m.innerHTML=ppMotivosOpts(); ppAplicarFiltro(); }
+function ppFiltroLimpiar(){
+  PANOL_PLAN.f={est:'todas', motivo:'', q:''};
+  const e=document.getElementById('ppF_est'), q=document.getElementById('ppF_q'); if(e) e.value='todas'; if(q) q.value='';
+  ppFiltroActualizar();
+}
+window.ppFiltroSet=ppFiltroSet; window.ppFiltroActualizar=ppFiltroActualizar; window.ppFiltroLimpiar=ppFiltroLimpiar;
 function ppRowHtml(r,i){
   const K=r.k, id=c=>'pp_'+K+'_'+c;
   const inp=(c,type,val,extra,w)=>'<td><input class="ppin" id="'+id(c)+'" type="'+type+'" value="'+esc(val)+'" style="min-width:'+(w||70)+'px" '+(extra||'')+'></td>';
@@ -3630,13 +3680,14 @@ function ppRowHtml(r,i){
     +sel('galpon','<option value="">—</option>'+gl.map(n=>opt(n,n,r.galpon)).join(''),r.galpon,'onchange="ppSet('+K+',\'galpon\',this.value)"')
     +inp('solp','text',r.solp,'oninput="ppSet('+K+',\'solp\',this.value)"',70)
     +'<td><input class="ppin" id="'+id('oper')+'" value="'+esc(r.oper)+'" autocomplete="off" onkeydown="panolComboKey(event)" style="min-width:110px" placeholder="Genérico" onfocus="comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" oninput="ppSet('+K+',\'oper\',this.value);comboPanolOper(\''+id('oper')+'\',()=>ppSet('+K+',\'oper\',document.getElementById(\''+id('oper')+'\').value))" onblur="comboHideDelayed()"></td>'
-    +sel('dep','<option value="">(por defecto)</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'onchange="ppSet('+K+',\'dep\',this.value)"')
+    +sel('dep','<option value="">— elegí —</option>'+deps.map(d=>opt(d.codigo,d.codigo+' · '+d.descripcion,r.dep)).join(''),r.dep,'style="min-width:210px" onchange="ppSet('+K+',\'dep\',this.value)"')
     +inp('coment','text',r.coment,'oninput="ppSet('+K+',\'coment\',this.value)"',110)
     +'<td id="'+id('pars')+'" style="font-size:11.5px;text-align:right;white-space:nowrap"></td><td id="'+id('pusd')+'" style="font-size:11.5px;text-align:right;white-space:nowrap"></td>'
     +'<td id="'+id('res')+'" style="font-size:11.5px;min-width:200px"></td>'
     +'<td><button class="iconbtn del" title="'+(r.id?'Marcar para eliminar / deshacer':'Quitar fila')+'" onclick="ppQuitar('+K+')">'+ICO.del+'</button></td></tr>';
 }
 function renderPanolPlanilla(){
+  const F0=PANOL_PLAN.f||(PANOL_PLAN.f={est:'todas', motivo:'', q:''});
   const deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si');
   const fd=(c,l)=>'<button class="xlfbtn" title="Completar hacia abajo con el primer valor" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:var(--olive-deep)" onclick="ppCompletarAbajo(\''+c+'\')">⤓</button>';
   const th=(l,c)=>'<th style="white-space:nowrap">'+l+(c?' '+fd(c):'')+'</th>';
@@ -3652,12 +3703,21 @@ function renderPanolPlanilla(){
         +'<button class="btn ghost sm" onclick="openPpPegar()">Pegar desde Excel</button><button class="btn ghost sm" onclick="openPpImportar()">Importar archivo Excel</button>'
         +'<button class="btn ghost sm" onclick="panolDescargarPlantilla()">Plantilla Excel</button>'
         +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPlan\')">Auto-ajustar columnas</button>'
+        +'<span style="flex-basis:100%;height:0"></span>'
+        +'<span style="font-size:12px;color:var(--muted)">Ver:</span>'
+        +'<select id="ppF_est" class="ppin" style="width:auto;min-width:280px" onchange="ppFiltroSet(\'est\',this.value)">'+[['todas','Todas las filas'],['noOk','Solo las que NO están OK (errores y alarmas)'],['err','Solo con errores'],['al','Solo con alarma'],['ok','Solo las OK']].map(([v,l])=>'<option value="'+v+'"'+(F0.est===v?' selected':'')+'>'+l+'</option>').join('')+'</select>'
+        +'<select id="ppF_motivo" class="ppin" style="width:auto;min-width:250px" onchange="ppFiltroSet(\'motivo\',this.value)">'+ppMotivosOpts()+'</select>'
+        +'<input id="ppF_q" type="search" class="ppin" style="width:250px" placeholder="Buscar artículo, destino, operario…" value="'+esc(F0.q||'')+'" oninput="ppFiltroSet(\'q\',this.value)">'
+        +'<button class="btn ghost sm" onclick="ppFiltroActualizar()" title="Vuelve a calcular la lista de motivos y a aplicar el filtro">↻ Actualizar</button>'
+        +'<button class="btn ghost sm" onclick="ppFiltroLimpiar()">Limpiar filtros</button>'
+        +'<span id="ppFiltroInfo" style="font-size:12px;color:var(--muted)"></span>'
         +'<span style="font-size:11.5px;color:var(--muted)">⤓ en un título copia el primer valor a todas las filas. Nada se guarda hasta "Revisar y guardar".</span></div>'
       +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid" id="tblPanolPlan"><thead><tr><th>#</th>'
         +th('Fecha','fecha')+th('Hora','horario')+th('Artículo')+th('Cant.')+th('U.M.')+th('Destino (IF / obra)','dest')+th('Serie / módulo / auxiliar','serie')+th('Proceso','proceso')+th('Galpón','galpon')+th('SOLP','solp')+th('Operario','oper')+th('Depósito','dep')+th('Comentario')+th('Precio ARS')+th('Precio USD')+th('Alarma')+'<th></th>'
       +'</tr></thead><tbody>'+PANOL_PLAN.rows.map(ppRowHtml).join('')+'</tbody></table></div></div>';
   PANOL_PLAN.rows.forEach(r=>ppRecalc(r.k,true));
   ppResumen();
+  ppAplicarFiltro();
 }
 window.renderPanolPlanilla=renderPanolPlanilla;
 
@@ -3803,7 +3863,8 @@ function ppImportarAoa(aoa, formato){
         if(s){ r.serie=s.serie; r.serieTxt=panolSerieTxt(s.serie,tp); } else r.serieTxt=st; } }
     const pr=txt(f,'proceso').toUpperCase(); r.proceso=PANOL_PROCESOS.includes(pr)?pr:'HABITUAL';
     const g=txt(f,'galpon'); if(g){ const m=gal.find(x=>String(x.nombre).trim().toUpperCase()===g.toUpperCase()); r.galpon=m?m.nombre:g; }
-    const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; }
+    const dp=txt(f,'dep'); if(dp){ const D=dp.toUpperCase(), m=deps.find(x=>String(x.codigo).toUpperCase()===D)||deps.find(x=>String(x.descripcion||'').toUpperCase()===D)||deps.find(x=>D.startsWith(String(x.codigo).toUpperCase()+' ')); r.dep=m?m.codigo:''; r.depManual=!!m; }
+    if(!r.dep) r.dep=PANOL_PLAN.dep||'';
     ppAutoSerie(r);
     nuevas.push(r);
   }
@@ -12555,7 +12616,7 @@ function tblAutofit(sel){
   if(!DEMO_MODE && AUTH_USER && AUTH_USER.email){
     sbFetch('/compras_ui_prefs',{method:'POST',body:JSON.stringify({user_email:AUTH_USER.email, colwidths:UI_PREFS_COLW||{}}),prefer:'resolution=merge-duplicates,return=minimal'}).catch(()=>{});
   }
-  table.style.tableLayout=''; table.classList.remove('grid-fixed');
+  table.style.tableLayout=''; table.style.width=''; table.classList.remove('grid-fixed');
   table.querySelectorAll('thead th').forEach(th=>{ th.style.width=''; });
 }
 window.tblAutofit=tblAutofit;
