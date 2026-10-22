@@ -2659,6 +2659,7 @@ function panolResumenPor(rows, key){
 }
 function renderPanol(){
   if(PANOL_TAB==='erog') return renderPanolErog();
+  if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
   const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
@@ -2725,7 +2726,7 @@ function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('erog','Erogaciones')+tab('dic','Diccionario pañol')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 const PANOL_DESTINOS_MODULO=['MODALQ','MANMOD'];          // destinos que piden indicar el módulo
@@ -2778,8 +2779,9 @@ function panolPrecioMes(cod, periodo){
   else control='REVISAR TC';
   return Object.assign(out,{ars:row.ars, usd:row.usd, fecha:row.fecha, fuente:row.fuente, prov:row.prov, oc:panolOcCorto(row.oc), desvioTC:desv, varTango:varT, control});
 }
-function panolAlertaDe(p, sinAlta){
+function panolAlertaDe(p, sinAlta, opSinAlta){
   const a=[]; if(sinAlta) a.push(PANOL_ALERTA_SIN_ALTA);
+  if(opSinAlta) a.push('OPERARIO SIN ALTA');
   if(p && p.control!=='OK') a.push(p.control);
   return a.join(', ');
 }
@@ -2814,7 +2816,7 @@ function panolSort(ev, ns, k){
   renderPanol();
 }
 window.panolSort=panolSort;
-function _pnTh(label, col, k){ return _spTh('pnl', label, col, k).replace('spSort(','panolSort('); }
+function _pnTh(label, col, k, ns){ return _spTh(ns||'pnl', label, col, k).replace('spSort(','panolSort('); }
 function renderPanolErog(){
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const base=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO);
@@ -2901,9 +2903,9 @@ function openPanolErogForm(id){
   const hoy=new Date().toISOString().slice(0,10), ahora=new Date().toTimeString().slice(0,5);
   const dep0=cur?cur.cod_deposito:PANOL_LAST_DEP;
   const depOpts=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si').map(d=>'<option value="'+esc(d.codigo)+'"'+(dep0===d.codigo?' selected':'')+'>'+esc(d.codigo)+' · '+esc(d.descripcion)+'</option>').join('');
-  const mods=[...new Set((SERIES_ACTIVAS||[]).filter(s=>s.familia==='modulo').map(s=>s.serie))].sort();
-  const modOpts='<option value="">— ninguno —</option><option value="'+PANOL_MODULO_GENERICO+'"'+(cur&&cur.serie===PANOL_MODULO_GENERICO?' selected':'')+'>'+PANOL_MODULO_GENERICO+'</option>'
-    +mods.map(s=>'<option value="'+esc(s)+'"'+(cur&&cur.serie===s?' selected':'')+'>'+esc(s)+'</option>').join('');
+  const galList=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre);
+  if(cur&&cur.galpon&&!galList.includes(cur.galpon)) galList.push(cur.galpon);   // si el valor guardado ya no está activo, se conserva
+  const galOpts='<option value="">— ninguno —</option>'+galList.map(n=>'<option value="'+esc(n)+'"'+(cur&&cur.galpon===n?' selected':'')+'>'+esc(n)+'</option>').join('');
   const procOpts=PANOL_PROCESOS.map(p=>'<option'+((cur?cur.proceso:'HABITUAL')===p?' selected':'')+'>'+p+'</option>').join('');
   const artVal=cur?(cur.cod_articulo?panolArtTxt(cur.cod_articulo):(cur.articulo_libre||'')):'';
   const body='<div class="frow c2"><div class="field"><label>Fecha</label><input id="pe_fecha" type="date" value="'+esc(cur?cur.fecha:hoy)+'" onchange="panolErogPrecio()"></div>'
@@ -2913,12 +2915,12 @@ function openPanolErogForm(id){
     +'<div class="frow c2"><div class="field"><label>Cantidad</label><input id="pe_cant" type="number" step="0.01" value="'+(cur?cur.cantidad:'')+'" oninput="panolErogPrecio()"></div>'
     +'<div class="field"><label>Unidad de medida</label><input id="pe_um" type="text" value="'+esc(cur?(cur.um||''):'UNI')+'"></div></div>'
     +'<div class="field"><label>Destino (IF / obra)</label><input type="hidden" id="pn_obra" value="'+esc(cur?(cur.proyecto_cod||''):'')+'"><input id="pn_obra_q" value="'+esc(obraInputVal(cur&&cur.proyecto_cod, panolObraNom))+'" placeholder="Escribí código o nombre…" autocomplete="off" onfocus="comboPanolObra()" oninput="document.getElementById(\'pn_obra\').value=\'\';comboPanolObra();panolErogDestino()" onblur="panolObraBlur();setTimeout(panolErogDestino,200)"></div>'
-    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><select id="pe_serie">'+modOpts+'</select>'
+    +'<div class="frow c2"><div class="field"><label>Serie / módulo</label><input type="hidden" id="pe_serie" value="'+esc(cur?(cur.serie||''):'')+'"><input id="pe_serie_q" value="'+esc(panolSerieTxt(cur&&cur.serie))+'" placeholder="Buscá por serie o Adic. 1…" autocomplete="off" onfocus="comboPanolSerie()" oninput="document.getElementById(\'pe_serie\').value=\'\';comboPanolSerie()" onblur="panolSerieBlur()">'
     +'<div id="pe_serieNote" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Proceso</label><select id="pe_proceso">'+procOpts+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Galpón</label><input id="pe_galpon" type="text" value="'+esc(cur?(cur.galpon||''):'')+'"></div>'
+    +'<div class="frow c2"><div class="field"><label>Galpón</label><select id="pe_galpon">'+galOpts+'</select></div>'
     +'<div class="field"><label>SOLP</label><input id="pe_solp" type="text" value="'+esc(cur?(cur.solp||''):'')+'"></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Nombre, o vacío = Genérico"></div>'
+    +'<div class="frow c2"><div class="field"><label>Operario</label><input id="pe_oper" type="text" value="'+esc(cur?(cur.operario||''):'')+'" placeholder="Buscá por nombre o puesto, o vacío = Genérico" autocomplete="off" onfocus="comboPanolOper()" oninput="comboPanolOper();panolOperNote()" onblur="comboHideDelayed();panolOperNote()"><div id="pe_operNote" style="font-size:12px;margin-top:4px;min-height:16px"></div></div>'
     +'<div class="field"><label>Depósito</label><select id="pe_dep"><option value="">— elegí —</option>'+depOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Precio unit. ARS</label><input id="pe_pars" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div>'
     +'<div class="field"><label>Precio unit. USD</label><input id="pe_pusd" type="number" step="0.01" oninput="this.dataset.manual=1;panolErogTotal()"></div></div>'
@@ -2980,11 +2982,14 @@ async function guardarPanolErog(id){
   const pars=document.getElementById('pe_pars'), pusd=document.getElementById('pe_pusd');
   const manual=(pars.dataset.manual||pusd.dataset.manual)?{ars:+pars.value||0, usd:+pusd.value||0}:null;
   const pr=panolCamposPrecio(ra.cod, periodo, cant, manual);
-  let serie=g('pe_serie'); if(!serie && panolDestinoPideModulo(proyecto_cod)) serie=PANOL_MODULO_GENERICO;
+  let serie=g('pe_serie');
+  if(!serie && g('pe_serie_q').trim()){ toast('Elegí la serie de la lista (o borrá el campo)'); return; }
+  if(!serie && panolDestinoPideModulo(proyecto_cod)) serie=PANOL_MODULO_GENERICO;
+  const operario=g('pe_oper').trim()||'Genérico';
   const row={ fecha, periodo, horario:g('pe_horario')||null, cod_deposito:ra.cod?cod_deposito:(cod_deposito||null), cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:ra.libre,
     cantidad:cant, um:g('pe_um').trim()||'UNI', proyecto_cod, serie:serie||null, galpon:g('pe_galpon').trim()||null, proceso:g('pe_proceso')||null, solp:g('pe_solp').trim()||null,
-    operario:g('pe_oper').trim()||'Genérico', comentario:g('pe_coment').trim(), exportado:false,
-    alerta:panolAlertaDe({control:pr._control}, !ra.cod)||null };
+    operario, comentario:g('pe_coment').trim(), exportado:false,
+    alerta:panolAlertaDe({control:pr._control}, !ra.cod, panolOperarioSinAlta(operario))||null };
   ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ row[k]=pr[k]; });
   if(ra.cod && cod_deposito) PANOL_LAST_DEP=cod_deposito;
   try{
@@ -3009,7 +3014,7 @@ async function panolRecalcularPrecios(){
   let n=0;
   for(const r of rows){
     const pr=panolCamposPrecio(r.cod_articulo, +r.periodo, +r.cantidad||0, null);
-    const alerta=panolAlertaDe({control:pr._control}, false)||null;
+    const alerta=panolAlertaDe({control:pr._control}, false, panolOperarioSinAlta(r.operario))||null;
     const upd={}; ['costo_unit_ars','costo_unit_usd','total_ars','total_usd','fuente_precio','precio_fecha_ref','precio_proveedor','precio_oc','desvio_tc','var_tango'].forEach(k=>{ upd[k]=pr[k]; }); upd.alerta=alerta;
     if(DEMO_MODE){ Object.assign(r,upd); n++; continue; }
     try{ await sbFetch('/compras_panol_egresos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); n++; }
@@ -3019,6 +3024,209 @@ async function panolRecalcularPrecios(){
   toast('Precios recalculados: '+n+' erogaciones'); renderPanol();
 }
 window.panolRecalcularPrecios=panolRecalcularPrecios;
+
+/* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
+function panolSeriesSrc(){ return (SERIES_ACTIVAS||[]).filter(s=>s.serie); }
+function panolSerieNombre(s){
+  const a1=s.adicional_1&&String(s.adicional_1).trim()!==String(s.serie).trim()?s.adicional_1:'';
+  return [a1, s.descripcion].filter(Boolean).join(' · ')+(s.familia==='modulo'?'':' (serie activa)');
+}
+function panolSerieTxt(serie){
+  if(!serie) return '';
+  if(serie===PANOL_MODULO_GENERICO) return serie;
+  const s=panolSeriesSrc().find(x=>x.serie===serie);
+  return s?(s.serie+' — '+panolSerieNombre(s)):serie;
+}
+// Busca por serie, Adic. 1, descripción o comentario (todas las palabras escritas); primero los que arrancan con lo escrito
+function comboPanolSerie(){
+  const inp=document.getElementById('pe_serie_q'); if(!inp) return;
+  const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const src=panolSeriesSrc();
+  const txt=s=>((s.serie||'')+' '+(s.adicional_1||'')+' '+(s.descripcion||'')+' '+(s.comentario||'')).toLowerCase();
+  const empieza=s=>[s.serie,s.adicional_1].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  let list=words.length?src.filter(s=>{ const t=txt(s); return words.every(w=>t.includes(w)); }):src;
+  if(words.length) list=list.filter(empieza).concat(list.filter(s=>!empieza(s)));
+  const items=list.slice(0,80).map(s=>({code:s.serie, name:panolSerieNombre(s)}));
+  if(!words.length || words.every(w=>PANOL_MODULO_GENERICO.toLowerCase().includes(w))) items.unshift({code:PANOL_MODULO_GENERICO, name:'módulo no identificado'});
+  comboShow(inp, items, it=>{ inp.value=it.code+(it.name?' — '+it.name:''); document.getElementById('pe_serie').value=it.code; panolErogDestino(); });
+}
+window.comboPanolSerie=comboPanolSerie;
+// Al salir del campo: si lo escrito es exactamente una serie o un Adic. 1, lo toma sin tener que elegir de la lista
+function panolSerieBlur(){
+  comboHideDelayed();
+  setTimeout(()=>{
+    const inp=document.getElementById('pe_serie_q'), hid=document.getElementById('pe_serie'); if(!inp||!hid||hid.value) return;
+    const t=(inp.value||'').trim(); if(!t) return;
+    const first=t.split(' — ')[0].trim().toUpperCase();
+    if(first===PANOL_MODULO_GENERICO){ hid.value=PANOL_MODULO_GENERICO; inp.value=PANOL_MODULO_GENERICO; return; }
+    const src=panolSeriesSrc();
+    const s=src.find(x=>String(x.serie).toUpperCase()===first) || src.find(x=>String(x.adicional_1||'').trim().toUpperCase()===t.toUpperCase());
+    if(s){ hid.value=s.serie; inp.value=s.serie+' — '+panolSerieNombre(s); panolErogDestino(); }
+  },160);
+}
+window.panolSerieBlur=panolSerieBlur;
+function panolOperariosActivos(){ return (DIC.panol_operarios||[]).filter(o=>o.activo!==false); }
+function panolOperarioSinAlta(nombre){
+  const n=String(nombre||'').trim().toUpperCase();
+  if(!n||n==='GENÉRICO'||n==='GENERICO') return false;
+  const l=DIC.panol_operarios||[]; if(!l.length) return false;       // sin diccionario cargado no se puede validar
+  return !l.some(o=>String(o.nombre).trim().toUpperCase()===n);
+}
+function comboPanolOper(){
+  const inp=document.getElementById('pe_oper'); if(!inp) return;
+  const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const txt=o=>((o.nombre||'')+' '+(o.nombre_pila||'')+' '+(o.puesto||'')).toLowerCase();
+  const empieza=o=>[o.nombre,o.nombre_pila].some(v=>String(v||'').toLowerCase().startsWith(words[0]));
+  let list=panolOperariosActivos();
+  if(words.length){ list=list.filter(o=>{ const t=txt(o); return words.every(w=>t.includes(w)); }); list=list.filter(empieza).concat(list.filter(o=>!empieza(o))); }
+  comboShow(inp, list.slice(0,80).map(o=>({code:o.nombre, name:[o.nombre_pila,o.puesto].filter(Boolean).join(' · ')})), it=>{ inp.value=it.code; panolOperNote(); });
+}
+window.comboPanolOper=comboPanolOper;
+function panolOperNote(){
+  const n=document.getElementById('pe_operNote'), v=(document.getElementById('pe_oper')||{}).value; if(!n) return;
+  if(!(DIC.panol_operarios||[]).length){ n.style.color='var(--muted)'; n.textContent='Todavía no hay operarios cargados: se cargan en la solapa "Diccionario pañol".'; }
+  else if(panolOperarioSinAlta(v)){ n.style.color='#b3261e'; n.textContent='⚠ No está en el diccionario de operarios. Se guarda igual, con alarma "OPERARIO SIN ALTA"; podés darlo de alta en "Diccionario pañol".'; }
+  else n.textContent='';
+}
+window.panolOperNote=panolOperNote;
+
+/* ---- Solapa "Diccionario pañol": galpones y operarios ----
+   Alta / modificación / baja. Solo se puede eliminar (o cambiar el nombre) lo que nunca se usó en una erogación;
+   lo que ya se usó se puede inhabilitar para que no aparezca más en el formulario. */
+const PANOL_DIC_CFG={
+  gal:{tabla:'compras_panol_galpones', dic:'panol_galpones', uso:'galpon', etq:'galpón', campos:[['nombre','Nombre']]},
+  ope:{tabla:'compras_panol_operarios', dic:'panol_operarios', uso:'operario', etq:'operario', campos:[['nombre','Nombre (el que figura en las erogaciones)'],['nombre_pila','Nombre de pila'],['puesto','Puesto']]}
+};
+function panolDicUsos(k,row){
+  const f=PANOL_DIC_CFG[k].uso, n=String(row.nombre||'').trim().toUpperCase();
+  return (DIC.panol_egresos||[]).filter(r=>String(r[f]||'').trim().toUpperCase()===n).length;
+}
+function renderPanolDic(){
+  const gal=DIC.panol_galpones||[], ope=DIC.panol_operarios||[];
+  const estado=r=>r.activo===false?'Inhabilitado':'Activo';
+  xlfRegister('pgal',{rows:()=>gal, onChange:renderPanol, val:(r,col)=>col==='estado'?estado(r):''});
+  xlfRegister('pope',{rows:()=>ope, onChange:renderPanol, val:(r,col)=>col==='puesto'?(r.puesto||'(sin puesto)'):col==='estado'?estado(r):''});
+  if(!SP_SORT.pgal) SP_SORT.pgal={k:'nombre',dir:1};
+  if(!SP_SORT.pope) SP_SORT.pope={k:'nombre',dir:1};
+  const galS=_spOrdenar('pgal', gal.filter(r=>xlfPass('pgal',r)), {nombre:r=>r.nombre, estado:estado, usos:r=>panolDicUsos('gal',r)});
+  const opeS=_spOrdenar('pope', ope.filter(r=>xlfPass('pope',r)), {puesto:r=>r.puesto, nombre:r=>r.nombre, pila:r=>r.nombre_pila, estado:estado, usos:r=>panolDicUsos('ope',r)});
+  const acc=(k,r,usos)=>'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openPanolDicForm(\''+k+'\','+r.id+')">'+ICO.edit+'</button>'
+    +'<button class="btn ghost sm" onclick="panolDicToggle(\''+k+'\','+r.id+')">'+(r.activo===false?'Habilitar':'Inhabilitar')+'</button>'
+    +(usos?'':'<button class="iconbtn del" title="Eliminar (nunca se usó)" onclick="askPanolDicDel(\''+k+'\','+r.id+')">'+ICO.del+'</button>')+'</div></td>';
+  const badge=r=>r.activo===false?'<span class="badge b-gris">Inhabilitado</span>':'<span class="badge b-verde">Activo</span>';
+  const galRows=galS.length?galS.map(r=>{ const u=panolDicUsos('gal',r); return '<tr><td>'+esc(r.nombre)+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('gal',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">Sin galpones'+(gal.length?' con esos filtros':' cargados')+'.</td></tr>';
+  const opeRows=opeS.length?opeS.map(r=>{ const u=panolDicUsos('ope',r); return '<tr><td>'+esc(r.puesto||'')+'</td><td>'+esc(r.nombre)+'</td><td>'+esc(r.nombre_pila||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('ope',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--muted)">Sin operarios'+(ope.length?' con esos filtros':' cargados todavía: importalos desde el Excel o cargalos a mano')+'.</td></tr>';
+  C().innerHTML=panolTabs()
+    +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Galpones</h3><span class="meta">'+galS.length+' de '+gal.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pgal')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolGal\')">Auto-ajustar columnas</button>'
+      +'<button class="btn sm" onclick="openPanolDicForm(\'gal\')">'+ICO.plus+'Nuevo galpón</button></span></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table class="grid" id="tblPanolGal"><thead><tr>'+_pnTh('Galpón',null,'nombre','pgal')+_pnTh('Estado','estado','estado','pgal')+_pnTh('Usos',null,'usos','pgal')+'<th style="width:230px"></th></tr></thead><tbody>'+galRows+'</tbody></table></div></div>'
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Operarios</h3><span class="meta">'+opeS.length+' de '+ope.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pope')
+      +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolOpe\')">Auto-ajustar columnas</button>'
+      +'<button class="btn ghost sm" onclick="openPanolOperImport()">Importar desde Excel</button>'
+      +'<button class="btn sm" onclick="openPanolDicForm(\'ope\')">'+ICO.plus+'Nuevo operario</button></span></div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>';
+}
+window.renderPanolDic=renderPanolDic;
+function openPanolDicForm(k,id){
+  const cfg=PANOL_DIC_CFG[k], cur=id!=null?(DIC[cfg.dic]||[]).find(r=>String(r.id)===String(id)):null;
+  const usos=cur?panolDicUsos(k,cur):0;
+  const body=cfg.campos.map(([c,l])=>{
+    const bloq=(c==='nombre'&&usos>0);
+    return '<div class="field"><label>'+l+'</label><input id="pd_'+c+'" type="text" value="'+esc(cur?(cur[c]||''):'')+'"'+(bloq?' disabled':'')+'></div>';
+  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+' erogación(es): el nombre no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
+  openModal((cur?'Editar ':'Nuevo ')+cfg.etq, body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolDic(\''+k+'\','+(cur?cur.id:'null')+')">Guardar</button>');
+}
+window.openPanolDicForm=openPanolDicForm;
+async function panolDicRecargar(k){
+  const cfg=PANOL_DIC_CFG[k];
+  DIC[cfg.dic]=(await sbFetchAll('/'+cfg.tabla+'?select=*&order=nombre.asc'))||[];
+}
+async function guardarPanolDic(k,id){
+  const cfg=PANOL_DIC_CFG[k], lista=DIC[cfg.dic]=DIC[cfg.dic]||[];
+  const cur=id!=null?lista.find(r=>String(r.id)===String(id)):null;
+  const row={}; cfg.campos.forEach(([c])=>{ const el=document.getElementById('pd_'+c); row[c]=el&&!el.disabled?el.value.trim():(cur?cur[c]:''); });
+  if(!row.nombre){ toast('Falta el nombre'); return; }
+  if(lista.some(r=>String(r.id)!==String(id) && String(r.nombre).trim().toUpperCase()===row.nombre.toUpperCase())){ toast('Ya existe un '+cfg.etq+' con ese nombre'); return; }
+  try{
+    if(DEMO_MODE){
+      if(cur) Object.assign(cur,row); else lista.push({id:Math.max(0,...lista.map(r=>+r.id||0))+1, activo:true, ...row});
+    }else{
+      if(cur) await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'PATCH',body:JSON.stringify(row),prefer:'return=minimal'});
+      else await sbFetch('/'+cfg.tabla,{method:'POST',body:JSON.stringify({...row, creado_por:(AUTH_USER&&AUTH_USER.email)||null}),prefer:'return=minimal'});
+      await panolDicRecargar(k);
+    }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_diccionario.sql?)'); return; }
+  closeModal(); toast('Guardado'); renderPanol();
+}
+window.guardarPanolDic=guardarPanolDic;
+async function panolDicToggle(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  const nuevo=r.activo===false;
+  try{
+    if(!DEMO_MODE){ await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'PATCH',body:JSON.stringify({activo:nuevo}),prefer:'return=minimal'}); }
+    r.activo=nuevo;
+  }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; }
+  toast(nuevo?'Habilitado':'Inhabilitado'); renderPanol();
+}
+window.panolDicToggle=panolDicToggle;
+function askPanolDicDel(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  if(panolDicUsos(k,r)){ toast('Ya se usó en erogaciones; no se puede eliminar. Inhabilitalo.'); return; }
+  openModal('Eliminar '+cfg.etq,'<p style="margin:0;font-size:14px">¿Eliminar "'+esc(r.nombre)+'"? Nunca se usó en una erogación.</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn danger" onclick="confirmPanolDicDel(\''+k+'\','+id+')">Eliminar</button>');
+}
+window.askPanolDicDel=askPanolDicDel;
+async function confirmPanolDicDel(k,id){
+  const cfg=PANOL_DIC_CFG[k], r=(DIC[cfg.dic]||[]).find(x=>String(x.id)===String(id)); if(!r) return;
+  if(panolDicUsos(k,r)){ toast('Ya se usó en erogaciones; no se puede eliminar.'); return; }
+  try{ if(!DEMO_MODE) await sbFetch('/'+cfg.tabla+'?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
+  catch(e){ toast('No se pudo eliminar: '+(e.message||e)); return; }
+  DIC[cfg.dic]=(DIC[cfg.dic]||[]).filter(x=>String(x.id)!==String(id));
+  closeModal(); toast('Eliminado'); renderPanol();
+}
+window.confirmPanolDicDel=confirmPanolDicDel;
+// Importar operarios de la hoja "NOMBRE OPERARIOS" (PUESTO / NOMBRE / EXCEL). Solo agrega los que no existen; no borra ni pisa nada.
+function openPanolOperImport(){
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel que tiene la hoja "NOMBRE OPERARIOS" (columnas PUESTO, NOMBRE, EXCEL). Solo se agregan los que todavía no están; no se borra ni se modifica ninguno. Si el Excel es muy pesado, copiá esa hoja a un archivo nuevo y subí ese.</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="pnop_file" type="file" accept=".xlsx,.xlsm,.xls"></div>'
+    +'<div id="pnopMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>';
+  openModal('Importar operarios', body, '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" onclick="panolOperImportar()">Importar</button>');
+}
+window.openPanolOperImport=openPanolOperImport;
+async function panolOperImportar(){
+  const f=(document.getElementById('pnop_file').files||[])[0], msg=document.getElementById('pnopMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo… (si el archivo es grande puede tardar)';
+  try{
+    const wb=await _syncReadWb(f);
+    const rows=_syncSheetRows(wb, h=>_syncIdx(h,'NOMBRE')>=0 && _syncIdx(h,'PUESTO')>=0 && _syncIdx(h,'EXCEL')>=0);
+    if(!rows) throw new Error('No encontré una hoja con columnas "PUESTO", "NOMBRE" y "EXCEL".');
+    const H=rows[0], iP=_syncIdx(H,'PUESTO'), iN=_syncIdx(H,'NOMBRE'), iE=_syncIdx(H,'EXCEL');
+    const existentes=new Set((DIC.panol_operarios||[]).map(o=>String(o.nombre).trim().toUpperCase()));
+    const nuevos=[]; let repetidos=0;
+    for(let i=1;i<rows.length;i++){
+      const nombre=_syncNorm(rows[i][iN]); if(!nombre) continue;
+      const key=nombre.toUpperCase();
+      if(existentes.has(key)){ repetidos++; continue; }
+      existentes.add(key);
+      nuevos.push({nombre, nombre_pila:_syncNorm(rows[i][iE]), puesto:_syncNorm(rows[i][iP]).toUpperCase(), activo:true, creado_por:(AUTH_USER&&AUTH_USER.email)||null});
+    }
+    if(!nuevos.length){ msg.textContent='No hay operarios nuevos ('+repetidos+' ya estaban cargados).'; return; }
+    msg.textContent='Guardando '+nuevos.length+' operarios…';
+    if(DEMO_MODE){ DIC.panol_operarios=(DIC.panol_operarios||[]).concat(nuevos.map((o,i)=>({id:1000+i,...o}))); }
+    else{
+      await sbFetch('/compras_panol_operarios',{method:'POST',body:JSON.stringify(nuevos),prefer:'return=minimal'});
+      await panolDicRecargar('ope');
+    }
+    closeModal(); toast('Operarios agregados: '+nuevos.length+(repetidos?' ('+repetidos+' ya estaban)':'')); renderPanol();
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.panolOperImportar=panolOperImportar;
 
 /* ---- Importar historial de compras ("Informe APP Costeos" de Tango) ----
    Mismo filtro que el Excel: artículos GC*, con fecha, cantidad > 0, total > 0, cotización > 0 y renglón en
@@ -8637,8 +8845,8 @@ function exportDicTab(){
     let rows=SERIES_ACTIVAS.filter(r=>r.familia==='modulo').filter(r=>dicRowPass('modulos',r));
     if(q) rows=rows.filter(r=>dicMatch(r,q));
     rows=dicApplySort('modulos',rows);
-    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Comentario','Adicional 2','Código de Barras','Adicional 1','Auxiliar 04','Partida','N° Despacho'],
-      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.comentario,r.adicional_2,r.codigo_barras,r.adicional_1,r._aux||'—',r.partida,r.numero_despacho])];
+    aoa=[['Cód. Depósito','Descripción depósito','Cód. Artículo','Descripción','Serie','Adicional 1','Comentario','Adicional 2','Código de Barras','Auxiliar 04','Partida','N° Despacho'],
+      ...rows.map(r=>[r.cod_deposito,r.desc_deposito,r.cod_articulo,r.descripcion,r.serie,r.adicional_1,r.comentario,r.adicional_2,r.codigo_barras,r._aux||'—',r.partida,r.numero_despacho])];
     sheetName='Módulos'; fname='Diccionario_Modulos_'+hoy+'.xlsx';
   } else if(DIC_TAB==='opcog'){
     const filt=arr=>{ let rows=arr; if(q) rows=rows.filter(x=>String(x).toLowerCase().includes(q)); return rows; };
@@ -10195,17 +10403,17 @@ function paintDic(){
     html='<div class="card"><div class="card-h" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h3 style="margin:0">Módulos (alquiler)</h3><span class="meta">'+rows.length+' de '+base.length+'</span>'+modTag
       +'<span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center">'+limpiarBtn+syncBtn+'</span></div>'
       +'<div class="dic-scroll"><table class="grid" style="font-size:9.5px;table-layout:auto;width:100%">'
-      +'<thead><tr>'+dicTh('modulos','Depósito','cod_deposito')+dicTh('modulos','Descripción depósito','desc_deposito')+dicTh('modulos','Artículo','cod_articulo')+dicTh('modulos','Descripción','descripcion')+dicTh('modulos','Serie','serie')+dicTh('modulos','Comentario','comentario')+dicTh('modulos','Adic. 2','adicional_2')+dicTh('modulos','Cód. Barras','codigo_barras')+dicTh('modulos','Adic. 1','adicional_1')+dicTh('modulos','Auxiliar 04','_aux')+'</tr></thead><tbody>'
+      +'<thead><tr>'+dicTh('modulos','Depósito','cod_deposito')+dicTh('modulos','Descripción depósito','desc_deposito')+dicTh('modulos','Artículo','cod_articulo')+dicTh('modulos','Descripción','descripcion')+dicTh('modulos','Serie','serie')+dicTh('modulos','Adic. 1','adicional_1')+dicTh('modulos','Comentario','comentario')+dicTh('modulos','Adic. 2','adicional_2')+dicTh('modulos','Cód. Barras','codigo_barras')+dicTh('modulos','Auxiliar 04','_aux')+'</tr></thead><tbody>'
       +rows.slice(0,500).map(r=>'<tr>'
         +'<td style="'+nowrap+'">'+esc(r.cod_deposito||'—')+'</td>'
         +'<td style="font-size:10.5px">'+esc(r.desc_deposito||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.cod_articulo||'—')+'</td>'
         +'<td style="'+nowrap+'" title="'+esc(r.descripcion||'')+'">'+esc(r.descripcion||'—')+'</td>'
         +'<td style="'+nowrap+'"><strong>'+esc(r.serie)+'</strong></td>'
+        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)" title="'+esc(r.comentario||'')+'">'+esc(r.comentario||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_2||'—')+'</td>'
         +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.codigo_barras||'—')+'</td>'
-        +'<td style="'+nowrap+';color:var(--muted)">'+esc(r.adicional_1||'—')+'</td>'
         +'<td style="'+nowrap+';color:'+(r._aux==='—'?'#b3261e':'var(--muted)')+'">'+esc(r._aux)+'</td></tr>').join('')+'</tbody></table></div>'
       +(rows.length>500?'<div style="font-size:11.5px;color:var(--muted);padding:8px 15px">Mostrando 500 de '+rows.length+'. Usá el buscador o los filtros de columna (▼).</div>':'')
       +'<div style="font-size:11.5px;color:var(--muted);padding:10px 15px">Dónde está cada módulo hoy (stock, cliente, mantenimiento, venta) y su Auxiliar 04 real, cruzado por serie. El selector de Módulo al cargar una OG ya muestra este mismo depósito y excluye los vendidos. Tocá la flechita ▼ de cada columna para filtrar, como en Excel.</div></div>';
@@ -12717,6 +12925,14 @@ async function reloadDicts(background){
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const pg = await sbFetchAll('/compras_panol_galpones?select=*&order=nombre.asc');
+        if(pg) DIC.panol_galpones = pg;
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      (async()=>{ try{
+        const po = await sbFetchAll('/compras_panol_operarios?select=*&order=nombre.asc');
+        if(po) DIC.panol_operarios = po;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const hp = await sbFetchAll('/compras_hist_precios?select=*&order=id.asc');
