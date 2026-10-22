@@ -3693,10 +3693,14 @@ function panolExportErogExcel(){
   XLSX.writeFile(wb,'Erogaciones_Panol_'+PANOL_PERIODO+'.xlsx'); toast('Exportado: '+rows.length+' filas');
 }
 window.panolExportErogExcel=panolExportErogExcel;
+// Nombres que usa el Excel de erogaciones y que en la clasificación tienen otro código
+const PANOL_DESTINO_ALIAS={MODALQ:'MANMOD'};
 function ppResolverDestino(txt){
   const t=String(txt||'').trim(); if(!t) return null;
   const T=t.toUpperCase(), first=T.split(/[\s—]+/)[0], sinIF=first.replace(/^IF/,'');
   const src=panolDestinos(), up=v=>String(v||'').toUpperCase().trim();
+  const al=PANOL_DESTINO_ALIAS[T]||PANOL_DESTINO_ALIAS[first];
+  if(al) return src.find(o=>up(o.cod)===al)||null;
   return src.find(o=>up(o.cod)===T) || src.find(o=>up(o.cod)===first) || src.find(o=>up(o.desc)===T)
     || src.find(o=>up(o.cod+' '+o.desc)===T || up(o.cod+' — '+o.desc)===T) || src.find(o=>up(o.cod)===sinIF) || null;
 }
