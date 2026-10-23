@@ -3415,6 +3415,7 @@ function openPanolSolDetalle(id){
   if(gest&&abierta){ acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
   if(solPuedeEditar(s)) acc.push('<button class="btn ghost" onclick="openPanolSolEditar('+id+')">Editar solicitud</button>');
   acc.push('<button class="btn ghost" onclick="panolSolDuplicar('+id+')">Duplicar</button>');
+  if(canPanol()) acc.push('<button class="btn ghost" onclick="panolSolAModelo('+id+')">Guardar como modelo</button>');
   if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
   if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
   openModal('Solicitud OT '+s.nro_ot,
@@ -3767,6 +3768,29 @@ function panolSolDuplicar(id){
   openPanolSolBorrador({titulo:'Duplicar solicitud '+s.nro_ot, kit:kit||null, kit_id:s.kit_id||null, kit_cantidad:s.kit_cantidad||null, solicitante:MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:s.destino_cod||'', fecha:String(s.fecha_necesidad||'').slice(0,10), comentario:s.comentario||'', items, detalle:'Duplicada de '+s.nro_ot});
 }
 window.panolSolDuplicar=panolSolDuplicar;
+
+/* ---- Guardar una solicitud como modelo de kit: se define la tarea, para cuántas unidades alcanza y se ajusta antes de guardar ---- */
+function panolSolAModelo(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  if(!canPanol()){ toast('Solo Pañol puede guardar modelos.'); return; }
+  const kit=s.kit_id?(DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id)):null;
+  openModal('Guardar la solicitud '+s.nro_ot+' como modelo',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Los materiales de la solicitud pasan a un modelo nuevo. Las cantidades del modelo son <b>por una unidad</b> de la tarea: indicá para cuántas unidades alcanza esta solicitud y se dividen. Antes de guardarlo vas a poder cambiar lo que haga falta.</div>'
+    +'<div class="frow c2"><div class="field"><label>Tarea (nombre del modelo)</label><input id="am_nombre" type="text" placeholder="Ej.: Montaje de bastidor de muro" value="'+esc(kit?kit.nombre+' (ajustado)':'')+'"></div><div class="field"><label>Unidad de trabajo</label><input id="am_unidad" type="text" placeholder="Ej.: módulo, bastidor de muro" value="'+esc(kit?(kit.unidad||''):'')+'"></div></div>'
+    +'<div class="field"><label>¿Para cuántas unidades de la tarea es esta solicitud?</label><input id="am_n" type="number" step="any" min="0" value="'+(s.kit_cantidad&&+s.kit_cantidad>0?+s.kit_cantidad:1)+'"><div style="font-size:12px;color:var(--muted);margin-top:4px">Si pidieron para 3 bastidores, poné 3: cada cantidad se divide por 3. Con 1 quedan igual.</div></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" onclick="panolSolAModeloOk('+id+')">Continuar</button>');
+}
+window.panolSolAModelo=panolSolAModelo;
+function panolSolAModeloOk(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const g=i=>(document.getElementById(i)||{}).value||'', nombre=g('am_nombre').trim(), unidad=g('am_unidad').trim(), n=+g('am_n');
+  if(!nombre){ toast('Falta el nombre de la tarea'); return; } if(!(n>0)){ toast('Indicá para cuántas unidades de la tarea es la solicitud'); return; }
+  const items=solItems(id).filter(i=>solVig(i)>1e-9); if(!items.length){ toast('La solicitud no tiene materiales vigentes.'); return; }
+  openPanolKitEd(); document.getElementById('kt_nombre').value=nombre; document.getElementById('kt_unidad').value=unidad; document.getElementById('kt_com').value='Armado desde la solicitud '+s.nro_ot+(n!==1?' ('+fmtNum(n,3)+' unidades)':'');
+  document.getElementById('ktBody').innerHTML=items.map(i=>solFilaHtml({texto:kitTxt(i),cantidad:+(solVig(i)/n).toFixed(3),um:i.um,comentario:i.comentario},{})).join('');
+  toast('Revisá las cantidades y guardá el modelo');
+}
+window.panolSolAModeloOk=panolSolAModeloOk;
 
 let PANOL_EGQ='';
 let PANOL_TAB='egresos';
