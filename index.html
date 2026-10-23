@@ -3254,7 +3254,7 @@ function renderPanolSolicitudes(){
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
-    +'<button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
+    +'<button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="herrSolicitud()">Solicitud de herramientas</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
@@ -3866,8 +3866,8 @@ function herrHtmlDisp(arts){
   const q=(PANOL_HERR_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
   const lista=_spOrdenar('pherrd',res.filter(r=>xlfPass('pherrd',r)&&(!q.length||q.every(w=>herrArtTxt(r.a.cod).toLowerCase().includes(w)))),{art:r=>r.a.cod,total:r=>r.total,prest:r=>r.prest,mant:r=>r.mant,disp:r=>r.disp,pend:r=>r.pend,alerta:sw});
   const celda=(r,s)=>{ const col=s.pico>r.total?'background:#fdecea;color:#b3261e;font-weight:700':(s.pico===r.total&&r.total>0?'background:#fff4d6;font-weight:600':''); return '<td style="text-align:center;'+col+'" title="'+s.pico+' necesaria(s) como máximo esa semana · hay '+r.total+'">'+(s.pico||'·')+'</td>'; };
-  const filas=lista.map(r=>'<tr><td><b>'+esc(r.a.cod)+'</b> · '+esc(r.a.desc)+'</td><td style="text-align:right">'+r.total+'</td><td style="text-align:right">'+r.prest+'</td><td style="text-align:right">'+r.mant+'</td>'
-    +'<td style="text-align:right;font-weight:700;color:'+(r.disp?'#1f6b45':'#b3261e')+'">'+r.disp+'</td><td style="text-align:right">'+r.pend+'</td>'+r.sem.map(s=>celda(r,s)).join('')
+  const filas=lista.map(r=>'<tr><td><b>'+esc(r.a.cod)+'</b> · '+esc(r.a.desc)+'</td><td style="text-align:center">'+r.total+'</td><td style="text-align:center">'+r.prest+'</td><td style="text-align:center">'+r.mant+'</td>'
+    +'<td style="text-align:center;font-weight:700;color:'+(r.disp?'#1f6b45':'#b3261e')+'">'+r.disp+'</td><td style="text-align:center">'+r.pend+'</td>'+r.sem.map(s=>celda(r,s)).join('')
     +'<td>'+(r.falta?'<span class="badge b-rojo">Faltan desde '+fmtDate(r.falta.dia)+'</span>':r.vencidas?'<span class="badge b-rojo">'+r.vencidas+' sin devolver</span>':'<span class="badge b-verde">OK</span>')+'</td>'
     +'<td><button class="btn ghost sm" onclick="herrUnidadesModal(\''+esc(r.a.cod)+'\')">Ver unidades</button> <button class="btn ghost sm" onclick="herrNuevoPedido(\''+esc(r.a.cod)+'\')">Pedir</button></td></tr>').join('');
   const hoy=herrHoy(), wk=d=>d.slice(8)+'/'+d.slice(5,7);
@@ -3901,6 +3901,47 @@ function herrHtmlPed(){
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrPed"><thead><tr>'+_pnTh('N°',null,'id','pherr')+_pnTh('Herramienta','art','art','pherr')+_pnTh('Serie / Auxiliar','serie','serie','pherr')+_pnTh('Para dónde','dest','dest','pherr')+_pnTh('Solicitante','sol','sol','pherr')+_pnTh('Desde','__fecha__','desde','pherr')+_pnTh('Hasta',null,'hasta','pherr')+_pnTh('Estado','est','est','pherr')+_pnTh('Entregada a','ent','ent','pherr')+'<th>Comentario</th><th></th></tr></thead><tbody>'
     +(filas||'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--muted)">'+(rows.length?'Nada con ese filtro.':'Todavía no hay pedidos ni préstamos.')+'</td></tr>')+'</tbody></table></div>';
 }
+
+/* ---- Solicitud de herramientas (desde Solicitudes): varias herramientas para un mismo destino y período ---- */
+function herrSolFila(cod){
+  const arts=herrArticulos();
+  return '<tr><td><select class="hs-art" style="width:380px;'+_fInp+'">'+arts.map(a=>'<option value="'+esc(a.cod)+'"'+(a.cod===cod?' selected':'')+'>'+esc(a.cod+' · '+a.desc+' ('+a.unid.length+')')+'</option>').join('')+'</select></td>'
+    +'<td><input type="number" min="1" step="1" value="1" class="hs-n" style="width:70px;text-align:right;'+_fInp+'"></td>'
+    +'<td><input type="date" class="hs-d1" style="'+_fInp+'" title="Si se deja vacío, usa el Desde general"></td><td><input type="date" class="hs-d2" style="'+_fInp+'" title="Si se deja vacío, usa el Hasta general"></td>'
+    +'<td><input type="text" class="hs-com" style="width:160px;'+_fInp+'"></td><td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td></tr>';
+}
+function herrSolicitud(){
+  if(!herrArticulos().length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
+  const ds=panolDestinos(), hoy=herrHoy();
+  openModal('Solicitud de herramientas',
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Indicá para dónde son y de cuándo a cuándo. Cada herramienta puede tener sus propias fechas; si las dejás vacías usa las generales. Pañol asigna la serie al entregar.</div>'
+    +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hs_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'">'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div><div class="field"><label>Solicitante</label><select id="hs_sol">'+solSolicitanteOpts()+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Desde (general)</label><input id="hs_d1" type="date" value="'+hoy+'"></div><div class="field"><label>Hasta (general, devolución)</label><input id="hs_d2" type="date" value="'+hoy+'"></div></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Cantidad</th><th>Desde</th><th>Hasta</th><th>Comentario</th><th></th></tr></thead><tbody id="hsBody">'+herrSolFila()+'</tbody></table></div>'
+    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="document.getElementById(\'hsBody\').insertAdjacentHTML(\'beforeend\',herrSolFila())">'+ICO.plus+'Agregar herramienta</button></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hsBtn" onclick="herrSolicitudGuardar()">Enviar a Pañol</button>','xwide');
+}
+window.herrSolicitud=herrSolicitud;
+async function herrSolicitudGuardar(){
+  const g=i=>(document.getElementById(i)||{}).value||'', dc=g('hs_dest'), sol=g('hs_sol'), D1=g('hs_d1'), D2=g('hs_d2');
+  if(!dc){ toast('Elegí para dónde son'); return; } if(!sol){ toast('Elegí el solicitante'); return; }
+  const dest=panolDestinos().find(o=>String(o.cod)===dc), email=herrEmail(sol), ahora=new Date().toISOString(), filas=[], avisos=[];
+  for(const tr of document.querySelectorAll('#hsBody tr')){
+    const cod=tr.querySelector('.hs-art').value, n=Math.floor(+tr.querySelector('.hs-n').value), d1=tr.querySelector('.hs-d1').value||D1, d2=tr.querySelector('.hs-d2').value||D2;
+    if(!(n>=1)){ toast('Revisá la cantidad de '+herrArtTxt(cod)); return; } if(!d1||!d2){ toast('Falta desde / hasta'); return; } if(d2<d1){ toast('"Hasta" es anterior a "Desde" en '+herrArtTxt(cod)); return; }
+    const a=herrArticulos().find(x=>x.cod===cod), ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===cod&&herrActivo(p)); let pico=0;
+    for(let d=d1,i=0;d<=d2&&i<400;d=herrSuma(d,1),i++){ const x=ps.filter(p=>herrSolapa(p,d,d)).length; if(x>pico) pico=x; }
+    if(a&&a.unid.length-pico<n) avisos.push(a.desc||cod);
+    const com=tr.querySelector('.hs-com').value.trim()||null;
+    for(let i=0;i<n;i++) filas.push({cod_articulo:cod, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, solicitante:sol, solicitante_email:email, desde:d1, hasta:d2, estado:'Solicitada', comentario:com, creado_por:panolUsuario(), historial:[{accion:'Pedida',detalle:'Solicitud de herramientas · del '+fmtDate(d1)+' al '+fmtDate(d2),por:panolUsuario(),fecha:ahora}]});
+  }
+  if(!filas.length){ toast('Agregá al menos una herramienta'); return; }
+  const btn=document.getElementById('hsBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  try{ await herrCrear(filas); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } toast('No se pudo enviar: '+(e.message||e)); return; }
+  closeModal(); toast(filas.length+' herramienta(s) pedida(s)'+(avisos.length?' · ojo: en esas fechas no alcanzan: '+avisos.join(', '):'')); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+}
+window.herrSolicitudGuardar=herrSolicitudGuardar;
 
 /* ---- Pedido ---- */
 function herrNuevoPedido(cod){
