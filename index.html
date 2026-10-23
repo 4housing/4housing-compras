@@ -6237,7 +6237,10 @@ async function gpTangoAnalizar(){
       desc:_syncIdx(H,'Descripción','Descripcion'), grupo:_syncIdx(H,'Grupo'), oc:_syncIdx(H,'Nro. Orden de Compra','Nro Orden de Compra'),
       cantPed:_syncIdx(H,'Cantidad pedida'), cantRec:_syncIdx(H,'Cantidad Recibida'), cantFac:_syncIdx(H,'Cantidad Facturada'),
       total:_syncIdx(H,'Total'), estado:_syncIdx(H,'Estado','Estado (renglón)','Estado (renglon)'), moneda:_syncIdx(H,'Moneda'), comprador:_syncIdx(H,'Nombre del comprador'),
-      rubro:_syncIdx(H,'RUBRO (Adic.)','RUBRO'), subrubro:_syncIdx(H,'SUBRUBRO (Adic.)','SUBRUBRO')
+      rubro:_syncIdx(H,'RUBRO (Adic.)','RUBRO'), subrubro:_syncIdx(H,'SUBRUBRO (Adic.)','SUBRUBRO'),
+      // Mismo adicional que ya exportamos a Tango desde la OG (DESVIO_ / Desvio, ver REPORT_COLS):
+      // si el informe lo trae, lo traemos de vuelta para ver en qué se desvían los presupuestos.
+      desvio:_syncIdx(H,'DESVIO_ (Adic.)','DESVIO_','DESVIO (Adic.)','DESVIO'), desvioTxt:_syncIdx(H,'Desvio (Adic.)','Desvio','DESVIO_TXT (Adic.)')
     };
     const mapIdx={}; (GP.mapeo||[]).forEach(m=>{ mapIdx[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
     const out=[], nuevos={}; let total=0;
@@ -6255,6 +6258,8 @@ async function gpTangoAnalizar(){
                     || (I.costeo>=0?gpLimpiaClasif(row[I.costeo]):''),
         rubro: I.rubro>=0?gpLimpiaClasif(row[I.rubro]):'',
         subrubro: I.subrubro>=0?gpLimpiaClasif(row[I.subrubro]):'',
+        desvio: I.desvio>=0?gpLimpiaClasif(row[I.desvio]):'',
+        desvio_txt: I.desvioTxt>=0?gpLimpiaClasif(row[I.desvioTxt]):'',
         cantidad_pedida: I.cantPed>=0?_syncNum(row[I.cantPed]):null,
         cantidad_recibida: I.cantRec>=0?_syncNum(row[I.cantRec]):null,
         cantidad_facturada: I.cantFac>=0?_syncNum(row[I.cantFac]):null,
@@ -6635,14 +6640,43 @@ function gpRenderTablero(){
       if(col==='rubro') return o.subrubro||o.rubro||o.costeo_tag||'(sin)';
       if(col==='sec') return secVal(o);
       if(col==='estado') return o.estado_oc||'(sin estado)';
+      if(col==='desvio') return o.desvio||'(sin desvío)';
       return '';
     } });
   let detalle=detalleBase.filter(o=>xlfPass('gpdet',o));
   detalle=_spOrdenar('gpdet', detalle, {
     oc:o=>nroOCTango(o.oc_numero), fecha:o=>o.fecha||'', prov:o=>o.proveedor_cod||'',
     desc:o=>o.descripcion||'', rubro:o=>o.subrubro||o.rubro||o.costeo_tag||'',
-    sec:o=>secVal(o), total:o=>+o.total_ars||0, estado:o=>o.estado_oc||'' });
+    sec:o=>secVal(o), total:o=>+o.total_ars||0, estado:o=>o.estado_oc||'', desvio:o=>o.desvio||'' });
   GP._detRows=detalle;
+
+  // Motivos de desvío declarados en las OGs (desvio/desvio_txt, importados del informe de Tango):
+  // en qué se desvían los presupuestos, no cuánto (eso ya lo muestra el KPI "Desvío neto" de arriba).
+  const desvioAgg={}; let desvioConN=0, desvioConArs=0;
+  detalleBase.forEach(o=>{
+    if(!o.desvio) return;
+    const a=+o.total_ars||0; desvioConN++; desvioConArs+=a;
+    if(!desvioAgg[o.desvio]) desvioAgg[o.desvio]={motivo:o.desvio, n:0, total:0};
+    desvioAgg[o.desvio].n++; desvioAgg[o.desvio].total+=a;
+  });
+  const desvioRowsBase=Object.values(desvioAgg);
+  xlfRegister('gpdesv', { rows:()=>desvioRowsBase, onChange:gpRenderTablero,
+    val:(d,col)=>{ if(col==='motivo') return d.motivo; return ''; } });
+  let desvioRows=desvioRowsBase.filter(d=>xlfPass('gpdesv',d));
+  desvioRows=_spOrdenar('gpdesv', desvioRows, { motivo:d=>d.motivo, n:d=>d.n, total:d=>d.total });
+  const desvioTrs=desvioRows.map(d=>'<tr><td>'+esc(d.motivo)+'</td><td style="text-align:right">'+d.n+'</td><td style="text-align:right">'+fmtNum(d.total,0)+'</td></tr>').join('');
+  const desvioCard = detalleBase.length ? (
+    '<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Motivos de desvío</h3>'
+      +'<span class="meta">'+desvioConN+' de '+detalleBase.length+' renglones con motivo cargado ('+gpMoney(desvioConArs)+')'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
+      +'<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
+        +(xlfHasAny('gpdesv')?'<button class="btn ghost sm" onclick="xlfClearAll(\'gpdesv\')">Limpiar filtros</button>':'')
+        +'<button class="btn ghost sm" onclick="tblAutofit(\'#gpDesvTbl\')">Auto-ajustar columnas</button></div></div>'
+      +'<div class="tbl-hscroll tbl-compact"><table id="gpDesvTbl" class="grid" style="font-size:12px"><thead><tr>'
+        +_gpTh('gpdesv','Motivo','motivo','motivo')+_gpThNum('gpdesv','Renglones',null,'n')+_gpThNum('gpdesv','Total ($)',null,'total')
+        +'</tr></thead><tbody>'
+        +(desvioTrs||'<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--muted)">Ningún renglón con motivo de desvío cargado.</td></tr>')
+      +'</tbody></table></div></div>'
+  ) : '';
   const detRows=detalle.slice(0,600).map((o,i)=>{
     const firma=gpFirma(o); const allocs=repByFirma[firma];
     let secCell;
@@ -6653,7 +6687,8 @@ function gpRenderTablero(){
       secCell=esc(o.seccion==='Sin clasificar'?'':o.seccion)+(o.seccion==='Sin clasificar'?'<span class="badge b-ambar">Sin clasificar</span>':'');
     }
     const accion=puedeRep?'<button class="btn ghost sm" onclick="gpRepartir('+i+')">Repartir</button>':'';
-    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+accion+'</td></tr>';
+    const desvioCell=o.desvio?('<span'+(o.desvio_txt?(' title="'+esc(o.desvio_txt)+'"'):'')+'>'+esc(o.desvio)+'</span>'):'';
+    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+desvioCell+'</td><td>'+accion+'</td></tr>';
   }).join('');
 
   C().innerHTML=''
@@ -6668,6 +6703,7 @@ function gpRenderTablero(){
       +'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpSecTbl\')">Auto-ajustar columnas</button></div>'
       +'<div class="tbl-hscroll tbl-compact"><table id="gpSecTbl" class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div>'
       +(((ag.totFuera.mod+ag.totFuera.ext)>1)?('<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Fuera del alcance de Compras (referencia, neteado): MOD $'+fmtNum(ag.totFuera.mod,0)+' · Externo $'+fmtNum(ag.totFuera.ext,0)+'</div>'):'')+'</div>'
+    +desvioCard
     +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Detalle de OC importadas</h3>'
       +'<span class="meta">'+detalle.length+' renglones'+(filtro?(' · sección: '+esc(filtro)):'')+'</span>'
       +'<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
@@ -6677,8 +6713,8 @@ function gpRenderTablero(){
       +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table id="gpDetTbl" class="grid" style="font-size:11.5px"><thead><tr>'
         +_gpTh('gpdet','OC','oc','oc')+_gpTh('gpdet','Fecha','__fecha__','fecha')+_gpTh('gpdet','Prov.','prov','prov')
         +_gpTh('gpdet','Descripción',null,'desc')+_gpTh('gpdet','Rubro/Costeo','rubro','rubro')+_gpTh('gpdet','Sección','sec','sec')
-        +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+'<th></th></tr></thead><tbody>'
-      +(detRows||'<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
+        +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+_gpTh('gpdet','Motivo desvío','desvio','desvio')+'<th></th></tr></thead><tbody>'
+      +(detRows||'<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>'
     +gpRenderOGsCard(p)
     +gpRenderSolpCard(p)
