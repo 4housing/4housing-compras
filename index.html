@@ -1026,14 +1026,14 @@ const DEMO_ROLES={
 function applyDemoRole(){ const r=DEMO_ROLES[DEMO_ROLE]||DEMO_ROLES.admin; ROLE={comprador:r.comprador, certificador:r.certificador, tesorero:r.tesorero, confidencial:r.confidencial, admin:r.admin, asiento:r.asiento, eliminarPagos:!!r.admin}; MI_NOMBRE=r.nombre||''; ES_DIRECCION=(DEMO_ROLE==='admin'); }
 async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
-  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false, eliminarPagos:false};   // por defecto, sin permisos
+  ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false, eliminarPagos:false, panol:false};   // por defecto, sin permisos
   MI_NOMBRE=''; ES_DIRECCION=false;
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
     if(!email) return;
     const rows=await sbFetch('/compras_usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
     const u=rows&&rows[0];
-    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento, eliminarPagos:!!u.puede_eliminar_pagos}; MI_NOMBRE=u.nombre||''; }
+    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento, eliminarPagos:!!u.puede_eliminar_pagos, panol:!!u.es_panol}; MI_NOMBRE=u.nombre||''; }
   }catch(e){ /* si falla, queda sin permisos */ }
   // es_direccion del portal (perfiles) — igual criterio que nav.js. Habilita la estructura de Gestión de Proyectos.
   try{
@@ -1042,6 +1042,7 @@ async function loadRole(){
   }catch(e){ /* si falla, no es dirección */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
+function canPanol(){ return !!(ROLE.admin||ROLE.panol); }   // Pañol: quien tiene es_panol en usuarios autorizados (hoy Iván y Nicolás) y el administrador
 function canCert(){ return ROLE.certificador||ROLE.admin; }
 function canPago(){ return ROLE.tesorero||ROLE.admin; }
 // N° de asiento Tango: a diferencia del resto de Tesorería (cualquier tesorero/admin), esto lo
@@ -2680,6 +2681,7 @@ function renderPanol(){
   if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_TAB==='cierres') return renderPanolCierres();
   if(PANOL_TAB==='sol') return renderPanolSolicitudes();
+  if(PANOL_TAB==='kits') return renderPanolKits();
   if(PANOL_TAB==='precios') return renderPanolPrecios();
   if(PANOL_TAB==='anal') return renderPanolAnalisis();
   if(PANOL_TAB==='conc') return renderPanolConc();
@@ -3205,7 +3207,7 @@ let PANOL_SOL_ERR='', PANOL_SOL={f:{est:'abiertas', q:''}};
 const PANOL_SOL_ESTADOS=['Pendiente','En preparación','Parcial','Entregada','Anulada'];
 const solItems=id=>(DIC.panol_solicitud_items||[]).filter(i=>String(i.solicitud_id)===String(id));
 const solEsMia=s=>!!(AUTH_USER&&AUTH_USER.email&&s.solicitante_email===AUTH_USER.email) || (DEMO_MODE&&!AUTH_USER);
-const solPuedeGestionar=()=>canEditOG();
+const solPuedeGestionar=()=>canPanol();
 function solVisibles(){ const l=DIC.panol_solicitudes||[]; return solPuedeGestionar()?l:l.filter(solEsMia); }
 // Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
 const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
@@ -3251,7 +3253,7 @@ function renderPanolSolicitudes(){
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
-    +'<button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
+    +'<button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
@@ -3367,24 +3369,33 @@ function panolSolPreview(errs,warns){
     +S.items.map(i=>'<tr><td>'+esc(i._txt)+(i.cod_articulo?'':' <span class="badge b-rojo">sin alta</span>')+'</td><td style="text-align:right">'+fmtNum(i.cantidad,3)+'</td><td>'+esc(i.um)+'</td><td>'+esc(i.galpon||'')+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>').join('')+'</tbody></table></div>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Pañol</button>'), 'xwide');
 }
-async function panolSolEnviar(){
-  const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  const cab={solicitante:S.solicitante, solicitante_email:(AUTH_USER&&AUTH_USER.email)||null, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:[{accion:'Creada',detalle:S.items.length+' renglón(es) desde Excel',por:panolUsuario(),fecha:new Date().toISOString()}]};
-  let nroOt='';
+// Crea la solicitud (cabecera + renglones). S: {solicitante, destino_cod, destino_txt, fecha_necesidad, comentario, items[], kit_id?, kit_cantidad?, detalle?}. Devuelve el N° de OT asignado o null si falló.
+async function panolSolCrear(S){
+  const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFold(x.nombre)===_syncFold(S.solicitante));
+  const yo=(AUTH_USER&&AUTH_USER.email)||null, esYo=_syncFold(S.solicitante)===_syncFold(MI_NOMBRE||'');
+  const email=(sol&&sol.email)||(esYo?yo:null)||(canPanol()?null:yo);   // la ve el solicitante si se conoce su usuario
+  const hist=[{accion:'Creada',detalle:S.items.length+' renglón(es)'+(S.detalle?' · '+S.detalle:(S.desdeExcel?' desde Excel':''))+((email&&email!==yo)||(!email&&yo)?' · cargada por '+panolUsuario():''),por:panolUsuario(),fecha:new Date().toISOString()}];
+  const cab={solicitante:S.solicitante, solicitante_email:email, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:hist, creado_por:panolUsuario()};
+  if(S.kit_id){ cab.kit_id=S.kit_id; cab.kit_cantidad=S.kit_cantidad||null; }
   const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, galpon:i.galpon, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
   try{
     if(DEMO_MODE){
       DIC.panol_solicitudes=DIC.panol_solicitudes||[]; DIC.panol_solicitud_items=DIC.panol_solicitud_items||[];
-      const id=Math.max(0,...DIC.panol_solicitudes.map(s=>+s.id||0))+1; nroOt='OT-'+String(id).padStart(5,'0'); DIC.panol_solicitudes.push({id,nro_ot:nroOt,...cab,creado_en:new Date().toISOString(),solicitante_email:cab.solicitante_email||'demo'});
+      const id=Math.max(0,...DIC.panol_solicitudes.map(x=>+x.id||0))+1, nro='OT-'+String(id).padStart(5,'0'); DIC.panol_solicitudes.push({id,nro_ot:nro,...cab,creado_en:new Date().toISOString(),solicitante_email:cab.solicitante_email||'demo'});
       let k=Math.max(0,...DIC.panol_solicitud_items.map(i=>+i.id||0)); its.forEach(i=>{ DIC.panol_solicitud_items.push({id:++k,solicitud_id:id,...i}); });
-    }else{
-      const r=await sbFetch('/compras_panol_solicitudes',{method:'POST',body:JSON.stringify(cab),prefer:'return=representation'}); const fila=(Array.isArray(r)?r[0]:r), id=fila.id; nroOt=fila.nro_ot||'';
-      try{ await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
-      catch(e){ try{ await sbFetch('/compras_panol_solicitudes?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} throw e; }
-      await panolSolCargar();
+      return nro;
     }
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } toast('No se pudo enviar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_solicitudes.sql?)'); return; }
-  _SOL_PEND=null; closeModal(); toast('Solicitud enviada a Pañol · N° de OT asignado: '+nroOt); PANOL_TAB='sol'; renderPanol();
+    const r=await sbFetch('/compras_panol_solicitudes',{method:'POST',body:JSON.stringify(cab),prefer:'return=representation'}); const fila=(Array.isArray(r)?r[0]:r), id=fila.id;
+    try{ await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
+    catch(e){ try{ await sbFetch('/compras_panol_solicitudes?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} throw e; }
+    await panolSolCargar(); return fila.nro_ot||'';
+  }catch(e){ toast('No se pudo enviar: '+(e.message||e)+' (¿ya se corrieron sql/2026-10_panol_solicitudes.sql y sql/2026-10_panol_kits.sql?)'); return null; }
+}
+async function panolSolEnviar(){
+  const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  const nro=await panolSolCrear({...S, desdeExcel:true});
+  if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } return; }
+  _SOL_PEND=null; closeModal(); toast('Solicitud enviada a Pañol · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
 }
 window.panolSolEnviar=panolSolEnviar;
 async function panolSolCargar(){
@@ -3403,10 +3414,11 @@ function openPanolSolDetalle(id){
   const acc=[];
   if(gest&&abierta){ acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
   if(solPuedeEditar(s)) acc.push('<button class="btn ghost" onclick="openPanolSolEditar('+id+')">Editar solicitud</button>');
+  acc.push('<button class="btn ghost" onclick="panolSolDuplicar('+id+')">Duplicar</button>');
   if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
   if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
   openModal('Solicitud OT '+s.nro_ot,
-    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+'</div>'
+    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
     +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
     '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'xwide');
@@ -3577,6 +3589,185 @@ async function panolSolEditarGuardar(){
 }
 window.panolSolEditarGuardar=panolSolEditarGuardar;
 
+/* ===================== Modelos de Kits (solicitud de OT según tarea) =====================
+   Un modelo es una tarea (1 módulo, 1 bastidor de piso…) con los materiales que lleva y una cantidad estimada PARA UNA unidad de esa tarea.
+   Al crear una solicitud desde un modelo se indica cuántas unidades de la tarea se contemplan y las cantidades se multiplican; se pueden ajustar
+   en esa solicitud sin tocar el modelo, o editar el modelo para las próximas. Cualquier solicitud (con o sin modelo) se puede duplicar a nombre de otra persona.
+   Modelos: los administra Pañol (es_panol) o el administrador. Cualquier usuario puede usarlos para pedir; elegir "a nombre de quién" es de Pañol. */
+let PANOL_KITS_ERR='', PANOL_KITQ='';
+const kitItems=id=>(DIC.panol_kit_items||[]).filter(i=>String(i.kit_id)===String(id));
+async function panolKitsCargar(){
+  try{ DIC.panol_kits=await sbFetchAll('/compras_panol_kits?select=*&order=nombre.asc'); DIC.panol_kit_items=await sbFetchAll('/compras_panol_kit_items?select=*&order=id.asc'); PANOL_KITS_ERR=''; }
+  catch(e){ PANOL_KITS_ERR=String(e.message||e); }
+}
+const _fInp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
+// Fila editable de materiales (la usan el modelo y el borrador de solicitud): artículo, cantidad, U.M., [entregar en], [fecha de necesidad], comentario
+let _FILA_K=0;
+function solGalOpts(cur){ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre); if(cur&&!l.includes(cur)) l.push(cur); return '<option value="">—</option>'+l.map(n=>'<option value="'+esc(n)+'"'+(n===(cur||panolGalDefecto())?' selected':'')+'>'+esc(n)+'</option>').join(''); }
+function solFilaHtml(d,o){
+  const k=++_FILA_K; d=d||{};
+  return '<tr><td><input id="fa_'+k+'" class="ed-art" value="'+esc(d.texto||'')+'" style="width:340px;'+_fInp+'" placeholder="Código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt(\'fa_'+k+'\',()=>solArtUm(\'fa_'+k+'\'))" oninput="comboPanolArt(\'fa_'+k+'\',()=>solArtUm(\'fa_'+k+'\'))" onkeydown="panolComboKey(event)" onblur="comboHideDelayed()"></td>'
+    +'<td><input type="number" step="any" min="0" class="ed-cant" value="'+(d.cantidad!=null?d.cantidad:'')+'" style="width:90px;text-align:right;'+_fInp+'"></td>'
+    +'<td><select class="ed-um" style="'+_fInp+'">'+panolUmOptionsHtml(d.um||'UNI')+'</select></td>'
+    +(o.gal?'<td><select class="ed-gal" style="'+_fInp+'">'+solGalOpts(d.galpon)+'</select></td>':'')
+    +(o.fec?'<td><input type="date" class="ed-fec" value="'+esc(String(d.fecha||'').slice(0,10))+'" style="'+_fInp+'"></td>':'')
+    +'<td><input type="text" class="ed-com" value="'+esc(d.comentario||'')+'" style="width:170px;'+_fInp+'"></td>'
+    +'<td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td></tr>';
+}
+function solArtUm(id){ const el=document.getElementById(id); if(!el) return; const ra=panolArtResolver(el.value); if(!ra.cod) return; const u=panolUmSugerida(ra.cod); const sel=el.closest('tr').querySelector('.ed-um'); if(u&&sel&&!sel.dataset.manual) panolUmFijar(sel,u); }
+window.solArtUm=solArtUm;
+function solAgregarFila(tbodyId,o){ const tb=document.getElementById(tbodyId); tb.insertAdjacentHTML('beforeend',solFilaHtml({},o)); }
+window.solAgregarFila=solAgregarFila;
+function solLeerFilas(tbodyId,o){
+  const items=[], errs=[]; let n=0;
+  document.querySelectorAll('#'+tbodyId+' tr').forEach(tr=>{ n++;
+    const txt=tr.querySelector('.ed-art').value.trim(), cant=+tr.querySelector('.ed-cant').value; if(!txt&&!cant) return;
+    if(!txt){ errs.push('Falta el artículo en la fila '+n); return; } if(!(cant>0)){ errs.push('Falta la cantidad de '+txt); return; }
+    const ra=panolArtResolver(txt);
+    items.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', galpon:o.gal?(tr.querySelector('.ed-gal').value||null):null, fecha_necesidad:o.fec?(tr.querySelector('.ed-fec').value||null):null, comentario:tr.querySelector('.ed-com').value.trim()||null});
+  });
+  return {items,errs};
+}
+const kitTxt=i=>i.cod_articulo?panolArtTxt(i.cod_articulo):(i.articulo_libre||'');
+
+/* ---- Solapa Modelos de Kits ---- */
+function renderPanolKits(){
+  const kits=DIC.panol_kits||[], gest=canPanol(), estado=k=>k.activo===false?'Inhabilitado':'Activo';
+  xlfRegister('pkit',{rows:()=>kits, onChange:renderPanol, val:(k,c)=>c==='estado'?estado(k):c==='unidad'?(k.unidad||'(sin unidad)'):''});
+  if(!SP_SORT.pkit) SP_SORT.pkit={k:'nombre',dir:1};
+  const q=(PANOL_KITQ||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const lista=_spOrdenar('pkit',kits.filter(k=>xlfPass('pkit',k)&&(!q.length||q.every(w=>[k.nombre,k.unidad,k.comentario].join(' ').toLowerCase().includes(w)))),{nombre:k=>k.nombre,unidad:k=>k.unidad,n:k=>kitItems(k.id).length,estado});
+  const filas=lista.map(k=>'<tr><td><b>'+esc(k.nombre)+'</b></td><td>'+esc(k.unidad||'')+'</td><td style="text-align:right">'+kitItems(k.id).length+'</td><td>'+(k.activo===false?'<span class="badge b-gris">Inhabilitado</span>':'<span class="badge b-verde">Activo</span>')+'</td><td class="tx-largo" style="color:var(--muted);font-size:11.5px" title="'+esc(k.comentario||'')+'">'+esc(k.comentario||'')+'</td>'
+    +'<td style="white-space:nowrap">'+(k.activo===false?'':'<button class="btn sm" onclick="openPanolSolDesdeKit('+k.id+')">Nueva solicitud</button> ')+(gest?'<button class="btn ghost sm" onclick="openPanolKitEd('+k.id+')">Ver / editar</button> <button class="btn ghost sm" onclick="panolKitDuplicar('+k.id+')">Duplicar modelo</button> <button class="btn ghost sm" onclick="panolKitToggle('+k.id+')">'+(k.activo===false?'Habilitar':'Inhabilitar')+'</button>':'<button class="btn ghost sm" onclick="openPanolKitEd('+k.id+')">Ver materiales</button>')+'</td></tr>').join('');
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Modelos de Kits</h3><span class="meta">'+lista.length+' de '+kits.length+' modelos</span>'
+    +'<input value="'+esc(PANOL_KITQ)+'" placeholder="Buscar modelo…" onchange="PANOL_KITQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:200px">'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('pkit').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolKits\')">Auto-ajustar columnas</button>'+(gest?'<button class="btn sm" onclick="openPanolKitEd()">'+ICO.plus+'Nuevo modelo</button>':'')+'</span></div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Cada modelo es una tarea con los materiales que lleva <b>para una unidad</b> (1 módulo, 1 bastidor de piso…). Con <b>Nueva solicitud</b> se arma la solicitud con las cantidades por la cantidad de unidades que se necesiten, y se puede ajustar sin tocar el modelo.'+(gest?'':' Los modelos los administra Pañol.')+'</div>'
+    +(PANOL_KITS_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer los modelos: '+esc(PANOL_KITS_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_kits.sql</b> en Supabase?</div>':'')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolKits"><thead><tr>'+_pnTh('Modelo (tarea)',null,'nombre','pkit')+_pnTh('Unidad de trabajo','unidad','unidad','pkit')+_pnTh('Materiales',null,'n','pkit')+_pnTh('Estado','estado','estado','pkit')+'<th>Comentario</th><th></th></tr></thead><tbody>'
+    +(filas||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">'+(kits.length?'Ningún modelo con ese filtro.':'Todavía no hay modelos'+(gest?': creá el primero con "Nuevo modelo".':'.'))+'</td></tr>')+'</tbody></table></div></div>';
+}
+
+/* ---- Alta / edición de un modelo ---- */
+function openPanolKitEd(id){
+  const cur=id!=null?(DIC.panol_kits||[]).find(k=>String(k.id)===String(id)):null, gest=canPanol(), it=cur?kitItems(cur.id):[];
+  const dis=gest?'':' disabled';
+  const filas=it.map(i=>solFilaHtml({texto:kitTxt(i),cantidad:i.cantidad,um:i.um,comentario:i.comentario},{})).join('')+(it.length||!gest?'':solFilaHtml({},{}));
+  openModal((cur?(gest?'Editar':'Modelo'):'Nuevo modelo')+' de kit',
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Cantidades <b>estimadas para UNA unidad</b> de la tarea. Al usar el modelo se multiplican por la cantidad de unidades de la solicitud y se pueden ajustar en esa solicitud.</div>'
+    +'<div class="frow c2"><div class="field"><label>Tarea (nombre del modelo)</label><input id="kt_nombre" type="text" value="'+esc(cur?cur.nombre:'')+'" placeholder="Ej.: Montaje de bastidor de piso"'+dis+'></div><div class="field"><label>Unidad de trabajo</label><input id="kt_unidad" type="text" value="'+esc(cur?(cur.unidad||''):'')+'" placeholder="Ej.: módulo, bastidor de piso, bastidor de muro"'+dis+'></div></div>'
+    +'<div class="field"><label>Comentario</label><input id="kt_com" type="text" value="'+esc(cur?(cur.comentario||''):'')+'"'+dis+'></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:44vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad (por 1 unidad)</th><th>U.M.</th><th>Comentario</th><th></th></tr></thead><tbody id="ktBody">'+filas+'</tbody></table></div>'
+    +(gest?'<div style="margin-top:8px"><button class="btn ghost sm" onclick="solAgregarFila(\'ktBody\',{})">'+ICO.plus+'Agregar material</button></div>':''),
+    '<button class="btn ghost" onclick="closeModal()">'+(gest?'Cancelar':'Cerrar')+'</button>'+(cur&&cur.activo!==false?'<button class="btn ghost" onclick="openPanolSolDesdeKit('+cur.id+')">Nueva solicitud con este modelo</button>':'')+(gest?'<button class="btn" id="ktBtn" onclick="panolKitGuardar('+(cur?cur.id:'null')+')">Guardar modelo</button>':''),'xwide');
+  if(!gest) document.querySelectorAll('#ktBody input,#ktBody select,#ktBody button').forEach(e=>{ e.disabled=true; });
+}
+window.openPanolKitEd=openPanolKitEd;
+async function panolKitGuardar(id){
+  if(!canPanol()){ toast('Solo Pañol puede editar los modelos.'); return; }
+  const g=i=>(document.getElementById(i)||{}).value||'', nombre=g('kt_nombre').trim(), unidad=g('kt_unidad').trim(), com=g('kt_com').trim();
+  if(!nombre){ toast('Falta el nombre de la tarea'); return; }
+  if((DIC.panol_kits||[]).some(k=>String(k.id)!==String(id)&&_syncFold(k.nombre)===_syncFold(nombre))){ toast('Ya existe un modelo con ese nombre'); return; }
+  const {items,errs}=solLeerFilas('ktBody',{}); if(errs.length){ toast(errs[0]); return; } if(!items.length){ toast('Cargá al menos un material'); return; }
+  const btn=document.getElementById('ktBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  const cab={nombre, unidad:unidad||null, comentario:com||null, actualizado_en:new Date().toISOString(), actualizado_por:panolUsuario()};
+  const its=items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, comentario:i.comentario}));
+  try{
+    if(DEMO_MODE){
+      DIC.panol_kits=DIC.panol_kits||[]; DIC.panol_kit_items=DIC.panol_kit_items||[]; let kid=id;
+      if(id==null){ kid=Math.max(0,...DIC.panol_kits.map(k=>+k.id||0))+1; DIC.panol_kits.push({id:kid,activo:true,creado_por:panolUsuario(),...cab}); } else Object.assign(DIC.panol_kits.find(k=>String(k.id)===String(id)),cab);
+      DIC.panol_kit_items=DIC.panol_kit_items.filter(i=>String(i.kit_id)!==String(kid)); let n=Math.max(0,...DIC.panol_kit_items.map(i=>+i.id||0)); its.forEach(i=>DIC.panol_kit_items.push({id:++n,kit_id:kid,...i}));
+    }else{
+      let kid=id;
+      if(id==null){ const r=await sbFetch('/compras_panol_kits',{method:'POST',body:JSON.stringify({...cab,creado_por:panolUsuario()}),prefer:'return=representation'}); kid=(Array.isArray(r)?r[0]:r).id; }
+      else await sbFetch('/compras_panol_kits?id=eq.'+id,{method:'PATCH',body:JSON.stringify(cab),prefer:'return=minimal'});
+      await sbFetch('/compras_panol_kit_items?kit_id=eq.'+kid,{method:'DELETE',prefer:'return=minimal'});
+      await sbFetch('/compras_panol_kit_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,kit_id:kid}))),prefer:'return=minimal'});
+      await panolKitsCargar();
+    }
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Guardar modelo'; } toast('No se pudo guardar el modelo: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_kits.sql?)'); return; }
+  closeModal(); toast('Modelo guardado'); PANOL_TAB='kits'; renderPanol();
+}
+window.panolKitGuardar=panolKitGuardar;
+async function panolKitToggle(id){
+  const k=(DIC.panol_kits||[]).find(x=>String(x.id)===String(id)); if(!k||!canPanol()) return; const nuevo=k.activo===false;
+  try{ if(!DEMO_MODE) await sbFetch('/compras_panol_kits?id=eq.'+id,{method:'PATCH',body:JSON.stringify({activo:nuevo}),prefer:'return=minimal'}); k.activo=nuevo; }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; }
+  toast(nuevo?'Modelo habilitado':'Modelo inhabilitado'); renderPanol();
+}
+window.panolKitToggle=panolKitToggle;
+function panolKitDuplicar(id){
+  const k=(DIC.panol_kits||[]).find(x=>String(x.id)===String(id)); if(!k||!canPanol()) return;
+  openPanolKitEd(); document.getElementById('kt_nombre').value=k.nombre+' (copia)'; document.getElementById('kt_unidad').value=k.unidad||''; document.getElementById('kt_com').value=k.comentario||'';
+  document.getElementById('ktBody').innerHTML=kitItems(id).map(i=>solFilaHtml({texto:kitTxt(i),cantidad:i.cantidad,um:i.um,comentario:i.comentario},{})).join('');
+}
+window.panolKitDuplicar=panolKitDuplicar;
+
+/* ---- Nueva solicitud desde un modelo ---- */
+function openPanolSolDesdeKit(id){
+  const kits=(DIC.panol_kits||[]).filter(k=>k.activo!==false);
+  if(!kits.length){ toast('Todavía no hay modelos de kits habilitados.'); return; }
+  openModal('Nueva solicitud desde un modelo',
+    '<div class="field"><label>Modelo (tarea)</label><select id="nk_kit" onchange="panolSolKitUni()">'+kits.map(k=>'<option value="'+k.id+'"'+(String(k.id)===String(id)?' selected':'')+'>'+esc(k.nombre)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label id="nk_lbl">Cantidad de unidades</label><input id="nk_n" type="number" step="any" min="0" value="1"><div style="font-size:12px;color:var(--muted);margin-top:4px">Las cantidades del modelo son para <b>1</b> unidad; se multiplican por este número. Después podés ajustarlas en la solicitud.</div></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="panolSolKitContinuar()">Armar solicitud</button>');
+  panolSolKitUni();
+}
+window.openPanolSolDesdeKit=openPanolSolDesdeKit;
+function panolSolKitUni(){ const k=(DIC.panol_kits||[]).find(x=>String(x.id)===String((document.getElementById('nk_kit')||{}).value)); const l=document.getElementById('nk_lbl'); if(l&&k) l.textContent='¿Cuántos '+(k.unidad||'unidades de esta tarea')+' se contemplan?'; }
+window.panolSolKitUni=panolSolKitUni;
+function panolSolKitContinuar(){
+  const k=(DIC.panol_kits||[]).find(x=>String(x.id)===String((document.getElementById('nk_kit')||{}).value)), n=+(document.getElementById('nk_n')||{}).value;
+  if(!k) return; if(!(n>0)){ toast('Ingresá cuántas unidades de la tarea se contemplan'); return; }
+  const items=kitItems(k.id).map(i=>({texto:kitTxt(i),cantidad:+(+i.cantidad*n).toFixed(3),um:i.um,galpon:panolGalDefecto(),comentario:i.comentario}));
+  openPanolSolBorrador({titulo:'Nueva solicitud · '+k.nombre+(n!==1?' × '+fmtNum(n,3):''), kit:k, kit_cantidad:n, solicitante:MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:'', fecha:'', comentario:'', items});
+}
+window.panolSolKitContinuar=panolSolKitContinuar;
+
+/* ---- Borrador de solicitud (desde un modelo o duplicando): se completa y se envía ---- */
+let _BD=null;
+function solSolicitanteOpts(sel){
+  const yo=MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false).map(x=>x.nombre);
+  let l=canPanol()?sols.slice():[yo]; if(yo&&!l.some(n=>_syncFold(n)===_syncFold(yo))) l.unshift(yo); if(sel&&!l.some(n=>_syncFold(n)===_syncFold(sel))) l.push(sel);
+  l=l.filter(Boolean).sort((a,b)=>a.localeCompare(b,'es'));
+  return l.map(n=>'<option value="'+esc(n)+'"'+(_syncFold(n)===_syncFold(sel||yo)?' selected':'')+'>'+esc(n)+'</option>').join('');
+}
+function openPanolSolBorrador(d){
+  _BD=d; const ds=panolDestinos();
+  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(d.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
+  const filas=d.items.map(i=>solFilaHtml({texto:i.texto,cantidad:i.cantidad,um:i.um,galpon:i.galpon,fecha:i.fecha,comentario:i.comentario},{gal:1,fec:1})).join('');
+  openModal(d.titulo||'Nueva solicitud',
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(d.kit?'Los materiales vienen del modelo <b>'+esc(d.kit.nombre)+'</b>'+(d.kit_cantidad!==1?' × '+fmtNum(d.kit_cantidad,3):'')+'. Lo que cambies acá vale <b>solo para esta solicitud</b>; para cambiarlo para siempre, editá el modelo.':'Revisá los datos y los materiales: lo que cambies vale solo para esta solicitud nueva.')+' El N° de OT se asigna al enviarla.</div>'
+    +'<div class="frow c2"><div class="field"><label>Solicitante</label><select id="bd_sol"'+(canPanol()?'':' disabled')+'>'+solSolicitanteOpts(d.solicitante)+'</select></div><div class="field"><label>Destino (IF / obra)</label><select id="bd_dest">'+destOpts+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Fecha de necesidad</label><input id="bd_fnec" type="date" value="'+esc(d.fecha||'')+'"></div><div class="field"><label>Comentario general</label><input id="bd_com" type="text" value="'+esc(d.comentario||'')+'"></div></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Entregar en</th><th>Fecha de necesidad (si es distinta)</th><th>Comentario</th><th></th></tr></thead><tbody id="bdBody">'+filas+'</tbody></table></div>'
+    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="solAgregarFila(\'bdBody\',{gal:1,fec:1})">'+ICO.plus+'Agregar material</button></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(d.kit&&canPanol()?'<button class="btn ghost" onclick="openPanolKitEd('+d.kit.id+')">Editar el modelo</button>':'')+'<button class="btn" id="bdBtn" onclick="panolSolBorradorEnviar()">Enviar a Pañol</button>','xwide');
+}
+window.openPanolSolBorrador=openPanolSolBorrador;
+async function panolSolBorradorEnviar(){
+  const d=_BD; if(!d) return; const g=i=>(document.getElementById(i)||{}).value||'';
+  const solicitante=g('bd_sol'), destCod=g('bd_dest'), fnec=g('bd_fnec'), com=g('bd_com').trim();
+  if(!solicitante){ toast('Elegí el solicitante'); return; } if(!destCod){ toast('Elegí el destino'); return; } if(!fnec){ toast('Ingresá la fecha de necesidad'); return; }
+  const {items,errs}=solLeerFilas('bdBody',{gal:1,fec:1}); if(errs.length){ toast(errs[0]); return; } if(!items.length){ toast('Cargá al menos un material'); return; }
+  const dd=ppResolverDestino(destCod); items.forEach(i=>{ if(!i.fecha_necesidad) i.fecha_necesidad=fnec; if(!i.galpon) i.galpon=panolGalDefecto()||null; });
+  const btn=document.getElementById('bdBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  const S={solicitante, destino_cod:destCod, destino_txt:(dd&&dd.desc)?destCod+' — '+dd.desc:destCod, fecha_necesidad:fnec, comentario:com||null, items, kit_id:d.kit?d.kit.id:(d.kit_id||null), kit_cantidad:d.kit?d.kit_cantidad:(d.kit_cantidad||null), detalle:d.detalle||(d.kit?'Desde el modelo '+d.kit.nombre+' × '+fmtNum(d.kit_cantidad,3):'')};
+  const nro=await panolSolCrear(S); if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } return; }
+  _BD=null; closeModal(); toast('Solicitud enviada a Pañol · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
+}
+window.panolSolBorradorEnviar=panolSolBorradorEnviar;
+
+/* ---- Duplicar una solicitud (con o sin modelo) ---- */
+function panolSolDuplicar(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const items=solItems(id).filter(i=>solVig(i)>1e-9).map(i=>({texto:kitTxt(i),cantidad:solVig(i),um:i.um,galpon:i.galpon,fecha:String(i.fecha_necesidad||'').slice(0,10),comentario:i.comentario}));
+  if(!items.length){ toast('La solicitud no tiene materiales vigentes para copiar.'); return; }
+  const kit=s.kit_id?(DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id)):null;
+  openPanolSolBorrador({titulo:'Duplicar solicitud '+s.nro_ot, kit:kit||null, kit_id:s.kit_id||null, kit_cantidad:s.kit_cantidad||null, solicitante:MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:s.destino_cod||'', fecha:String(s.fecha_necesidad||'').slice(0,10), comentario:s.comentario||'', items, detalle:'Duplicada de '+s.nro_ot});
+}
+window.panolSolDuplicar=panolSolDuplicar;
+
 let PANOL_EGQ='';
 let PANOL_TAB='egresos';
 function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
@@ -3584,7 +3775,7 @@ window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
   const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
@@ -15232,6 +15423,7 @@ async function reloadDicts(background){
         if(pg) DIC.panol_galpones = pg;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ await panolSolCargar(); })(),
+      (async()=>{ await panolKitsCargar(); })(),
       (async()=>{ try{ const ps = await sbFetchAll('/compras_panol_solicitantes?select=*&order=nombre.asc'); if(ps) DIC.panol_solicitantes = ps; }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const pm = await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
