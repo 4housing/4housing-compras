@@ -3903,25 +3903,98 @@ function herrHtmlPed(){
 }
 
 /* ---- Solicitud de herramientas (desde Solicitudes): varias herramientas para un mismo destino y período ---- */
-function herrSolFila(cod){
-  const arts=herrArticulos();
+function herrSolFila(cod,d){
+  const arts=herrArticulos(); d=d||{};
   return '<tr><td><select class="hs-art" style="width:380px;'+_fInp+'">'+arts.map(a=>'<option value="'+esc(a.cod)+'"'+(a.cod===cod?' selected':'')+'>'+esc(a.cod+' · '+a.desc+' ('+a.unid.length+')')+'</option>').join('')+'</select></td>'
-    +'<td><input type="number" min="1" step="1" value="1" class="hs-n" style="width:70px;text-align:right;'+_fInp+'"></td>'
-    +'<td><input type="date" class="hs-d1" style="'+_fInp+'" title="Si se deja vacío, usa el Desde general"></td><td><input type="date" class="hs-d2" style="'+_fInp+'" title="Si se deja vacío, usa el Hasta general"></td>'
-    +'<td><input type="text" class="hs-com" style="width:160px;'+_fInp+'"></td><td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td></tr>';
+    +'<td><input type="number" min="1" step="1" value="'+(d.n||1)+'" class="hs-n" style="width:70px;text-align:right;'+_fInp+'"></td>'
+    +'<td><input type="date" class="hs-d1" value="'+esc(d.d1||'')+'" style="'+_fInp+'" title="Si se deja vacío, usa el Desde general"></td><td><input type="date" class="hs-d2" value="'+esc(d.d2||'')+'" style="'+_fInp+'" title="Si se deja vacío, usa el Hasta general"></td>'
+    +'<td><input type="text" class="hs-com" value="'+esc(d.com||'')+'" style="width:160px;'+_fInp+'"></td><td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td></tr>';
 }
-function herrSolicitud(){
+function herrSolicitud(pre){
   if(!herrArticulos().length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
-  const ds=panolDestinos(), hoy=herrHoy();
+  const ds=panolDestinos(), hoy=herrHoy(); pre=pre||{};
   openModal('Solicitud de herramientas',
     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Indicá para dónde son y de cuándo a cuándo. Cada herramienta puede tener sus propias fechas; si las dejás vacías usa las generales. Pañol asigna la serie al entregar.</div>'
-    +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hs_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'">'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div><div class="field"><label>Solicitante</label><select id="hs_sol">'+solSolicitanteOpts()+'</select></div></div>'
-    +'<div class="frow c2"><div class="field"><label>Desde (general)</label><input id="hs_d1" type="date" value="'+hoy+'"></div><div class="field"><label>Hasta (general, devolución)</label><input id="hs_d2" type="date" value="'+hoy+'"></div></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Cantidad</th><th>Desde</th><th>Hasta</th><th>Comentario</th><th></th></tr></thead><tbody id="hsBody">'+herrSolFila()+'</tbody></table></div>'
+    +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hs_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(pre.dest)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div><div class="field"><label>Solicitante</label><select id="hs_sol">'+solSolicitanteOpts(pre.sol)+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Desde (general)</label><input id="hs_d1" type="date" value="'+(pre.d1||hoy)+'"></div><div class="field"><label>Hasta (general, devolución)</label><input id="hs_d2" type="date" value="'+(pre.d2||hoy)+'"></div></div>'
+    +(pre.avisos&&pre.avisos.length?'<div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px"><b>Revisá esto del Excel:</b><ul style="margin:4px 0 0 18px;padding:0">'+pre.avisos.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>':'')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Cantidad</th><th>Desde</th><th>Hasta</th><th>Comentario</th><th></th></tr></thead><tbody id="hsBody">'+((pre.lineas||[]).length?pre.lineas.map(l=>herrSolFila(l.cod,l)).join(''):herrSolFila())+'</tbody></table></div>'
     +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="document.getElementById(\'hsBody\').insertAdjacentHTML(\'beforeend\',herrSolFila())">'+ICO.plus+'Agregar herramienta</button></div>',
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hsBtn" onclick="herrSolicitudGuardar()">Enviar a Pañol</button>','xwide');
+    '<button class="btn ghost" onclick="herrExcelBajar()">Bajar Excel</button><button class="btn ghost" onclick="herrExcelSubir()">Subir Excel</button><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hsBtn" onclick="herrSolicitudGuardar()">Enviar a Pañol</button>','xwide');
 }
 window.herrSolicitud=herrSolicitud;
+/* Excel de solicitud de herramientas: se baja con listas desplegables y al subirlo se carga en el formulario para revisarlo antes de enviar */
+async function herrExcelBajar(){
+  let EJ; try{ EJ=await panolExcelJS(); }catch(e){ toast('No se pudo cargar el generador de Excel. Verificá tu conexión e intentá de nuevo.'); return; }
+  const wb=new EJ.Workbook(); wb.creator='4housing';
+  const ws=wb.addWorksheet('Solicitud',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}}), ls=wb.addWorksheet('Listas',{properties:{tabColor:{argb:'FF9CA3AF'}}});
+  const hs=herrArticulos().map(a=>a.cod+' — '+a.desc+' (hay '+a.unid.length+')'), dests=panolDestinos().map(o=>o.cod+' — '+(o.desc||'')), sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false).map(x=>x.nombre).sort((a,b)=>a.localeCompare(b,'es'));
+  ['Herramientas','Destinos','Solicitantes'].forEach((t,i)=>{ const c=ls.getCell(1,i+1); c.value=t; c.font={bold:true}; });
+  hs.forEach((v,i)=>{ ls.getCell(i+2,1).value=v; }); dests.forEach((v,i)=>{ ls.getCell(i+2,2).value=v; }); sols.forEach((v,i)=>{ ls.getCell(i+2,3).value=v; });
+  [70,50,36].forEach((w,i)=>{ ls.getColumn(i+1).width=w; }); [64,14,18,18,40].forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
+  ws.mergeCells('A1:E1'); ws.getCell('A1').value='Solicitud de herramientas a Pañol'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
+  ws.mergeCells('A2:E2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Pañol > Solicitudes > Solicitud de herramientas > Subir Excel). Vas a poder revisarla antes de enviarla.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
+  const amarillo={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}, bd={style:'thin',color:{argb:'FFD1B96B'}}, borde={top:bd,left:bd,bottom:bd,right:bd};
+  const campo=(fila,lbl,val)=>{ const a=ws.getCell(fila,1); a.value=lbl; a.font={bold:true,size:11}; a.alignment={horizontal:'right'}; ws.mergeCells(fila,2,fila,5); const b=ws.getCell(fila,2); b.value=val||null; b.fill=amarillo; b.border=borde; b.alignment={horizontal:'left'}; return b; };
+  const bs=campo(3,'Solicitante',sols.includes(MI_NOMBRE)?MI_NOMBRE:''); if(sols.length) bs.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$C$2:$C$'+(sols.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Solicitante',error:'Elegí un solicitante de la lista.'};
+  const bd2=campo(4,'Para dónde (destino)'); bd2.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$B$2:$B$'+(dests.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Destino',error:'Elegí un destino de la lista.'};
+  const fd=(fila,lbl)=>{ const b=campo(fila,lbl); b.numFmt='dd/mm/yyyy'; b.dataValidation={type:'date',operator:'greaterThan',allowBlank:false,formulae:[new Date(2020,0,1)],showErrorMessage:true,errorTitle:'Fecha',error:'Ingresá una fecha (dd/mm/aaaa).'}; };
+  fd(5,'Desde (general)'); fd(6,'Hasta (general, devolución)'); campo(7,'Comentario general');
+  const h=9, cab=['Herramienta','Cantidad','Desde (si es distinto)','Hasta (si es distinto)','Comentario'];
+  cab.forEach((t,i)=>{ const c=ws.getCell(h,i+1); c.value=t; c.font={bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; }); ws.getRow(h).height=30;
+  ws.views=[{showGridLines:false,state:'frozen',ySplit:h}];
+  for(let r=h+1;r<=h+60;r++){
+    for(let c=1;c<=5;c++){ const cell=ws.getCell(r,c); cell.fill=amarillo; cell.border=borde; }
+    ws.getCell(r,1).dataValidation={type:'list',allowBlank:true,formulae:['Listas!$A$2:$A$'+(hs.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Herramienta',error:'Elegí una herramienta de la lista.'};
+    ws.getCell(r,2).dataValidation={type:'whole',operator:'greaterThan',allowBlank:true,formulae:[0],showErrorMessage:true,errorTitle:'Cantidad',error:'La cantidad tiene que ser un número entero mayor a 0.'};
+    [3,4].forEach(c=>{ ws.getCell(r,c).numFmt='dd/mm/yyyy'; ws.getCell(r,c).dataValidation={type:'date',operator:'greaterThan',allowBlank:true,formulae:[new Date(2020,0,1)],showErrorMessage:true,errorTitle:'Fecha',error:'Ingresá una fecha (dd/mm/aaaa).'}; });
+  }
+  try{
+    const buf=await wb.xlsx.writeBuffer(), blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='Solicitud_Herramientas_Panol.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500); toast('Excel de herramientas descargado');
+  }catch(e){ toast('No se pudo armar el Excel: '+(e.message||e)); }
+}
+window.herrExcelBajar=herrExcelBajar;
+function herrExcelSubir(){
+  openModal('Subir Excel de solicitud de herramientas',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel que se baja con "Bajar Excel". Se carga en el formulario para que lo revises antes de enviarlo a Pañol.</div>'
+    +'<div class="field"><label>Excel (.xlsx) *</label><input id="hx_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="hxMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
+    '<button class="btn ghost" onclick="herrSolicitud()">Volver</button><button class="btn" onclick="herrExcelLeer()">Revisar</button>');
+}
+window.herrExcelSubir=herrExcelSubir;
+async function herrExcelLeer(){
+  const f=(document.getElementById('hx_file').files||[])[0], msg=document.getElementById('hxMsg');
+  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
+  try{
+    const wb=await _syncReadWb(f), nom=wb.SheetNames.find(n=>/solicitud/i.test(n))||wb.SheetNames[0];
+    const aoa=XLSX.utils.sheet_to_json(wb.Sheets[nom],{header:1,raw:true,defval:''}), norm=t=>_syncFold(t).replace(/[^a-z0-9 ]/g,'').trim();
+    const val=lbl=>{ const r=aoa.find(x=>norm(x[0]).startsWith(norm(lbl))); if(!r) return ''; for(let c=1;c<r.length;c++) if(String(r[c]).trim()!=='') return r[c]; return ''; };
+    const hi=aoa.findIndex(x=>norm(x[0]).startsWith('herramienta')&&norm(x[1]).startsWith('cantidad'));
+    if(hi<0) throw new Error('No encontré la tabla (columnas Herramienta y Cantidad). ¿Es el Excel de solicitud de herramientas de la app?');
+    const avisos=[], errs=[], arts=herrArticulos(), solN=String(val('Solicitante')||'').trim(), destT=String(val('Para donde')||val('Destino')||'').trim();
+    const d1=_syncFechaISO(val('Desde')), d2=_syncFechaISO(val('Hasta')), dd=destT?ppResolverDestino(destT):null;
+    const sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false), solOk=sols.find(x=>_syncFold(x.nombre)===_syncFold(solN));
+    if(!solN) avisos.push('Falta el solicitante.'); else if(!solOk&&sols.length) avisos.push('El solicitante "'+solN+'" no figura en el diccionario; elegilo de la lista.');
+    if(!destT) avisos.push('Falta el destino.'); else if(!dd) avisos.push('No reconozco el destino "'+destT+'"; elegilo de la lista.');
+    if(!d1||!d2) avisos.push('Faltan las fechas generales (desde / hasta).'); else if(d2<d1) avisos.push('"Hasta" es anterior a "Desde".');
+    const lineas=[];
+    for(let i=hi+1;i<aoa.length;i++){
+      const r=aoa[i], t=String(r[0]||'').trim(); if(!t&&(r[1]===''||r[1]==null)) continue;
+      const fila=i+1, n=typeof r[1]==='number'?r[1]:parseFloat(String(r[1]).replace(',','.')), cod=(t.match(/^[A-Za-z0-9]+/)||[''])[0].toUpperCase();
+      const a=arts.find(x=>x.cod.toUpperCase()===cod)||arts.find(x=>_syncFold(x.desc)===_syncFold(t));
+      if(!a){ errs.push('Fila '+fila+': "'+t+'" no es una herramienta GCHRR de Series activas.'); continue; }
+      if(!(n>=1)){ errs.push('Fila '+fila+' ('+a.cod+'): la cantidad tiene que ser un entero mayor a 0.'); continue; }
+      const f1=r[2]!==''?_syncFechaISO(r[2]):'', f2=r[3]!==''?_syncFechaISO(r[3]):'';
+      if((r[2]!==''&&!f1)||(r[3]!==''&&!f2)) avisos.push('Fila '+fila+': una fecha no es válida; se usa la general.');
+      lineas.push({cod:a.cod,n:Math.floor(n),d1:f1||'',d2:f2||'',com:String(r[4]||'').trim()});
+    }
+    if(!lineas.length&&!errs.length) errs.push('No hay herramientas cargadas.');
+    if(errs.length){ msg.style.color='#b3261e'; msg.innerHTML='Corregí esto en el Excel y volvé a subirlo:<ul style="margin:4px 0 0 18px;padding:0">'+errs.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'; return; }
+    closeModal(); herrSolicitud({dest:dd?dd.cod:'',sol:solOk?solOk.nombre:solN,d1:d1||'',d2:d2||'',lineas,avisos});
+  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e); }
+}
+window.herrExcelLeer=herrExcelLeer;
 async function herrSolicitudGuardar(){
   const g=i=>(document.getElementById(i)||{}).value||'', dc=g('hs_dest'), sol=g('hs_sol'), D1=g('hs_d1'), D2=g('hs_d2');
   if(!dc){ toast('Elegí para dónde son'); return; } if(!sol){ toast('Elegí el solicitante'); return; }
