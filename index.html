@@ -2682,6 +2682,7 @@ function renderPanol(){
   if(PANOL_TAB==='cierres') return renderPanolCierres();
   if(PANOL_TAB==='sol') return renderPanolSolicitudes();
   if(PANOL_TAB==='kits') return renderPanolKits();
+  if(PANOL_TAB==='herr') return renderPanolHerr();
   if(PANOL_TAB==='precios') return renderPanolPrecios();
   if(PANOL_TAB==='anal') return renderPanolAnalisis();
   if(PANOL_TAB==='conc') return renderPanolConc();
@@ -3793,13 +3794,258 @@ function panolSolAModeloOk(id){
 window.panolSolAModeloOk=panolSolAModeloOk;
 
 let PANOL_EGQ='';
+/* ---- Herramientas (GCHRR): disponibilidad, pedidos, préstamos y mantenimiento ----
+   Cada herramienta física es una SERIE de Series activas (artículo GCHRR…); su Auxiliar de Tango (tipo 7) se deduce por la serie.
+   compras_panol_herr tiene una fila por unidad pedida/prestada/en mantenimiento. La herramienta no se consume: no hay egreso ni costo.
+   Pedir: cualquiera. Entregar, devolver y mandar a mantenimiento: Pañol (es_panol) o administrador. Cada uno ve solo sus pedidos. */
+let PANOL_HERR_ERR='', PANOL_HERR_VISTA='disp', PANOL_HERR_Q='';
+const herrHoy=()=>new Date().toISOString().slice(0,10);
+const herrSuma=(iso,n)=>{ const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+const herrF=v=>String(v||'').slice(0,10);
+async function panolHerrCargar(){
+  if(DEMO_MODE) return;
+  try{ DIC.panol_herr=await sbFetchAll('/compras_panol_herr?select=*&order=id.desc'); PANOL_HERR_ERR=''; }
+  catch(e){ PANOL_HERR_ERR=String(e.message||e); }
+}
+const herrUnidades=()=>(SERIES_ACTIVAS||[]).filter(u=>/^GCHRR/i.test(u.cod_articulo||''));
+function herrArticulos(){
+  const m=new Map();
+  herrUnidades().forEach(u=>{ const o=m.get(u.cod_articulo)||{cod:u.cod_articulo,desc:artDesc(u.cod_articulo)||u.descripcion||'',unid:[]}; o.unid.push(u); m.set(u.cod_articulo,o); });
+  return [...m.values()].sort((a,b)=>a.cod.localeCompare(b.cod));
+}
+const herrAuxTxt=serie=>{ const t=_serieAuxTexto(_serieAuxIndex(['07']),serie); return t; };
+const herrActivo=p=>['Solicitada','Prestada','Mantenimiento'].includes(p.estado);
+// lo que está en la calle o en el taller y ya venció sigue ocupando la unidad hasta hoy
+const herrHasta=p=>{ const h=herrF(p.hasta); return (p.estado==='Prestada'||p.estado==='Mantenimiento')&&h<herrHoy()?herrHoy():h; };
+const herrSolapa=(p,d1,d2)=>herrF(p.desde)<=d2&&herrHasta(p)>=d1;
+const herrVencida=p=>p.estado==='Prestada'&&herrF(p.hasta)<herrHoy();
+const herrEsMia=p=>!!(AUTH_USER&&AUTH_USER.email&&p.solicitante_email===AUTH_USER.email)||(DEMO_MODE&&!AUTH_USER);
+const herrVisibles=()=>(DIC.panol_herr||[]).filter(p=>canPanol()||herrEsMia(p));
+// Resumen de una herramienta: total, prestadas y en mantenimiento hoy, pedidos sin entregar y necesidad máxima de cada una de las próximas 8 semanas
+function herrResumen(a){
+  const hoy=herrHoy(), ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===a.cod&&herrActivo(p)), total=a.unid.length;
+  const prest=ps.filter(p=>p.estado==='Prestada'&&herrSolapa(p,hoy,hoy)).length, mant=ps.filter(p=>p.estado==='Mantenimiento'&&herrSolapa(p,hoy,hoy)).length;
+  const pend=ps.filter(p=>p.estado==='Solicitada').length, vencidas=ps.filter(herrVencida).length, sem=[]; let falta=null;
+  for(let w=0;w<8;w++){
+    const d1=herrSuma(hoy,w*7); let pico=0;
+    for(let i=0;i<7;i++){ const d=herrSuma(d1,i), n=ps.filter(p=>herrSolapa(p,d,d)).length; if(n>pico) pico=n; if(n>total&&!falta) falta={dia:d,n}; }
+    sem.push({d1,pico});
+  }
+  return {a,total,prest,mant,disp:Math.max(0,total-prest-mant),pend,vencidas,sem,falta};
+}
+const herrAlertas=()=>{ const r=herrArticulos().map(herrResumen); return {falta:r.filter(x=>x.falta), venc:(DIC.panol_herr||[]).filter(herrVencida)}; };
+function herrBadge(p){
+  if(herrVencida(p)) return '<span class="badge b-rojo" title="Pasó la fecha de devolución">Prestada · vencida</span>';
+  const c={'Solicitada':'b-ambar','Prestada':'b-gris','Devuelta':'b-verde','Mantenimiento':'b-ambar','Anulada':'b-rojo'}[p.estado]||'b-gris';
+  return '<span class="badge '+c+'">'+esc(p.estado==='Mantenimiento'?'En mantenimiento':p.estado)+'</span>';
+}
+const herrTxtEstado=p=>herrVencida(p)?'Prestada · vencida':(p.estado==='Mantenimiento'?'En mantenimiento':p.estado);
+const herrArtTxt=cod=>cod+' · '+(artDesc(cod)||'');
+const herrEmail=nombre=>{ const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFold(x.nombre)===_syncFold(nombre)), yo=(AUTH_USER&&AUTH_USER.email)||null, esYo=_syncFold(nombre)===_syncFold(MI_NOMBRE||''); return (sol&&sol.email)||(esYo?yo:null)||(canPanol()?null:yo); };
+
+function renderPanolHerr(){
+  const gest=canPanol(), al=herrAlertas(), arts=herrArticulos();
+  const vbtn=(id,l)=>'<button class="btn '+(PANOL_HERR_VISTA===id?'':'ghost ')+'sm" onclick="PANOL_HERR_VISTA=\''+id+'\';renderPanol()">'+l+'</button>';
+  const aviso=(al.falta.length||al.venc.length)
+    ?'<div style="margin:0 16px 10px;padding:9px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px;line-height:1.6">'
+      +(al.falta.length?'<div><b>⚠ Faltan herramientas:</b> '+al.falta.map(x=>esc(x.a.desc||x.a.cod)+' (hay '+x.total+', se necesitan '+x.falta.n+' desde el '+fmtDate(x.falta.dia)+')').join(' · ')+'</div>':'')
+      +(al.venc.length?'<div><b>⚠ Sin devolver pasada la fecha:</b> '+al.venc.map(p=>esc(herrArtTxt(p.cod_articulo))+' '+esc(p.serie||'')+' — '+esc(p.entregado_a||p.solicitante||'')+' (debía volver el '+fmtDate(p.hasta)+')').join(' · ')+'</div>':'')+'</div>':'';
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Herramientas</h3>'
+    +'<span style="display:flex;gap:6px">'+vbtn('disp','Disponibilidad y proyección')+vbtn('ped','Pedidos y préstamos')+'</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" onclick="herrNuevoPedido()">'+ICO.plus+'Pedir herramienta</button>'+(gest?'<button class="btn ghost sm" onclick="herrMantForm()">Enviar a mantenimiento</button>':'')+'</span></div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Herramientas = artículos <b>GCHRR</b> de Series activas (cada serie es una herramienta; el Auxiliar de Tango se deduce por la serie). La herramienta <b>no se consume</b>: se presta de una fecha a otra y se devuelve.'+(gest?'':' Ves solo tus pedidos.')+'</div>'
+    +(PANOL_HERR_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer los préstamos: '+esc(PANOL_HERR_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_herramientas.sql</b> en Supabase?</div>':'')
+    +aviso
+    +(PANOL_HERR_VISTA==='disp'?herrHtmlDisp(arts):herrHtmlPed())+'</div>';
+}
+function herrHtmlDisp(arts){
+  const res=arts.map(herrResumen), sw=r=>r.falta?'Falta':(r.vencidas?'Sin devolver':'OK');
+  xlfRegister('pherrd',{rows:()=>res, onChange:renderPanol, val:(r,c)=>c==='art'?herrArtTxt(r.a.cod):c==='alerta'?sw(r):''});
+  if(!SP_SORT.pherrd) SP_SORT.pherrd={k:'art',dir:1};
+  const q=(PANOL_HERR_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const lista=_spOrdenar('pherrd',res.filter(r=>xlfPass('pherrd',r)&&(!q.length||q.every(w=>herrArtTxt(r.a.cod).toLowerCase().includes(w)))),{art:r=>r.a.cod,total:r=>r.total,prest:r=>r.prest,mant:r=>r.mant,disp:r=>r.disp,pend:r=>r.pend,alerta:sw});
+  const celda=(r,s)=>{ const col=s.pico>r.total?'background:#fdecea;color:#b3261e;font-weight:700':(s.pico===r.total&&r.total>0?'background:#fff4d6;font-weight:600':''); return '<td style="text-align:center;'+col+'" title="'+s.pico+' necesaria(s) como máximo esa semana · hay '+r.total+'">'+(s.pico||'·')+'</td>'; };
+  const filas=lista.map(r=>'<tr><td><b>'+esc(r.a.cod)+'</b> · '+esc(r.a.desc)+'</td><td style="text-align:right">'+r.total+'</td><td style="text-align:right">'+r.prest+'</td><td style="text-align:right">'+r.mant+'</td>'
+    +'<td style="text-align:right;font-weight:700;color:'+(r.disp?'#1f6b45':'#b3261e')+'">'+r.disp+'</td><td style="text-align:right">'+r.pend+'</td>'+r.sem.map(s=>celda(r,s)).join('')
+    +'<td>'+(r.falta?'<span class="badge b-rojo">Faltan desde '+fmtDate(r.falta.dia)+'</span>':r.vencidas?'<span class="badge b-rojo">'+r.vencidas+' sin devolver</span>':'<span class="badge b-verde">OK</span>')+'</td>'
+    +'<td><button class="btn ghost sm" onclick="herrUnidadesModal(\''+esc(r.a.cod)+'\')">Ver unidades</button> <button class="btn ghost sm" onclick="herrNuevoPedido(\''+esc(r.a.cod)+'\')">Pedir</button></td></tr>').join('');
+  const hoy=herrHoy(), wk=d=>d.slice(8)+'/'+d.slice(5,7);
+  return '<div style="display:flex;gap:10px;align-items:center;padding:0 16px 8px;flex-wrap:wrap"><input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar herramienta…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+res.length+' herramientas · '+herrUnidades().length+' unidades</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px">'+xlfClearAllBtn('pherrd').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblHerrDisp\')">Auto-ajustar columnas</button></span></div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Las columnas de semanas muestran el <b>máximo de unidades necesarias</b> (pedidas, prestadas o en mantenimiento) en cada semana desde hoy. En rojo: se necesitan más de las que hay. En amarillo: se usan todas.</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrDisp"><thead><tr>'+_pnTh('Herramienta','art','art','pherrd')+_pnTh('Total',null,'total','pherrd')+_pnTh('Prestadas hoy',null,'prest','pherrd')+_pnTh('En mantenimiento',null,'mant','pherrd')+_pnTh('Disponibles hoy',null,'disp','pherrd')+_pnTh('Pedidos sin entregar',null,'pend','pherrd')
+    +Array.from({length:8},(_,w)=>'<th title="Semana desde el '+fmtDate(herrSuma(hoy,w*7))+'">Sem. '+wk(herrSuma(hoy,w*7))+'</th>').join('')+_pnTh('Alerta','alerta','alerta','pherrd')+'<th></th></tr></thead><tbody>'
+    +(filas||'<tr><td colspan="16" style="text-align:center;padding:20px;color:var(--muted)">'+(res.length?'Ninguna herramienta con ese filtro.':'No hay herramientas GCHRR en Series activas.')+'</td></tr>')+'</tbody></table></div>';
+}
+function herrHtmlPed(){
+  const gest=canPanol(), rows=herrVisibles();
+  xlfRegister('pherr',{rows:()=>rows, onChange:renderPanol, dateVal:p=>herrF(p.desde), val:(p,c)=>c==='art'?herrArtTxt(p.cod_articulo):c==='serie'?(p.serie||'(sin asignar)'):c==='dest'?(p.destino_txt||'(sin destino)'):c==='sol'?(p.solicitante||''):c==='est'?herrTxtEstado(p):c==='ent'?(p.entregado_a||''):''});
+  if(!SP_SORT.pherr) SP_SORT.pherr={k:'id',dir:-1};
+  const q=(PANOL_HERR_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
+  const lista=_spOrdenar('pherr',rows.filter(p=>xlfPass('pherr',p)&&(!q.length||q.every(w=>[p.cod_articulo,artDesc(p.cod_articulo),p.serie,p.destino_txt,p.solicitante,p.entregado_a,p.estado].join(' ').toLowerCase().includes(w)))),
+    {id:p=>+p.id,art:p=>p.cod_articulo,serie:p=>p.serie,dest:p=>p.destino_txt,sol:p=>p.solicitante,desde:p=>herrF(p.desde),hasta:p=>herrF(p.hasta),est:herrTxtEstado,ent:p=>p.entregado_a});
+  const filas=lista.map(p=>{
+    const aux=p.serie?herrAuxTxt(p.serie):'', acc=[];
+    if(gest&&p.estado==='Solicitada') acc.push('<button class="btn sm" onclick="herrEntregar('+p.id+')">Entregar</button>');
+    if(gest&&p.estado==='Prestada') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Devuelta</button>','<button class="btn ghost sm" onclick="herrMantForm(\''+esc(p.serie||'')+'\','+p.id+')">A mantenimiento</button>');
+    if(gest&&p.estado==='Mantenimiento') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Volvió</button>');
+    if(p.estado==='Solicitada'&&(gest||herrEsMia(p))) acc.push('<button class="btn ghost sm" onclick="herrAnular('+p.id+')">Anular</button>');
+    acc.push('<button class="btn ghost sm" onclick="herrHistorial('+p.id+')">Historial</button>');
+    return '<tr><td>'+p.id+'</td><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+(p.serie?'<b>'+esc(p.serie)+'</b>'+(aux?'<br><span style="font-size:11px;color:var(--muted)">'+esc(aux)+'</span>':'<br><span style="font-size:11px;color:#b3261e">sin auxiliar</span>'):'<span style="color:var(--muted)">sin asignar</span>')+'</td>'
+      +'<td>'+esc(p.destino_txt||p.destino_cod||'')+'</td><td>'+esc(p.solicitante||'')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+(herrVencida(p)?'<span style="color:#b3261e;font-weight:700">'+fmtDate(p.hasta)+'</span>':fmtDate(p.hasta))+'</td><td>'+herrBadge(p)+'</td><td>'+esc(p.entregado_a||'')+'</td>'
+      +'<td class="tx-largo" style="color:var(--muted);font-size:11.5px" title="'+esc(p.comentario||'')+'">'+esc(p.comentario||'')+'</td><td style="white-space:nowrap">'+acc.join(' ')+'</td></tr>';
+  }).join('');
+  return '<div style="display:flex;gap:10px;align-items:center;padding:0 16px 8px;flex-wrap:wrap"><input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+rows.length+'</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px">'+xlfClearAllBtn('pherr').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblHerrPed\')">Auto-ajustar columnas</button></span></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrPed"><thead><tr>'+_pnTh('N°',null,'id','pherr')+_pnTh('Herramienta','art','art','pherr')+_pnTh('Serie / Auxiliar','serie','serie','pherr')+_pnTh('Para dónde','dest','dest','pherr')+_pnTh('Solicitante','sol','sol','pherr')+_pnTh('Desde','__fecha__','desde','pherr')+_pnTh('Hasta',null,'hasta','pherr')+_pnTh('Estado','est','est','pherr')+_pnTh('Entregada a','ent','ent','pherr')+'<th>Comentario</th><th></th></tr></thead><tbody>'
+    +(filas||'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--muted)">'+(rows.length?'Nada con ese filtro.':'Todavía no hay pedidos ni préstamos.')+'</td></tr>')+'</tbody></table></div>';
+}
+
+/* ---- Pedido ---- */
+function herrNuevoPedido(cod){
+  const arts=herrArticulos(); if(!arts.length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
+  const ds=panolDestinos(), hoy=herrHoy();
+  openModal('Pedir herramienta',
+    '<div class="frow c2"><div class="field"><label>Herramienta</label><select id="hp_art" onchange="herrPedidoAviso()">'+arts.map(a=>'<option value="'+esc(a.cod)+'"'+(a.cod===cod?' selected':'')+'>'+esc(a.cod+' · '+a.desc+' ('+a.unid.length+')')+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Cantidad</label><input id="hp_n" type="number" min="1" step="1" value="1" onchange="herrPedidoAviso()"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hp_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'">'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Solicitante</label><select id="hp_sol">'+solSolicitanteOpts()+'</select></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Desde</label><input id="hp_d1" type="date" value="'+hoy+'" onchange="herrPedidoAviso()"></div><div class="field"><label>Hasta (devolución)</label><input id="hp_d2" type="date" value="'+hoy+'" onchange="herrPedidoAviso()"></div></div>'
+    +'<div class="field"><label>Comentario</label><input id="hp_com" type="text"></div><div id="hp_aviso" style="font-size:12.5px;margin-top:6px"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hpBtn" onclick="herrPedidoGuardar()">Enviar pedido</button>','xwide');
+  herrPedidoAviso();
+}
+window.herrNuevoPedido=herrNuevoPedido;
+function herrPedidoAviso(){
+  const g=i=>(document.getElementById(i)||{}).value||'', cod=g('hp_art'), d1=g('hp_d1'), d2=g('hp_d2'), n=+g('hp_n')||0, el=document.getElementById('hp_aviso'); if(!el) return;
+  const a=herrArticulos().find(x=>x.cod===cod); if(!a||!d1||!d2||d2<d1){ el.innerHTML=d1&&d2&&d2<d1?'<span style="color:#b3261e">"Hasta" no puede ser anterior a "Desde".</span>':''; return; }
+  const ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===cod&&herrActivo(p)); let pico=0;
+  for(let d=d1,i=0;d<=d2&&i<400;d=herrSuma(d,1),i++){ const x=ps.filter(p=>herrSolapa(p,d,d)).length; if(x>pico) pico=x; }
+  const libres=a.unid.length-pico;
+  el.innerHTML=libres>=n?'<span style="color:#1f6b45">En ese período quedan <b>'+libres+'</b> de '+a.unid.length+' disponibles.</span>':'<span style="color:#b3261e">⚠ En ese período solo quedan <b>'+Math.max(0,libres)+'</b> de '+a.unid.length+' (pedidas, prestadas o en mantenimiento: '+pico+'). Se puede pedir igual; Pañol lo verá en la proyección.</span>';
+}
+window.herrPedidoAviso=herrPedidoAviso;
+async function herrCrear(filas){
+  if(DEMO_MODE){ DIC.panol_herr=DIC.panol_herr||[]; let n=Math.max(0,...DIC.panol_herr.map(r=>+r.id||0)); filas.forEach(f=>DIC.panol_herr.unshift({id:++n,creado_en:new Date().toISOString(),...f})); }
+  else{ await sbFetch('/compras_panol_herr',{method:'POST',body:JSON.stringify(filas),prefer:'return=minimal'}); await panolHerrCargar(); }
+}
+async function herrPedidoGuardar(){
+  const g=i=>(document.getElementById(i)||{}).value||'', cod=g('hp_art'), n=Math.floor(+g('hp_n')), dc=g('hp_dest'), sol=g('hp_sol'), d1=g('hp_d1'), d2=g('hp_d2');
+  if(!(n>=1)){ toast('Poné la cantidad'); return; } if(!dc){ toast('Elegí para dónde es'); return; } if(!sol){ toast('Elegí el solicitante'); return; } if(!d1||!d2){ toast('Completá desde y hasta'); return; } if(d2<d1){ toast('"Hasta" no puede ser anterior a "Desde"'); return; }
+  const dest=panolDestinos().find(o=>String(o.cod)===dc), email=herrEmail(sol), ahora=new Date().toISOString();
+  const fila=()=>({cod_articulo:cod, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, solicitante:sol, solicitante_email:email, desde:d1, hasta:d2, estado:'Solicitada', comentario:g('hp_com').trim()||null, creado_por:panolUsuario(), historial:[{accion:'Pedida',detalle:'Del '+fmtDate(d1)+' al '+fmtDate(d2),por:panolUsuario(),fecha:ahora}]});
+  const btn=document.getElementById('hpBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  try{ await herrCrear(Array.from({length:n},fila)); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar pedido'; } toast('No se pudo enviar el pedido: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_herramientas.sql?)'); return; }
+  closeModal(); toast(n+' herramienta(s) pedida(s)'); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+}
+window.herrPedidoGuardar=herrPedidoGuardar;
+async function herrPatch(p,campos,accion,detalle){
+  const cambios={...campos, historial:solHist(p,accion,detalle), actualizado_en:new Date().toISOString(), actualizado_por:panolUsuario()};
+  if(!DEMO_MODE) await sbFetch('/compras_panol_herr?id=eq.'+p.id,{method:'PATCH',body:JSON.stringify(cambios),prefer:'return=minimal'});
+  Object.assign(p,cambios);
+}
+const herrFila=id=>(DIC.panol_herr||[]).find(x=>String(x.id)===String(id));
+// Unidades de un artículo libres (sin préstamo ni mantenimiento) en el período; exceptoId = la fila que se está editando
+function herrLibres(cod,d1,d2,exceptoId){
+  const ocupadas=new Set((DIC.panol_herr||[]).filter(p=>p.serie&&String(p.id)!==String(exceptoId)&&(p.estado==='Prestada'||p.estado==='Mantenimiento')&&herrSolapa(p,d1,d2)).map(p=>p.serie));
+  return herrUnidades().filter(u=>u.cod_articulo===cod&&!ocupadas.has(u.serie));
+}
+
+/* ---- Entregar (Pañol asigna la serie e informa a quién y de cuándo a cuándo) ---- */
+function herrEntregar(id){
+  const p=herrFila(id); if(!p||!canPanol()) return;
+  openModal('Entregar herramienta #'+p.id,
+    '<div style="font-size:13px;margin-bottom:8px"><b>'+esc(herrArtTxt(p.cod_articulo))+'</b> · para <b>'+esc(p.destino_txt||'')+'</b> · pidió '+esc(p.solicitante||'')+'</div>'
+    +'<div class="frow c2"><div class="field"><label>Desde</label><input id="he_d1" type="date" value="'+herrF(p.desde)+'" onchange="herrEntregarSeries('+p.id+')"></div><div class="field"><label>Hasta (devolución)</label><input id="he_d2" type="date" value="'+herrF(p.hasta)+'" onchange="herrEntregarSeries('+p.id+')"></div></div>'
+    +'<div class="field"><label>Serie a entregar (solo las libres en ese período)</label><select id="he_serie"></select></div>'
+    +'<div class="field"><label>Se la entrego a</label><input id="he_a" type="text" value="'+esc(p.solicitante||'')+'" placeholder="Nombre de quien la retira"></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="heBtn" onclick="herrEntregarOk('+p.id+')">Entregar</button>','xwide');
+  herrEntregarSeries(p.id);
+}
+window.herrEntregar=herrEntregar;
+function herrEntregarSeries(id){
+  const p=herrFila(id), d1=(document.getElementById('he_d1')||{}).value, d2=(document.getElementById('he_d2')||{}).value, sel=document.getElementById('he_serie'); if(!p||!sel) return;
+  const l=(d1&&d2&&d2>=d1)?herrLibres(p.cod_articulo,d1,d2,p.id):[], cur=sel.value;
+  sel.innerHTML=l.length?l.map(u=>{ const ax=herrAuxTxt(u.serie); return '<option value="'+esc(u.serie)+'"'+(u.serie===cur?' selected':'')+'>'+esc(u.serie+' · '+(ax||'sin auxiliar')+' · dep. '+(u.cod_deposito||''))+'</option>'; }).join(''):'<option value="">— no hay unidades libres en ese período —</option>';
+}
+window.herrEntregarSeries=herrEntregarSeries;
+async function herrEntregarOk(id){
+  const p=herrFila(id); if(!p||!canPanol()) return; const g=i=>(document.getElementById(i)||{}).value||'', d1=g('he_d1'), d2=g('he_d2'), serie=g('he_serie'), a=g('he_a').trim();
+  if(!d1||!d2||d2<d1){ toast('Revisá las fechas'); return; } if(!serie){ toast('No hay serie libre para entregar'); return; } if(!a){ toast('Poné a quién se la entregás'); return; }
+  const btn=document.getElementById('heBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  try{ await herrPatch(p,{estado:'Prestada',serie,desde:d1,hasta:d2,entregado_a:a,entregado_por:panolUsuario(),entregado_en:new Date().toISOString()},'Entregada','Serie '+serie+' a '+a+' · del '+fmtDate(d1)+' al '+fmtDate(d2)); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Entregar'; } toast('No se pudo entregar: '+(e.message||e)); return; }
+  closeModal(); toast('Entregada: '+serie); renderPanol();
+}
+window.herrEntregarOk=herrEntregarOk;
+async function herrDevolver(id){
+  const p=herrFila(id); if(!p||!canPanol()) return; const mant=p.estado==='Mantenimiento';
+  try{ await herrPatch(p,{estado:'Devuelta',devuelto_en:new Date().toISOString()},mant?'Volvió de mantenimiento':'Devuelta','Serie '+(p.serie||'')); }catch(e){ toast('No se pudo registrar: '+(e.message||e)); return; }
+  toast(mant?'Volvió de mantenimiento':'Devuelta'); renderPanol();
+}
+window.herrDevolver=herrDevolver;
+async function herrAnular(id){
+  const p=herrFila(id); if(!p||p.estado!=='Solicitada'||!(canPanol()||herrEsMia(p))) return;
+  try{ await herrPatch(p,{estado:'Anulada'},'Anulada','Pedido anulado'); }catch(e){ toast('No se pudo anular: '+(e.message||e)); return; }
+  toast('Pedido anulado'); renderPanol();
+}
+window.herrAnular=herrAnular;
+function herrHistorial(id){
+  const p=herrFila(id); if(!p) return;
+  const h=(Array.isArray(p.historial)?p.historial:[]).slice().reverse().map(x=>'<div style="padding:4px 0;border-bottom:1px solid var(--line)"><b>'+esc(x.accion)+'</b>'+(x.detalle?' · '+esc(x.detalle):'')+' <span style="color:var(--muted)">— '+_spCuando({autor:x.por,fecha:x.fecha})+'</span></div>').join('');
+  openModal('Historial · herramienta #'+p.id,'<div style="font-size:13px;margin-bottom:8px">'+esc(herrArtTxt(p.cod_articulo))+(p.serie?' · <b>'+esc(p.serie)+'</b>':'')+'</div><div style="font-size:12.5px;max-height:50vh;overflow:auto">'+(h||'Sin movimientos.')+'</div>','<button class="btn ghost" onclick="closeModal()">Cerrar</button>','');
+}
+window.herrHistorial=herrHistorial;
+
+/* ---- Mantenimiento (herramienta enviada a reparar) ---- */
+function herrMantForm(serie,idPrestamo){
+  if(!canPanol()) return; const us=herrUnidades().slice().sort((a,b)=>String(a.serie).localeCompare(String(b.serie))), hoy=herrHoy();
+  if(!us.length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
+  openModal('Enviar herramienta a mantenimiento',
+    '<div class="field"><label>Serie</label><select id="hm_serie">'+us.map(u=>'<option value="'+esc(u.serie)+'"'+(u.serie===serie?' selected':'')+'>'+esc(u.serie+' · '+herrArtTxt(u.cod_articulo))+'</option>').join('')+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Se envía el</label><input id="hm_d1" type="date" value="'+hoy+'"></div><div class="field"><label>Regreso estimado</label><input id="hm_d2" type="date" value="'+herrSuma(hoy,15)+'"></div></div>'
+    +'<div class="field"><label>Motivo / taller</label><input id="hm_com" type="text" placeholder="Ej.: no enciende — service BOSCH"></div>'
+    +(idPrestamo?'<div style="font-size:12px;color:var(--muted)">Estaba prestada: al enviarla a mantenimiento, el préstamo #'+idPrestamo+' se marca como devuelto.</div>':''),
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hmBtn" onclick="herrMantOk('+(idPrestamo||'null')+')">Enviar a mantenimiento</button>','xwide');
+}
+window.herrMantForm=herrMantForm;
+async function herrMantOk(idPrestamo){
+  const g=i=>(document.getElementById(i)||{}).value||'', serie=g('hm_serie'), d1=g('hm_d1'), d2=g('hm_d2'), u=herrUnidades().find(x=>x.serie===serie);
+  if(!u){ toast('Elegí la serie'); return; } if(!d1||!d2||d2<d1){ toast('Revisá las fechas'); return; }
+  const btn=document.getElementById('hmBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  try{
+    const prest=idPrestamo?herrFila(idPrestamo):null; if(prest) await herrPatch(prest,{estado:'Devuelta',devuelto_en:new Date().toISOString()},'Devuelta','Se envió a mantenimiento');
+    await herrCrear([{cod_articulo:u.cod_articulo, serie, destino_txt:'MANTENIMIENTO', solicitante:null, desde:d1, hasta:d2, estado:'Mantenimiento', comentario:g('hm_com').trim()||null, creado_por:panolUsuario(), historial:[{accion:'Enviada a mantenimiento',detalle:'Del '+fmtDate(d1)+' · regreso estimado '+fmtDate(d2),por:panolUsuario(),fecha:new Date().toISOString()}]}]);
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a mantenimiento'; } toast('No se pudo registrar: '+(e.message||e)); return; }
+  closeModal(); toast('Enviada a mantenimiento'); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+}
+window.herrMantOk=herrMantOk;
+
+/* ---- Unidades de una herramienta ---- */
+function herrUnidadesModal(cod){
+  const a=herrArticulos().find(x=>x.cod===cod); if(!a) return; const hoy=herrHoy(), ix=_serieAuxIndex(['07']);
+  const filas=a.unid.map(u=>{
+    const p=(DIC.panol_herr||[]).find(x=>x.serie===u.serie&&(x.estado==='Prestada'||x.estado==='Mantenimiento')&&herrSolapa(x,hoy,hoy)), ax=_serieAuxTexto(ix,u.serie);
+    return '<tr><td><b>'+esc(u.serie)+'</b></td><td>'+(ax?esc(ax):'<span style="color:#b3261e">sin auxiliar</span>')+'</td><td>'+esc((u.cod_deposito||'')+' · '+(u.desc_deposito||''))+'</td><td>'+(p?herrBadge(p):'<span class="badge b-verde">Disponible</span>')+'</td><td>'+(p?esc((p.estado==='Mantenimiento'?(p.comentario||'Mantenimiento'):(p.entregado_a||p.solicitante||''))+' · hasta '+fmtDate(p.hasta)):'')+'</td></tr>';
+  }).join('');
+  const sinAux=a.unid.filter(u=>!_serieAuxTexto(ix,u.serie)).length;
+  openModal('Unidades · '+herrArtTxt(cod),
+    (sinAux?'<div style="margin-bottom:8px;padding:7px 10px;border-radius:8px;background:#fff4d6;border:1px solid #e8cf86;font-size:12.5px">'+sinAux+' serie(s) no tienen Auxiliar de Tango (tipo 7) con esa serie en la descripción.</div>':'')
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:55vh"><table class="grid" style="font-size:12px"><thead><tr><th>Serie</th><th>Auxiliar</th><th>Depósito</th><th>Hoy</th><th>Detalle</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+(canPanol()?'':'' ),'xwide');
+}
+window.herrUnidadesModal=herrUnidadesModal;
+
 let PANOL_TAB='egresos';
 function setPanolTab(t){ PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
 function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
+  let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length; }catch(e){}
   const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
@@ -5283,6 +5529,8 @@ function panolInfDatos(per){
   const porEerr=sum(r=>panolInfCatEerr(r.proyecto_cod).eerr||'(sin rubro EERR)').map(o=>({...o, pct:totArs?o.ars/totArs*100:0}));
   const porArt=sum(r=>r.cod_articulo||('~'+_cnN(r.articulo_libre))).map(o=>{ const r0=rows.find(r=>(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===o.k); const um=[...new Set(rows.filter(r=>(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===o.k).map(r=>r.um||''))].filter(Boolean).join('/'); return {...o, txt:anArtTxt(r0), um, pu:o.q?o.ars/o.q:0, pusd:o.q?o.usd/o.q:0}; });
   const porOper=sum(r=>r.operario||'(sin solicitante)');
+  // por proyecto y, dentro de cada uno, por solicitante (cantidad de erogaciones y $)
+  const porSol=porDest.map(d=>{ const m=new Map(); rows.filter(r=>(r.proyecto_cod||'')===d.k).forEach(r=>{ const k=r.operario||'(sin solicitante)', o=m.get(k)||{k,n:0,ars:0,usd:0}; o.n++; o.ars+=+r.total_ars||0; o.usd+=+r.total_usd||0; m.set(k,o); }); return {k:d.k, txt:d.txt, n:d.n, ars:d.ars, usd:d.usd, filas:[...m.values()].sort((a,b)=>b.ars-a.ars)}; });
   // artículo x destino (cantidad e importe)
   const destCols=porDest.map(d=>d.k), AD=new Map();
   rows.forEach(r=>{ const k=r.cod_articulo||('~'+_cnN(r.articulo_libre)), o=AD.get(k)||{q:{}, ars:{}}; const d=r.proyecto_cod||''; o.q[d]=(o.q[d]||0)+(+r.cantidad||0); o.ars[d]=(o.ars[d]||0)+(+r.total_ars||0); AD.set(k,o); });
@@ -5294,7 +5542,7 @@ function panolInfDatos(per){
   const alar=rows.filter(r=>panolCsv(r.alerta).length), apr=rows.filter(r=>panolCsv(r.alerta_ok).length);
   const cntAl={}; alar.forEach(r=>panolCsv(r.alerta).forEach(a=>{ cntAl[a]=(cntAl[a]||0)+1; })); const cntAp={}; apr.forEach(r=>panolCsv(r.alerta_ok).forEach(a=>{ cntAp[a]=(cntAp[a]||0)+1; }));
   const asi=panolAsiArmar(per);
-  return {per, cier, rows, totArs, totUsd, porDest, porCat, porEerr, porArt, porOper, destCols, AD, meses, porMes, alar, apr, cntAl, cntAp, asi,
+  return {per, cier, rows, totArs, totUsd, porDest, porCat, porEerr, porArt, porOper, porSol, destCols, AD, meses, porMes, alar, apr, cntAl, cntAp, asi,
     emitido:new Date(), por:panolUsuario(), arts:porArt.length, dests:porDest.length};
 }
 function panolInfEstado(D){
@@ -5330,14 +5578,14 @@ function panolInfExcelPlano(per){
   add('Resumen',[['4housing · Consumibles de pañol'],['Informe de cierre · '+panolPerTxt(D.per)],['Estado',panolInfEstado(D)],['Emitido',D.emitido.toLocaleString('es-AR')+' por '+D.por],[],
     ['Total ARS',+D.totArs.toFixed(2)],['Total USD',+D.totUsd.toFixed(2)],['Erogaciones',D.rows.length],['Destinos',D.dests],['Artículos distintos',D.arts],['Solicitantes',D.porOper.length],[],
     ['Erogaciones con observación pendiente',D.alar.length],...Object.entries(D.cntAl).map(([a,n])=>['   '+a,n]),['Observaciones de precio ya aprobadas',D.apr.length],...Object.entries(D.cntAp).map(([a,n])=>['   '+a,n])],[44,60],[1]);
-  add('Por destino',[['Destino','Categoría','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total']].concat(D.porDest.map(d=>[d.txt,d.cat,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)])).concat([['TOTAL','','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100]]),[38,18,30,12,18,16,12],[4,5,6]);
+  add('Por destino',[['Destino','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total']].concat(D.porDest.map(d=>[d.txt,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)])).concat([['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100]]),[38,30,12,18,16,12],[3,4,5]);
   add('Artículos',[['Artículo','U.M.','Cantidad','Precio unit. ARS','Precio unit. USD','Total ARS','Total USD','Erogaciones']].concat(D.porArt.map(o=>[o.txt,o.um,+o.q.toFixed(4),+o.pu.toFixed(4),+o.pusd.toFixed(6),+o.ars.toFixed(2),+o.usd.toFixed(2),o.n])),[58,8,12,16,16,18,16,12],[2,3,4,5,6]);
   const hdr=['Artículo','U.M.'].concat(D.destCols.map(d=>anDestTxt(d))).concat(['Total']);
   const mat=(key)=>D.porArt.map(o=>{ const r=D.AD.get(o.k)[key]; return [o.txt,o.um].concat(D.destCols.map(d=>+((r[d]||0)).toFixed(2)||'')).concat([+Object.values(r).reduce((a,b)=>a+b,0).toFixed(2)]); });
   add('Cantidad por destino',[hdr].concat(mat('q')),[58,8].concat(D.destCols.map(()=>16)).concat([14]),D.destCols.map((_,i)=>i+2).concat([D.destCols.length+2]));
   add('Importe por destino',[hdr].concat(mat('ars')),[58,8].concat(D.destCols.map(()=>16)).concat([16]),D.destCols.map((_,i)=>i+2).concat([D.destCols.length+2]));
   add('Gasto por mes',[['Destino'].concat(D.meses.map(p=>panolPerTxt(p))).concat(['Total '+D.meses.length+' meses'])].concat(D.porMes.map(o=>[o.txt].concat(D.meses.map(p=>+((o.v[p]||0)).toFixed(2)||'')).concat([+o.tot.toFixed(2)]))),[38].concat(D.meses.map(()=>16)).concat([18]),D.meses.map((_,i)=>i+1).concat([D.meses.length+1]));
-  add('Solicitantes',[['Solicitante','Erogaciones','Total ARS','Total USD']].concat(D.porOper.map(o=>[o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])),[30,12,18,16],[2,3]);
+  add('Solicitantes',[['Proyecto','Solicitante','Erogaciones','Total ARS','Total USD']].concat(D.porSol.flatMap(d=>[[d.txt,'(total del proyecto)',d.n,+d.ars.toFixed(2),+d.usd.toFixed(2)]].concat(d.filas.map(o=>[d.txt,o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])))),[38,30,12,18,16],[3,4]);
   add('Observaciones',[['Fecha','Destino','Artículo','Operario','Observación pendiente']].concat(D.alar.map(r=>[fmtDate(r.fecha),nm(r.proyecto_cod||''),anArtTxt(r),r.operario||'',panolCsv(r.alerta).join(' + ')])),[12,26,50,20,50]);
   const L=panolAsiNeto(D.asi);
   add('Asiento propuesto',[['Propuesta de asiento para Tango (no se envía): revisar cuentas antes de cargar'],['Fecha de origen',D.asi.fecha,'Leyenda',D.asi.leyenda],[],['Nro.','Código de cuenta','Descripción de cuenta','Destino(s)','Debe','Haber'],
@@ -5373,8 +5621,8 @@ function xlHoja(wb,name,o){
   o.head.forEach((h,i)=>{ const c=hr.getCell(i+1); c.value=h; c.font={name:'Calibri',size:10,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; c.border={bottom:{style:'medium',color:{argb:'FF1F3F36'}}}; });
   const fm=o.fmts||[], bord={bottom:{style:'hair',color:{argb:XL_BORDE}}};
   o.rows.forEach((r,ri)=>{
-    const row=ws.getRow(h0+1+ri), rf=o.filaFn?o.filaFn(r,ri):null;
-    r.forEach((v,ci)=>{ const c=row.getCell(ci+1), f=fm[ci]; c.value=(v===''||v==null)?null:v; c.font={name:'Calibri',size:10,color:{argb:(o.rojo&&o.rojo.includes(ci)&&v)?XL_ROJO:'FF1F2937'}};
+    const row=ws.getRow(h0+1+ri), rf=o.filaFn?o.filaFn(r,ri):null, neg=!!(o.boldFn&&o.boldFn(r,ri));
+    r.forEach((v,ci)=>{ const c=row.getCell(ci+1), f=fm[ci]; c.value=(v===''||v==null)?null:v; c.font={name:'Calibri',size:10,bold:neg,color:{argb:(o.rojo&&o.rojo.includes(ci)&&v)?XL_ROJO:'FF1F2937'}};
       if(f&&XL_FMT[f]){ c.numFmt=XL_FMT[f]; c.alignment={horizontal:f==='fecha'?'center':'right',vertical:'middle'}; } else c.alignment={vertical:'middle',wrapText:!!(o.wrap&&o.wrap.includes(ci))};
       c.border=bord; if(rf) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:rf}}; else if(ri%2) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_ZEBRA}}; });
   });
@@ -5402,8 +5650,8 @@ async function panolInfExcel(per){
     lin('Observaciones de precio ya aprobadas',D.apr.length,'n0'); Object.entries(D.cntAp).forEach(([a,n])=>lin('      '+a,n,'n0'));
     r++; sec('Contenido de este archivo'); ['Por destino · Artículos','Cantidad por destino · Importe por destino · Gasto por mes','Solicitantes · Observaciones · Asiento propuesto · Detalle'].forEach(t=>{ ws.mergeCells(r,1,r,2); ws.getCell(r,1).value=t; ws.getCell(r,1).font={size:10,color:{argb:XL_GRIS}}; r++; });
   }
-  xlHoja(wb,'Por destino',{titulo:T+' · Total por destino',sub,head:['Destino','Categoría','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total'],rows:D.porDest.map(d=>[d.txt,d.cat,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)]),
-    total:['TOTAL','','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100],widths:[40,18,30,13,20,18,13],fmts:[,,,'n0','ars','usd','pct'],filtro:1,escala:6});
+  xlHoja(wb,'Por destino',{titulo:T+' · Total por destino',sub,head:['Destino','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total'],rows:D.porDest.map(d=>[d.txt,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)]),
+    total:['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100],widths:[42,32,13,20,18,13],fmts:[,,'n0','ars','usd','pct'],filtro:1,escala:5});
   xlHoja(wb,'Artículos',{titulo:T+' · Artículos del mes',sub,head:['Artículo','U.M.','Cantidad','Precio unit. ARS','Precio unit. USD','Total ARS','Total USD','Erogaciones'],rows:D.porArt.map(o=>[o.txt,o.um,+o.q.toFixed(4),+o.pu.toFixed(4),+o.pusd.toFixed(6),+o.ars.toFixed(2),+o.usd.toFixed(2),o.n]),
     total:['TOTAL','','','','',+D.totArs.toFixed(2),+D.totUsd.toFixed(2),D.rows.length],widths:[62,8,13,18,18,20,18,13],fmts:[,,'n2','ars','usd','ars','usd','n0'],filtro:1,escala:5});
   const hdr=['Artículo','U.M.'].concat(D.destCols.map(d=>anDestTxt(d))).concat(['Total']);
@@ -5416,7 +5664,9 @@ async function panolInfExcel(per){
   { const ms=D.meses.map(p=>panolMesCorto(p)), filas=D.porMes.map(o=>[o.txt].concat(D.meses.map(p=>+((o.v[p]||0)).toFixed(2)||'')).concat([+o.tot.toFixed(2)]));
     xlHoja(wb,'Gasto por mes',{titulo:T+' · Gasto de los últimos '+D.meses.length+' meses por destino (ARS)',sub,head:['Destino'].concat(ms).concat(['Total '+D.meses.length+' meses']),rows:filas,
       total:['TOTAL'].concat(D.meses.map(p=>+D.porMes.reduce((a,o)=>a+(o.v[p]||0),0).toFixed(2))).concat([+D.porMes.reduce((a,o)=>a+o.tot,0).toFixed(2)]),widths:[40].concat(D.meses.map(()=>17)).concat([20]),fmts:[,].concat(D.meses.map(()=>'ars')).concat(['ars']),filtro:1}); }
-  xlHoja(wb,'Solicitantes',{titulo:T+' · Solicitantes',sub,head:['Solicitante','Erogaciones','Total ARS','Total USD'],rows:D.porOper.map(o=>[o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)]),total:['TOTAL',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2)],widths:[34,13,20,18],fmts:[,'n0','ars','usd'],filtro:1,escala:2});
+  { const filasS=[]; D.porSol.forEach(d=>{ filasS.push([d.txt,'TOTAL DEL PROYECTO',d.n,+d.ars.toFixed(2),+d.usd.toFixed(2)]); d.filas.forEach(o=>filasS.push([d.txt,o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])); });
+    xlHoja(wb,'Solicitantes',{titulo:T+' · Por proyecto y solicitante',sub,head:['Proyecto','Solicitante','Erogaciones','Total ARS','Total USD'],rows:filasS,total:['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2)],widths:[42,34,13,20,18],fmts:[,,'n0','ars','usd'],filtro:1,
+      filaFn:r=>r[1]==='TOTAL DEL PROYECTO'?XL_CLARO:null, boldFn:r=>r[1]==='TOTAL DEL PROYECTO'}); }
   xlHoja(wb,'Observaciones',{titulo:T+' · Observaciones pendientes',sub,head:['Fecha','Destino','Artículo','Operario','Observación pendiente'],rows:D.alar.map(r=>[fmtDate(r.fecha),anDestTxt(r.proyecto_cod||''),anArtTxt(r),r.operario||'',panolCsv(r.alerta).join(' + ')]),widths:[12,32,58,22,44],rojo:[4],filtro:1});
   { const L=panolAsiNeto(D.asi), tot=L.reduce((a,l)=>a+l.imp,0);
     const ws=xlHoja(wb,'Asiento propuesto',{titulo:T+' · Asiento propuesto para Tango',sub:'PROPUESTA (no se envía a Tango): revisar las cuentas antes de cargar · Fecha de origen '+fmtDate(D.asi.fecha)+' · Leyenda '+D.asi.leyenda,head:['Nro.','Código de cuenta','Descripción de cuenta','Destino(s)','Debe','Haber'],
@@ -5463,8 +5713,8 @@ function panolInfPdf(per){
   aseguro(top.length*5+6);
   top.forEach((d,i)=>{ const yy=y+i*5; doc.setFontSize(7.5); doc.text(rec(d.txt).slice(0,40),bx-2,yy+3,{align:'right'}); doc.setFillColor(...verde); doc.rect(bx,yy,Math.max(0.5,bw*d.ars/maxV),3.4,'F'); doc.text(ars(d.ars),bx+bw+3,yy+3); });
   y+=top.length*5+4;
-  tabla(['Destino','Categoría','Rubro EERR','Erog.','Total ARS','Total USD','%'],D.porDest.map(d=>[rec(d.txt),d.cat,rec(d.eerr),d.n,m2(d.ars),m2(d.usd),m2(d.pct)]).concat([['TOTAL','','',D.rows.length,m2(D.totArs),m2(D.totUsd),'100,00']]),
-    {columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},didParseCell:h=>{ if(h.row.index===D.porDest.length&&h.section==='body') h.cell.styles.fontStyle='bold'; }});
+  tabla(['Destino','Rubro EERR','Erog.','Total ARS','Total USD','%'],D.porDest.map(d=>[rec(d.txt),rec(d.eerr),d.n,m2(d.ars),m2(d.usd),m2(d.pct)]).concat([['TOTAL','',D.rows.length,m2(D.totArs),m2(D.totUsd),'100,00']]),
+    {columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}},didParseCell:h=>{ if(h.row.index===D.porDest.length&&h.section==='body') h.cell.styles.fontStyle='bold'; }});
   // mes a mes: se elige cuántos meses y cómo se imprime (misma hoja o hoja nueva, horizontal o vertical)
   { const nm=D.meses.length, nueva=panolInfNuevaHoja(), vert=nueva&&PANOL_INF.orient==='v';
     if(nueva){ paginaNueva(vert?'portrait':'landscape'); } else aseguro(30);
@@ -5482,9 +5732,13 @@ function panolInfPdf(per){
   aseguro(30); y=tit('Artículos que más pesan en el mes (los 30 de mayor importe)',y)+1;
   tabla(['Artículo','U.M.','Cantidad','Precio unit. ARS','Total ARS','Total USD'],D.porArt.slice(0,30).map(o=>[rec(o.txt),o.um,m2(o.q),m2(o.pu),m2(o.ars),m2(o.usd)]),{columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
   if(D.porArt.length>30){ doc.setFontSize(8); doc.setTextColor(110); doc.text('El detalle completo de los '+D.porArt.length+' artículos, y la cantidad e importe de cada artículo por destino, está en el informe en Excel.',mL,y-3); doc.setTextColor(0); y+=3; }
-  // solicitantes
-  aseguro(30); y=tit('Solicitantes',y)+1;
-  tabla(['Solicitante','Erog.','Total ARS','Total USD'],D.porOper.slice(0,25).map(o=>[rec(o.k),o.n,m2(o.ars),m2(o.usd)]),{tableWidth:170,columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}}});
+  // por proyecto y, dentro de cada uno, por solicitante
+  aseguro(30); y=tit('Por proyecto y solicitante',y)+1;
+  { const filasP=[], esProy=new Set();
+    D.porSol.forEach(d=>{ esProy.add(filasP.length); filasP.push([rec(d.txt),d.n,m2(d.ars),m2(d.usd)]); d.filas.forEach(o=>filasP.push(['      '+rec(o.k),o.n,m2(o.ars),m2(o.usd)])); });
+    filasP.push(['TOTAL',D.rows.length,m2(D.totArs),m2(D.totUsd)]); esProy.add(filasP.length-1);
+    tabla(['Proyecto / Solicitante','Erog.','Total ARS','Total USD'],filasP,{tableWidth:200,theme:'plain',columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}},
+      didParseCell:h=>{ if(h.section==='body'&&esProy.has(h.row.index)){ h.cell.styles.fontStyle='bold'; h.cell.styles.fillColor=[227,237,232]; } }}); }
   // observaciones
   aseguro(30); y=tit('Observaciones',y)+1;
   const obs=[['Erogaciones con observación pendiente',String(D.alar.length)]].concat(Object.entries(D.cntAl).map(([a,n])=>['   '+a,String(n)])).concat([['Observaciones de precio ya aprobadas',String(D.apr.length)]]).concat(Object.entries(D.cntAp).map(([a,n])=>['   '+a,String(n)]));
@@ -15448,6 +15702,7 @@ async function reloadDicts(background){
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ await panolSolCargar(); })(),
       (async()=>{ await panolKitsCargar(); })(),
+      (async()=>{ await panolHerrCargar(); })(),
       (async()=>{ try{ const ps = await sbFetchAll('/compras_panol_solicitantes?select=*&order=nombre.asc'); if(ps) DIC.panol_solicitantes = ps; }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const pm = await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
