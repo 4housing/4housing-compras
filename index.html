@@ -3363,9 +3363,9 @@ function panolSolPreview(errs,warns){
   openModal('Revisar solicitud (el N° de OT se asigna al enviarla)',
     '<div style="font-size:13px;line-height:1.7"><b>Solicitante:</b> '+esc(S.solicitante)+' · <b>Destino:</b> '+esc(S.destino_cod?anDestTxt(S.destino_cod):S.destino_txt)+' · <b>Fecha de necesidad:</b> '+(S.fecha_necesidad?fmtDate(S.fecha_necesidad):'—')+(S.comentario?'<br><b>Comentario:</b> '+esc(S.comentario):'')+'</div>'
     +box('Hay que corregir esto en el Excel y volver a subirlo:',errs,'#fdecea','#f3b8b1')+box('Avisos (se puede enviar igual):',warns,'#fff6e5','#f0d9a8')
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh;margin-top:8px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th></tr></thead><tbody>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh;margin-top:8px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th></tr></thead><tbody>'
     +S.items.map(i=>'<tr><td>'+esc(i._txt)+(i.cod_articulo?'':' <span class="badge b-rojo">sin alta</span>')+'</td><td style="text-align:right">'+fmtNum(i.cantidad,3)+'</td><td>'+esc(i.um)+'</td><td>'+esc(i.galpon||'')+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>').join('')+'</tbody></table></div>',
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Pañol</button>'), 'wide');
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Pañol</button>'), 'xwide');
 }
 async function panolSolEnviar(){
   const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
@@ -3407,9 +3407,9 @@ function openPanolSolDetalle(id){
   if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
   openModal('Solicitud OT '+s.nro_ot,
     '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+'</div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh;margin-top:10px"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
     +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
-    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'wide');
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'xwide');
 }
 window.openPanolSolDetalle=openPanolSolDetalle;
 async function panolSolGuardarCab(s,upd){
@@ -3449,8 +3449,8 @@ function openPanolSolEntrega(id){
     +'<div class="frow c2"><div class="field"><label>Fecha de entrega</label><input id="se_fecha" type="date" value="'+fecha+'"></div><div class="field"><label>Hora</label><input id="se_hora" type="time" value="'+hora+'"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Depósito</label><select id="se_dep" onchange="panolSolSaldos()"><option value="">— elegí —</option>'+deps.map(d=>'<option value="'+esc(d.codigo)+'"'+(String(d.codigo)===String(dep)?' selected':'')+'>'+esc(d.codigo+' · '+d.descripcion)+'</option>').join('')+'</select></div>'
     +'<div class="field"><label>Retira (operario)</label><input id="se_oper" type="text" value="'+esc(s.solicitante||'')+'"></div></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:38vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pendiente</th><th>Saldo en el depósito</th><th>Entregar en</th><th>Entregar ahora</th><th title="Si entregás menos de lo pendiente, lo que falta se da por cerrado">Cerrar el resto</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
-    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="seBtn" onclick="panolSolEntregarOk('+id+')">Registrar entrega</button>', 'wide');
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pendiente</th><th>Saldo en el depósito</th><th>Entregar en</th><th>Entregar ahora</th><th title="Si entregás menos de lo pendiente, lo que falta se da por cerrado">Cerrar el resto</th></tr></thead><tbody>'+filas+'</tbody></table></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="seBtn" onclick="panolSolEntregarOk('+id+')">Registrar entrega</button>', 'xwide');
 }
 window.openPanolSolEntrega=openPanolSolEntrega;
 function panolSolSaldos(){ const dep=(document.getElementById('se_dep')||{}).value; document.querySelectorAll('.sol-saldo').forEach(td=>{ const c=td.dataset.cod; if(!c){ td.textContent='—'; return; } const v=panolSaldo(c,dep); td.textContent=v==null?'—':fmtNum(v,3); }); }
@@ -3509,7 +3509,7 @@ function openPanolSolEditar(id){
     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(s.bloqueada?'Pañol la tiene bloqueada, pero vos podés editarla por ser de Pañol. ':'Podés cambiarla hasta que Pañol la bloquee. ')+'Para <b>anular unidades</b> de un material cargá cuántas en "Anular ahora"; lo ya entregado no se toca. Todo queda en el historial.</div>'
     +'<div class="frow c2"><div class="field"><label>Destino (IF / obra)</label><select id="ed_dest">'+destOpts+'</select></div><div class="field"><label>Fecha de necesidad</label><input id="ed_fnec" type="date" value="'+esc(String(s.fecha_necesidad||'').slice(0,10))+'"></div></div>'
     +'<div class="field"><label>Comentario general</label><input id="ed_com" type="text" value="'+esc(s.comentario||'')+'"></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh"><table class="grid" style="font-size:11.5px" id="tblSolEd"><thead><tr><th>Artículo</th><th>Cantidad pedida</th><th>Entregado</th><th>Ya anulado</th><th>Anular ahora</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th><th></th></tr></thead><tbody id="edBody">'+filas+'</tbody></table></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblSolEd"><thead><tr><th>Artículo</th><th>Cantidad pedida</th><th>Entregado</th><th>Ya anulado</th><th>Anular ahora</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th><th></th></tr></thead><tbody id="edBody">'+filas+'</tbody></table></div>'
     +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="panolSolEdNuevo()">'+ICO.plus+'Agregar material</button></div>',
     '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Cancelar</button><button class="btn" id="edBtn" onclick="panolSolEditarGuardar()">Guardar cambios</button>', 'xwide');
 }
