@@ -5283,6 +5283,8 @@ function panolInfDatos(per){
   const porEerr=sum(r=>panolInfCatEerr(r.proyecto_cod).eerr||'(sin rubro EERR)').map(o=>({...o, pct:totArs?o.ars/totArs*100:0}));
   const porArt=sum(r=>r.cod_articulo||('~'+_cnN(r.articulo_libre))).map(o=>{ const r0=rows.find(r=>(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===o.k); const um=[...new Set(rows.filter(r=>(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===o.k).map(r=>r.um||''))].filter(Boolean).join('/'); return {...o, txt:anArtTxt(r0), um, pu:o.q?o.ars/o.q:0, pusd:o.q?o.usd/o.q:0}; });
   const porOper=sum(r=>r.operario||'(sin solicitante)');
+  // por proyecto y, dentro de cada uno, por solicitante (cantidad de erogaciones y $)
+  const porSol=porDest.map(d=>{ const m=new Map(); rows.filter(r=>(r.proyecto_cod||'')===d.k).forEach(r=>{ const k=r.operario||'(sin solicitante)', o=m.get(k)||{k,n:0,ars:0,usd:0}; o.n++; o.ars+=+r.total_ars||0; o.usd+=+r.total_usd||0; m.set(k,o); }); return {k:d.k, txt:d.txt, n:d.n, ars:d.ars, usd:d.usd, filas:[...m.values()].sort((a,b)=>b.ars-a.ars)}; });
   // artículo x destino (cantidad e importe)
   const destCols=porDest.map(d=>d.k), AD=new Map();
   rows.forEach(r=>{ const k=r.cod_articulo||('~'+_cnN(r.articulo_libre)), o=AD.get(k)||{q:{}, ars:{}}; const d=r.proyecto_cod||''; o.q[d]=(o.q[d]||0)+(+r.cantidad||0); o.ars[d]=(o.ars[d]||0)+(+r.total_ars||0); AD.set(k,o); });
@@ -5294,7 +5296,7 @@ function panolInfDatos(per){
   const alar=rows.filter(r=>panolCsv(r.alerta).length), apr=rows.filter(r=>panolCsv(r.alerta_ok).length);
   const cntAl={}; alar.forEach(r=>panolCsv(r.alerta).forEach(a=>{ cntAl[a]=(cntAl[a]||0)+1; })); const cntAp={}; apr.forEach(r=>panolCsv(r.alerta_ok).forEach(a=>{ cntAp[a]=(cntAp[a]||0)+1; }));
   const asi=panolAsiArmar(per);
-  return {per, cier, rows, totArs, totUsd, porDest, porCat, porEerr, porArt, porOper, destCols, AD, meses, porMes, alar, apr, cntAl, cntAp, asi,
+  return {per, cier, rows, totArs, totUsd, porDest, porCat, porEerr, porArt, porOper, porSol, destCols, AD, meses, porMes, alar, apr, cntAl, cntAp, asi,
     emitido:new Date(), por:panolUsuario(), arts:porArt.length, dests:porDest.length};
 }
 function panolInfEstado(D){
@@ -5330,14 +5332,14 @@ function panolInfExcelPlano(per){
   add('Resumen',[['4housing · Consumibles de pañol'],['Informe de cierre · '+panolPerTxt(D.per)],['Estado',panolInfEstado(D)],['Emitido',D.emitido.toLocaleString('es-AR')+' por '+D.por],[],
     ['Total ARS',+D.totArs.toFixed(2)],['Total USD',+D.totUsd.toFixed(2)],['Erogaciones',D.rows.length],['Destinos',D.dests],['Artículos distintos',D.arts],['Solicitantes',D.porOper.length],[],
     ['Erogaciones con observación pendiente',D.alar.length],...Object.entries(D.cntAl).map(([a,n])=>['   '+a,n]),['Observaciones de precio ya aprobadas',D.apr.length],...Object.entries(D.cntAp).map(([a,n])=>['   '+a,n])],[44,60],[1]);
-  add('Por destino',[['Destino','Categoría','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total']].concat(D.porDest.map(d=>[d.txt,d.cat,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)])).concat([['TOTAL','','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100]]),[38,18,30,12,18,16,12],[4,5,6]);
+  add('Por destino',[['Destino','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total']].concat(D.porDest.map(d=>[d.txt,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)])).concat([['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100]]),[38,30,12,18,16,12],[3,4,5]);
   add('Artículos',[['Artículo','U.M.','Cantidad','Precio unit. ARS','Precio unit. USD','Total ARS','Total USD','Erogaciones']].concat(D.porArt.map(o=>[o.txt,o.um,+o.q.toFixed(4),+o.pu.toFixed(4),+o.pusd.toFixed(6),+o.ars.toFixed(2),+o.usd.toFixed(2),o.n])),[58,8,12,16,16,18,16,12],[2,3,4,5,6]);
   const hdr=['Artículo','U.M.'].concat(D.destCols.map(d=>anDestTxt(d))).concat(['Total']);
   const mat=(key)=>D.porArt.map(o=>{ const r=D.AD.get(o.k)[key]; return [o.txt,o.um].concat(D.destCols.map(d=>+((r[d]||0)).toFixed(2)||'')).concat([+Object.values(r).reduce((a,b)=>a+b,0).toFixed(2)]); });
   add('Cantidad por destino',[hdr].concat(mat('q')),[58,8].concat(D.destCols.map(()=>16)).concat([14]),D.destCols.map((_,i)=>i+2).concat([D.destCols.length+2]));
   add('Importe por destino',[hdr].concat(mat('ars')),[58,8].concat(D.destCols.map(()=>16)).concat([16]),D.destCols.map((_,i)=>i+2).concat([D.destCols.length+2]));
   add('Gasto por mes',[['Destino'].concat(D.meses.map(p=>panolPerTxt(p))).concat(['Total '+D.meses.length+' meses'])].concat(D.porMes.map(o=>[o.txt].concat(D.meses.map(p=>+((o.v[p]||0)).toFixed(2)||'')).concat([+o.tot.toFixed(2)]))),[38].concat(D.meses.map(()=>16)).concat([18]),D.meses.map((_,i)=>i+1).concat([D.meses.length+1]));
-  add('Solicitantes',[['Solicitante','Erogaciones','Total ARS','Total USD']].concat(D.porOper.map(o=>[o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])),[30,12,18,16],[2,3]);
+  add('Solicitantes',[['Proyecto','Solicitante','Erogaciones','Total ARS','Total USD']].concat(D.porSol.flatMap(d=>[[d.txt,'(total del proyecto)',d.n,+d.ars.toFixed(2),+d.usd.toFixed(2)]].concat(d.filas.map(o=>[d.txt,o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])))),[38,30,12,18,16],[3,4]);
   add('Observaciones',[['Fecha','Destino','Artículo','Operario','Observación pendiente']].concat(D.alar.map(r=>[fmtDate(r.fecha),nm(r.proyecto_cod||''),anArtTxt(r),r.operario||'',panolCsv(r.alerta).join(' + ')])),[12,26,50,20,50]);
   const L=panolAsiNeto(D.asi);
   add('Asiento propuesto',[['Propuesta de asiento para Tango (no se envía): revisar cuentas antes de cargar'],['Fecha de origen',D.asi.fecha,'Leyenda',D.asi.leyenda],[],['Nro.','Código de cuenta','Descripción de cuenta','Destino(s)','Debe','Haber'],
@@ -5373,8 +5375,8 @@ function xlHoja(wb,name,o){
   o.head.forEach((h,i)=>{ const c=hr.getCell(i+1); c.value=h; c.font={name:'Calibri',size:10,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; c.border={bottom:{style:'medium',color:{argb:'FF1F3F36'}}}; });
   const fm=o.fmts||[], bord={bottom:{style:'hair',color:{argb:XL_BORDE}}};
   o.rows.forEach((r,ri)=>{
-    const row=ws.getRow(h0+1+ri), rf=o.filaFn?o.filaFn(r,ri):null;
-    r.forEach((v,ci)=>{ const c=row.getCell(ci+1), f=fm[ci]; c.value=(v===''||v==null)?null:v; c.font={name:'Calibri',size:10,color:{argb:(o.rojo&&o.rojo.includes(ci)&&v)?XL_ROJO:'FF1F2937'}};
+    const row=ws.getRow(h0+1+ri), rf=o.filaFn?o.filaFn(r,ri):null, neg=!!(o.boldFn&&o.boldFn(r,ri));
+    r.forEach((v,ci)=>{ const c=row.getCell(ci+1), f=fm[ci]; c.value=(v===''||v==null)?null:v; c.font={name:'Calibri',size:10,bold:neg,color:{argb:(o.rojo&&o.rojo.includes(ci)&&v)?XL_ROJO:'FF1F2937'}};
       if(f&&XL_FMT[f]){ c.numFmt=XL_FMT[f]; c.alignment={horizontal:f==='fecha'?'center':'right',vertical:'middle'}; } else c.alignment={vertical:'middle',wrapText:!!(o.wrap&&o.wrap.includes(ci))};
       c.border=bord; if(rf) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:rf}}; else if(ri%2) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_ZEBRA}}; });
   });
@@ -5402,8 +5404,8 @@ async function panolInfExcel(per){
     lin('Observaciones de precio ya aprobadas',D.apr.length,'n0'); Object.entries(D.cntAp).forEach(([a,n])=>lin('      '+a,n,'n0'));
     r++; sec('Contenido de este archivo'); ['Por destino · Artículos','Cantidad por destino · Importe por destino · Gasto por mes','Solicitantes · Observaciones · Asiento propuesto · Detalle'].forEach(t=>{ ws.mergeCells(r,1,r,2); ws.getCell(r,1).value=t; ws.getCell(r,1).font={size:10,color:{argb:XL_GRIS}}; r++; });
   }
-  xlHoja(wb,'Por destino',{titulo:T+' · Total por destino',sub,head:['Destino','Categoría','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total'],rows:D.porDest.map(d=>[d.txt,d.cat,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)]),
-    total:['TOTAL','','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100],widths:[40,18,30,13,20,18,13],fmts:[,,,'n0','ars','usd','pct'],filtro:1,escala:6});
+  xlHoja(wb,'Por destino',{titulo:T+' · Total por destino',sub,head:['Destino','Rubro EERR','Erogaciones','Total ARS','Total USD','% del total'],rows:D.porDest.map(d=>[d.txt,d.eerr,d.n,+d.ars.toFixed(2),+d.usd.toFixed(2),+d.pct.toFixed(2)]),
+    total:['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2),100],widths:[42,32,13,20,18,13],fmts:[,,'n0','ars','usd','pct'],filtro:1,escala:5});
   xlHoja(wb,'Artículos',{titulo:T+' · Artículos del mes',sub,head:['Artículo','U.M.','Cantidad','Precio unit. ARS','Precio unit. USD','Total ARS','Total USD','Erogaciones'],rows:D.porArt.map(o=>[o.txt,o.um,+o.q.toFixed(4),+o.pu.toFixed(4),+o.pusd.toFixed(6),+o.ars.toFixed(2),+o.usd.toFixed(2),o.n]),
     total:['TOTAL','','','','',+D.totArs.toFixed(2),+D.totUsd.toFixed(2),D.rows.length],widths:[62,8,13,18,18,20,18,13],fmts:[,,'n2','ars','usd','ars','usd','n0'],filtro:1,escala:5});
   const hdr=['Artículo','U.M.'].concat(D.destCols.map(d=>anDestTxt(d))).concat(['Total']);
@@ -5416,7 +5418,9 @@ async function panolInfExcel(per){
   { const ms=D.meses.map(p=>panolMesCorto(p)), filas=D.porMes.map(o=>[o.txt].concat(D.meses.map(p=>+((o.v[p]||0)).toFixed(2)||'')).concat([+o.tot.toFixed(2)]));
     xlHoja(wb,'Gasto por mes',{titulo:T+' · Gasto de los últimos '+D.meses.length+' meses por destino (ARS)',sub,head:['Destino'].concat(ms).concat(['Total '+D.meses.length+' meses']),rows:filas,
       total:['TOTAL'].concat(D.meses.map(p=>+D.porMes.reduce((a,o)=>a+(o.v[p]||0),0).toFixed(2))).concat([+D.porMes.reduce((a,o)=>a+o.tot,0).toFixed(2)]),widths:[40].concat(D.meses.map(()=>17)).concat([20]),fmts:[,].concat(D.meses.map(()=>'ars')).concat(['ars']),filtro:1}); }
-  xlHoja(wb,'Solicitantes',{titulo:T+' · Solicitantes',sub,head:['Solicitante','Erogaciones','Total ARS','Total USD'],rows:D.porOper.map(o=>[o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)]),total:['TOTAL',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2)],widths:[34,13,20,18],fmts:[,'n0','ars','usd'],filtro:1,escala:2});
+  { const filasS=[]; D.porSol.forEach(d=>{ filasS.push([d.txt,'TOTAL DEL PROYECTO',d.n,+d.ars.toFixed(2),+d.usd.toFixed(2)]); d.filas.forEach(o=>filasS.push([d.txt,o.k,o.n,+o.ars.toFixed(2),+o.usd.toFixed(2)])); });
+    xlHoja(wb,'Solicitantes',{titulo:T+' · Por proyecto y solicitante',sub,head:['Proyecto','Solicitante','Erogaciones','Total ARS','Total USD'],rows:filasS,total:['TOTAL','',D.rows.length,+D.totArs.toFixed(2),+D.totUsd.toFixed(2)],widths:[42,34,13,20,18],fmts:[,,'n0','ars','usd'],filtro:1,
+      filaFn:r=>r[1]==='TOTAL DEL PROYECTO'?XL_CLARO:null, boldFn:r=>r[1]==='TOTAL DEL PROYECTO'}); }
   xlHoja(wb,'Observaciones',{titulo:T+' · Observaciones pendientes',sub,head:['Fecha','Destino','Artículo','Operario','Observación pendiente'],rows:D.alar.map(r=>[fmtDate(r.fecha),anDestTxt(r.proyecto_cod||''),anArtTxt(r),r.operario||'',panolCsv(r.alerta).join(' + ')]),widths:[12,32,58,22,44],rojo:[4],filtro:1});
   { const L=panolAsiNeto(D.asi), tot=L.reduce((a,l)=>a+l.imp,0);
     const ws=xlHoja(wb,'Asiento propuesto',{titulo:T+' · Asiento propuesto para Tango',sub:'PROPUESTA (no se envía a Tango): revisar las cuentas antes de cargar · Fecha de origen '+fmtDate(D.asi.fecha)+' · Leyenda '+D.asi.leyenda,head:['Nro.','Código de cuenta','Descripción de cuenta','Destino(s)','Debe','Haber'],
@@ -5463,8 +5467,8 @@ function panolInfPdf(per){
   aseguro(top.length*5+6);
   top.forEach((d,i)=>{ const yy=y+i*5; doc.setFontSize(7.5); doc.text(rec(d.txt).slice(0,40),bx-2,yy+3,{align:'right'}); doc.setFillColor(...verde); doc.rect(bx,yy,Math.max(0.5,bw*d.ars/maxV),3.4,'F'); doc.text(ars(d.ars),bx+bw+3,yy+3); });
   y+=top.length*5+4;
-  tabla(['Destino','Categoría','Rubro EERR','Erog.','Total ARS','Total USD','%'],D.porDest.map(d=>[rec(d.txt),d.cat,rec(d.eerr),d.n,m2(d.ars),m2(d.usd),m2(d.pct)]).concat([['TOTAL','','',D.rows.length,m2(D.totArs),m2(D.totUsd),'100,00']]),
-    {columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},didParseCell:h=>{ if(h.row.index===D.porDest.length&&h.section==='body') h.cell.styles.fontStyle='bold'; }});
+  tabla(['Destino','Rubro EERR','Erog.','Total ARS','Total USD','%'],D.porDest.map(d=>[rec(d.txt),rec(d.eerr),d.n,m2(d.ars),m2(d.usd),m2(d.pct)]).concat([['TOTAL','',D.rows.length,m2(D.totArs),m2(D.totUsd),'100,00']]),
+    {columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}},didParseCell:h=>{ if(h.row.index===D.porDest.length&&h.section==='body') h.cell.styles.fontStyle='bold'; }});
   // mes a mes: se elige cuántos meses y cómo se imprime (misma hoja o hoja nueva, horizontal o vertical)
   { const nm=D.meses.length, nueva=panolInfNuevaHoja(), vert=nueva&&PANOL_INF.orient==='v';
     if(nueva){ paginaNueva(vert?'portrait':'landscape'); } else aseguro(30);
@@ -5482,9 +5486,13 @@ function panolInfPdf(per){
   aseguro(30); y=tit('Artículos que más pesan en el mes (los 30 de mayor importe)',y)+1;
   tabla(['Artículo','U.M.','Cantidad','Precio unit. ARS','Total ARS','Total USD'],D.porArt.slice(0,30).map(o=>[rec(o.txt),o.um,m2(o.q),m2(o.pu),m2(o.ars),m2(o.usd)]),{columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
   if(D.porArt.length>30){ doc.setFontSize(8); doc.setTextColor(110); doc.text('El detalle completo de los '+D.porArt.length+' artículos, y la cantidad e importe de cada artículo por destino, está en el informe en Excel.',mL,y-3); doc.setTextColor(0); y+=3; }
-  // solicitantes
-  aseguro(30); y=tit('Solicitantes',y)+1;
-  tabla(['Solicitante','Erog.','Total ARS','Total USD'],D.porOper.slice(0,25).map(o=>[rec(o.k),o.n,m2(o.ars),m2(o.usd)]),{tableWidth:170,columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}}});
+  // por proyecto y, dentro de cada uno, por solicitante
+  aseguro(30); y=tit('Por proyecto y solicitante',y)+1;
+  { const filasP=[], esProy=new Set();
+    D.porSol.forEach(d=>{ esProy.add(filasP.length); filasP.push([rec(d.txt),d.n,m2(d.ars),m2(d.usd)]); d.filas.forEach(o=>filasP.push(['      '+rec(o.k),o.n,m2(o.ars),m2(o.usd)])); });
+    filasP.push(['TOTAL',D.rows.length,m2(D.totArs),m2(D.totUsd)]); esProy.add(filasP.length-1);
+    tabla(['Proyecto / Solicitante','Erog.','Total ARS','Total USD'],filasP,{tableWidth:200,theme:'plain',columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}},
+      didParseCell:h=>{ if(h.section==='body'&&esProy.has(h.row.index)){ h.cell.styles.fontStyle='bold'; h.cell.styles.fillColor=[227,237,232]; } }}); }
   // observaciones
   aseguro(30); y=tit('Observaciones',y)+1;
   const obs=[['Erogaciones con observación pendiente',String(D.alar.length)]].concat(Object.entries(D.cntAl).map(([a,n])=>['   '+a,String(n)])).concat([['Observaciones de precio ya aprobadas',String(D.apr.length)]]).concat(Object.entries(D.cntAp).map(([a,n])=>['   '+a,String(n)]));
