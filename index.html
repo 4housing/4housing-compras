@@ -162,7 +162,7 @@ table.grid.tbl-angosta td{padding:6px 6px;}
 .idx-evol-tbl table.grid th{white-space:normal;padding:7px 8px;line-height:1.3;}
 .idx-evol-tbl table.grid td{white-space:nowrap;padding:7px 8px;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
-/* Tablas de Pañol: celdas en una sola línea y columnas lo más angostas posible; los títulos pueden ir en 2 renglones */
+/* Tablas de Abastecimiento: celdas en una sola línea y columnas lo más angostas posible; los títulos pueden ir en 2 renglones */
 table.grid.tbl-ajustada td{white-space:nowrap;}
 table.grid.tbl-ajustada th{white-space:normal!important;line-height:1.25;}
 table.grid.tbl-ajustada td.tx-largo{max-width:340px;overflow:hidden;text-overflow:ellipsis;}
@@ -790,7 +790,7 @@ const SCHEMAS = {
     ],
   },
   panol: {
-    title:'Pañol', sub:'Egreso de consumibles a producción: carga, valorización y stock', custom:true,
+    title:'Abastecimiento', sub:'Egreso de consumibles a producción: carga, valorización y stock', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 6l4 4-8 8-4-4z"/><path d="M18 10l2.5-2.5a2 2 0 0 0-3-2.6L15 7"/><path d="M6 14l-2 6 6-2"/></svg>',
   },
   mantenimiento: {
@@ -881,7 +881,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M9 9h.01M15 15h.01M15 9L9 15"/></svg>',
   },
 };
-const ORDER=['proyectos','compras','seguimiento','solp','comparativas','tesoreria','solicitudes','deposito','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
+const ORDER=['proyectos','compras','seguimiento','solp','comparativas','tesoreria','solicitudes','panol','mantenimiento','evalprov','diccionarios','indices','precios'];
 // 'logistica' sale del menú (ahora la cubre la app propia de Logística del portal). Se deja el
 // SCHEMAS y los datos como estaban — no se borra nada, solo deja de estar en ORDER.
 
@@ -1042,7 +1042,7 @@ async function loadRole(){
   }catch(e){ /* si falla, no es dirección */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
-function canPanol(){ return !!(ROLE.admin||ROLE.panol); }   // Pañol: quien tiene es_panol en usuarios autorizados (hoy Iván y Nicolás) y el administrador
+function canPanol(){ return !!(ROLE.admin||ROLE.panol); }   // Abastecimiento: quien tiene es_panol en usuarios autorizados (hoy Iván y Nicolás) y el administrador
 function canCert(){ return ROLE.certificador||ROLE.admin; }
 function canPago(){ return ROLE.tesorero||ROLE.admin; }
 // N° de asiento Tango: a diferencia del resto de Tesorería (cualquier tesorero/admin), esto lo
@@ -2754,7 +2754,7 @@ function renderPanol(){
 }
 window.renderPanol=renderPanol;
 
-/* ===== Pañol · solapa Erogaciones =====
+/* ===== Abastecimiento · solapa Erogaciones =====
    Lógica del Excel "EROGACIONES CONSUMIBLES": el pañol registra el destino (IF / obra / módulo) de cada
    material entregado. Usa la misma tabla que los egresos (compras_panol_egresos) con columnas extra
    (sql/2026-10_panol_erogaciones.sql), así sigue valiendo "Generar egreso para Tango".
@@ -2764,7 +2764,7 @@ window.renderPanol=renderPanol;
    mismo día, gana la última cargada (Tango pisa a OC).
    ALARMAS: SIN PRECIO · FECHA POSTERIOR AL MES · REVISAR vs TANGO (OC difiere > 5% del último costo Tango) ·
    REVISAR TC (TC implícito ARS/USD se aparta > 5% del BNA venta) · ARTICULO SIN ALTA. */
-/* ===================== Análisis de erogaciones (Pañol) =====================
+/* ===================== Análisis de erogaciones (Abastecimiento) =====================
    Todo sale de las erogaciones ya cargadas (DIC.panol_egresos); no guarda nada. Filtros: fechas, destino, artículo y solicitante (operario).
    Se puede agrupar por destino, por categoría (PROYECTO / EERR / …) o por rubro de EERR de la clasificación. */
 const AN_COLORS=['#2f6f5e','#d98e04','#3a6ea5','#b5483a','#7a5ca8','#4f9d9d','#9c8a3b','#c06a8f'];
@@ -3043,16 +3043,30 @@ async function panolPrecioQuitar(i){
 }
 window.panolPrecioQuitar=panolPrecioQuitar;
 
-/* ===================== Solicitudes de OT ↔ Pañol =====================
+/* ===================== Solicitudes de OT ↔ Abastecimiento =====================
    Flujo: el solicitante baja el Excel de solicitud, lo completa (N° de OT, destino, fecha de necesidad y los materiales) y lo sube a la app.
-   Pañol ve la lista ordenada por fecha de necesidad, la prepara y, al entregar, la registra: cada entrega genera los egresos (erogaciones) con el
-   precio del mes y queda lo que falta como parcial. Una OT por archivo. Cada solicitante ve solo las suyas; Pañol (comprador / admin) ve todas. */
+   Abastecimiento ve la lista ordenada por fecha de necesidad, la prepara y, al entregar, la registra: cada entrega genera los egresos (erogaciones) con el
+   precio del mes y queda lo que falta como parcial. Una OT por archivo. Cada solicitante ve solo las suyas; Abastecimiento (comprador / admin) ve todas. */
 let PANOL_SOL_ERR='', PANOL_SOL={f:{est:'abiertas', q:''}};
 const PANOL_SOL_ESTADOS=['Pendiente','En preparación','Parcial','Entregada','Anulada'];
 const solItems=id=>(DIC.panol_solicitud_items||[]).filter(i=>String(i.solicitud_id)===String(id));
 const solEsMia=s=>!!(AUTH_USER&&AUTH_USER.email&&s.solicitante_email===AUTH_USER.email) || (DEMO_MODE&&!AUTH_USER);
-const solPuedeGestionar=()=>canPanol();
-function solVisibles(){ const l=DIC.panol_solicitudes||[]; return solPuedeGestionar()?l:l.filter(solEsMia); }
+/* Sector de cada renglón: lo define el código del artículo. Los que empiezan con estos prefijos son de Pañol; el resto, de Depósito (sin código: Pañol).
+   Cada renglón tiene además un RESPONSABLE (quien lo arma y entrega): por defecto el de su sector (compras_panol_responsables: Garay, Ivan => Pañol; Rivero, Nicolas => Depósito).
+   Solo su responsable (o el administrador) lo prepara y entrega; el responsable puede transferir un renglón, varios o toda la OT a otro responsable. */
+const SOL_PREF_PANOL=['GCFER','GCLIM','GCEPP','GCEQU','GCHRR','GCSPM'];
+const solSectorDe=cod=>{ const c=String(cod||'').toUpperCase().trim(); return (!c||SOL_PREF_PANOL.some(p=>c.startsWith(p)))?'Pañol':'Depósito'; };
+const solSector=i=>i.sector||solSectorDe(i.cod_articulo);
+const solRespList=()=>(DIC.panol_responsables||[]).filter(r=>r.activo!==false&&r.email);
+const solMiMail=()=>String((AUTH_USER&&AUTH_USER.email)||'').toLowerCase();
+const solEsResp=()=>!!solMiMail()&&solRespList().some(r=>String(r.email).toLowerCase()===solMiMail());
+const solRespDe=sector=>{ const r=solRespList().find(x=>x.sector_defecto===sector); return r?{responsable_nombre:r.nombre,responsable_email:r.email}:{responsable_nombre:null,responsable_email:null}; };
+const solSoyRespItem=i=>!!solMiMail()&&String(i.responsable_email||'').toLowerCase()===solMiMail();
+const solPuedeGestionar=()=>canPanol()||solEsResp();
+// Entrega y arma: su responsable o el administrador. Si el renglón no tiene responsable (carga vieja o sin configurar): Pañol lo maneja quien tiene es_panol; Depósito, solo el administrador.
+const solGestionaItem=i=>ROLE.admin||(i.responsable_email?solSoyRespItem(i):(solSector(i)==='Pañol'&&canPanol()));
+const solPuedeTransferir=i=>solPend(i)>1e-9&&(ROLE.admin||solSoyRespItem(i)||(!i.responsable_email&&solGestionaItem(i)));
+function solVisibles(){ const l=DIC.panol_solicitudes||[]; if(ROLE.admin) return l; if(!solPuedeGestionar()) return l.filter(solEsMia); return l.filter(x=>solEsMia(x)||solItems(x.id).some(i=>solGestionaItem(i)||solSoyRespItem(i)||(canPanol()&&solSector(i)==='Pañol'))); }
 // Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
 const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
 const solPend=i=>Math.max(0,solVig(i)-(+i.cantidad_entregada||0));
@@ -3088,7 +3102,7 @@ function renderPanolSolicitudes(){
   const shown=_spOrdenar('psol',lista,{ot:s=>s.nro_ot, sol:s=>s.solicitante, dest:s=>s.destino_cod||s.destino_txt, fsol:s=>s.creado_en, fnec:s=>s.fecha_necesidad||'9999', items:s=>solItems(s.id).length, est:s=>s.estado, av:s=>solProgreso(s).pct});
   const nAb=todas.filter(abiertas).length, nVenc=todas.filter(s=>abiertas(s)&&s.fecha_necesidad&&String(s.fecha_necesidad).slice(0,10)<hoy).length;
   const gest=solPuedeGestionar();
-  const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b>'+(s.bloqueada?' <span title="Pañol la bloqueó: ya no se puede editar">🔒</span>':'')+'</td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
+  const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b>'+(s.bloqueada?' <span title="Abastecimiento la bloqueó: ya no se puede editar">🔒</span>':'')+'</td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
     +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td style="text-align:right">'+p.it.length+'</td><td>'+solBadge(s.estado)+'</td>'
     +'<td style="min-width:110px"><div style="height:7px;background:#e6ece8;border-radius:4px;overflow:hidden"><div style="height:7px;width:'+p.pct+'%;background:#2f6f5e"></div></div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+p.pct+'% · faltan '+p.pend+' renglón(es)</div></td>'
     +'<td style="font-size:11.5px;color:var(--muted)" class="tx-largo" title="'+esc(s.comentario||'')+'">'+esc(s.comentario||'')+'</td>'
@@ -3123,12 +3137,12 @@ async function panolSolPlantilla(){
   sols.forEach((v,i)=>{ ls.getCell(i+2,5).value=v; }); gals.forEach((v,i)=>{ ls.getCell(i+2,6).value=v; });
   [70,50,12,14,36,16].forEach((w,i)=>{ ls.getColumn(i+1).width=w; });
   [64,14,10,16,22,40].forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
-  ws.mergeCells('A1:F1'); ws.getCell('A1').value='Solicitud de materiales a Pañol'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
-  ws.mergeCells('A2:F2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Pañol > Solicitudes > Subir solicitud). Un archivo = una OT. El N° de OT lo asigna el sistema al subirla.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
+  ws.mergeCells('A1:F1'); ws.getCell('A1').value='Solicitud de materiales a Abastecimiento'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
+  ws.mergeCells('A2:F2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Abastecimiento > Solicitudes > Subir solicitud). Un archivo = una OT. El N° de OT lo asigna el sistema al subirla.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
   const amarillo={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}, borde={top:{style:'thin',color:{argb:'FFD1B96B'}},left:{style:'thin',color:{argb:'FFD1B96B'}},bottom:{style:'thin',color:{argb:'FFD1B96B'}},right:{style:'thin',color:{argb:'FFD1B96B'}}};
   const campo=(fila,lbl,val)=>{ const a=ws.getCell(fila,1); a.value=lbl; a.font={bold:true,size:11}; a.alignment={horizontal:'right'}; ws.mergeCells(fila,2,fila,6); const b=ws.getCell(fila,2); b.value=val||null; b.fill=amarillo; b.border=borde; b.alignment={horizontal:'left'}; return b; };
   const miNombre=sols.includes(MI_NOMBRE)?MI_NOMBRE:'';
-  const bs=campo(3,'Solicitante',miNombre); if(sols.length) bs.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$E$2:$E$'+(sols.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Solicitante',error:'Elegí un solicitante de la lista (se administra en Diccionario pañol).'};
+  const bs=campo(3,'Solicitante',miNombre); if(sols.length) bs.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$E$2:$E$'+(sols.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Solicitante',error:'Elegí un solicitante de la lista (se administra en Diccionario de abastecimiento).'};
   const bd=campo(4,'Destino (IF / obra)'); bd.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$B$2:$B$'+(dests.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Destino',error:'Elegí un destino de la lista.'};
   const bf=campo(5,'Fecha de necesidad'); bf.numFmt='dd/mm/yyyy'; bf.dataValidation={type:'date',operator:'greaterThan',allowBlank:false,formulae:[new Date(2020,0,1)],showErrorMessage:true,errorTitle:'Fecha',error:'Ingresá una fecha (dd/mm/aaaa).'};
   campo(6,'Comentario general');
@@ -3138,7 +3152,7 @@ async function panolSolPlantilla(){
   const nA=arts.length+1, nU=ums.length+1, nG=Math.max(gals.length,1)+1;
   for(let r=h+1;r<=h+200;r++){
     for(let c=1;c<=6;c++){ const cell=ws.getCell(r,c); cell.fill=amarillo; cell.border=borde; }
-    ws.getCell(r,1).dataValidation={type:'list',allowBlank:true,formulae:['Listas!$A$2:$A$'+nA],showErrorMessage:true,errorStyle:'warning',errorTitle:'Artículo',error:'Ese artículo no está en la lista. Si seguís, Pañol lo verá como "sin alta".'};
+    ws.getCell(r,1).dataValidation={type:'list',allowBlank:true,formulae:['Listas!$A$2:$A$'+nA],showErrorMessage:true,errorStyle:'warning',errorTitle:'Artículo',error:'Ese artículo no está en la lista. Si seguís, Abastecimiento lo verá como "sin alta".'};
     ws.getCell(r,2).numFmt='#,##0.000'; ws.getCell(r,2).dataValidation={type:'decimal',operator:'greaterThan',allowBlank:true,formulae:[0],showErrorMessage:true,errorTitle:'Cantidad',error:'La cantidad tiene que ser un número mayor a 0.'};
     // U.M.: se sugiere la del artículo apenas se elige; se puede cambiar con la lista
     ws.getCell(r,3).value={formula:'IF($A'+r+'="","",IFERROR(IF(VLOOKUP($A'+r+',Listas!$A$2:$D$'+nA+',4,FALSE)="","UNI",VLOOKUP($A'+r+',Listas!$A$2:$D$'+nA+',4,FALSE)),"UNI"))', result:''};
@@ -3159,7 +3173,7 @@ window.panolSolPlantilla=panolSolPlantilla;
 let _SOL_PEND=null;
 function openPanolSolSubir(){
   openModal('Subir solicitud de OT',
-    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de solicitud completo (el que se baja con "Bajar Excel de solicitud"). Un archivo = una OT. Vas a ver una vista previa antes de enviarla a Pañol.</div>'
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de solicitud completo (el que se baja con "Bajar Excel de solicitud"). Un archivo = una OT. Vas a ver una vista previa antes de enviarla a Abastecimiento.</div>'
     +'<div class="field"><label>Excel (.xlsx) *</label><input id="sol_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="solMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="panolSolLeer()">Revisar</button>');
 }
@@ -3180,7 +3194,7 @@ async function panolSolLeer(){
     const H=aoa[hi].map(norm), col=(...pre)=>H.findIndex(t=>pre.some(p=>t.startsWith(p))), cU=col('um'), cG=col('entregar'), cF=col('fecha'), cC=col('comentario');
     const errs=[], warns=[], items=[], gal=(DIC.panol_galpones||[]), galDef=panolGalDefecto();
     const sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false);
-    if(!solicitante) errs.push('Falta el solicitante.'); else if(sols.length&&!sols.some(x=>_syncFold(x.nombre)===_syncFold(solicitante))) warns.push('El solicitante "'+solicitante+'" no figura en el diccionario de solicitantes (se puede agregar en Diccionario pañol).');
+    if(!solicitante) errs.push('Falta el solicitante.'); else if(sols.length&&!sols.some(x=>_syncFold(x.nombre)===_syncFold(solicitante))) warns.push('El solicitante "'+solicitante+'" no figura en el diccionario de solicitantes (se puede agregar en Diccionario de abastecimiento).');
     const d=destTxt?ppResolverDestino(destTxt):null; if(!destTxt) errs.push('Falta el destino.'); else if(!d) errs.push('No reconozco el destino "'+destTxt+'": elegilo de la lista.');
     if(!fnec) errs.push('Falta la fecha de necesidad (o no es una fecha válida).');
     for(let i=hi+1;i<aoa.length;i++){
@@ -3191,7 +3205,7 @@ async function panolSolLeer(){
       const ra=panolArtResolver(art), umT=cU>=0?String(r[cU]||'').trim():''; let um=umT?panolUmResolver(umT):'';
       if(umT&&!um) warns.push('Fila '+fila+': la U.M. "'+umT+'" no está en el diccionario; se usa la del artículo.');
       if(!um&&ra.cod) um=panolUmSugerida(ra.cod)||'UNI'; if(!um) um='UNI';
-      if(!ra.cod) warns.push('Fila '+fila+': "'+art+'" no está en el diccionario de artículos (queda "sin alta" para que Pañol lo resuelva).');
+      if(!ra.cod) warns.push('Fila '+fila+': "'+art+'" no está en el diccionario de artículos (queda "sin alta" para que Abastecimiento lo resuelva).');
       const gT=cG>=0?String(r[cG]||'').trim():''; let g=galDef;
       if(gT){ const m=gal.find(x=>_syncFold(x.nombre)===_syncFold(gT)); if(m) g=m.nombre; else warns.push('Fila '+fila+': el lugar de entrega "'+gT+'" no está en el diccionario de galpones; se usa '+(galDef||'el predeterminado')+'.'); }
       const fi=(cF>=0&&r[cF]!=='')?_syncFechaISO(r[cF]):''; if(cF>=0&&r[cF]!==''&&!fi) warns.push('Fila '+fila+': la fecha de necesidad no es válida; se usa la general.');
@@ -3211,7 +3225,7 @@ function panolSolPreview(errs,warns){
     +box('Hay que corregir esto en el Excel y volver a subirlo:',errs,'#fdecea','#f3b8b1')+box('Avisos (se puede enviar igual):',warns,'#fff6e5','#f0d9a8')
     +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh;margin-top:8px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th></tr></thead><tbody>'
     +S.items.map(i=>'<tr><td>'+esc(i._txt)+(i.cod_articulo?'':' <span class="badge b-rojo">sin alta</span>')+'</td><td style="text-align:right">'+fmtNum(i.cantidad,3)+'</td><td>'+esc(i.um)+'</td><td>'+esc(i.galpon||'')+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>').join('')+'</tbody></table></div>',
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Pañol</button>'), 'xwide');
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Abastecimiento</button>'), 'xwide');
 }
 // Crea la solicitud (cabecera + renglones). S: {solicitante, destino_cod, destino_txt, fecha_necesidad, comentario, items[], kit_id?, kit_cantidad?, detalle?}. Devuelve el N° de OT asignado o null si falló.
 async function panolSolCrear(S){
@@ -3221,7 +3235,7 @@ async function panolSolCrear(S){
   const hist=[{accion:'Creada',detalle:S.items.length+' renglón(es)'+(S.detalle?' · '+S.detalle:(S.desdeExcel?' desde Excel':''))+((email&&email!==yo)||(!email&&yo)?' · cargada por '+panolUsuario():''),por:panolUsuario(),fecha:new Date().toISOString()}];
   const cab={solicitante:S.solicitante, solicitante_email:email, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:hist, creado_por:panolUsuario()};
   if(S.kit_id){ cab.kit_id=S.kit_id; cab.kit_cantidad=S.kit_cantidad||null; }
-  const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, cantidad:i.cantidad, um:i.um, galpon:i.galpon, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
+  const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, sector:i.sector||solSectorDe(i.cod_articulo), ...solRespDe(i.sector||solSectorDe(i.cod_articulo)), cantidad:i.cantidad, um:i.um, galpon:i.galpon, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
   try{
     if(DEMO_MODE){
       DIC.panol_solicitudes=DIC.panol_solicitudes||[]; DIC.panol_solicitud_items=DIC.panol_solicitud_items||[];
@@ -3238,8 +3252,8 @@ async function panolSolCrear(S){
 async function panolSolEnviar(){
   const S=_SOL_PEND; if(!S) return; const btn=document.getElementById('solEnviarBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
   const nro=await panolSolCrear({...S, desdeExcel:true});
-  if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } return; }
-  _SOL_PEND=null; closeModal(); toast('Solicitud enviada a Pañol · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
+  if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } return; }
+  _SOL_PEND=null; closeModal(); toast('Solicitud enviada a Abastecimiento · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
 }
 window.panolSolEnviar=panolSolEnviar;
 async function panolSolCargar(){
@@ -3252,19 +3266,20 @@ function openPanolSolDetalle(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
   const it=solItems(id), gest=solPuedeGestionar(), abierta=['Pendiente','En preparación','Parcial'].includes(s.estado), dep=panolDepDefecto();
   const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
-    return '<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(i.cantidad,3)+' '+esc(i.um||'')+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,3)+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,3)+'</td><td>'+esc(i.galpon||'')+'</td>'
+    return '<tr><td>'+(solPuedeTransferir(i)?'<input type="checkbox" class="sol-chk" value="'+i.id+'">':'')+'</td><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td><span class="badge '+(solSector(i)==='Pañol'?'b-verde':'b-gris')+'">'+solSector(i)+'</span></td><td style="'+(solSoyRespItem(i)?'font-weight:700':'')+'">'+esc(i.responsable_nombre||'—')+'</td><td style="text-align:right">'+fmtNum(i.cantidad,3)+' '+esc(i.um||'')+'</td><td style="text-align:right;'+(+i.cantidad_anulada?'color:#b3261e':'')+'">'+fmtNum(i.cantidad_anulada||0,3)+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,3)+'</td><td>'+esc(i.galpon||'')+'</td>'
       +'<td style="text-align:right;'+(pend>0?'font-weight:700':'')+'">'+fmtNum(pend,3)+'</td><td style="text-align:right;'+(sal!=null&&sal<pend?'color:#b3261e;font-weight:600':'')+'" title="Saldo en el depósito '+esc(dep||'')+'">'+(sal==null?'—':fmtNum(sal,3))+'</td><td>'+(i.fecha_necesidad?fmtDate(i.fecha_necesidad):'')+'</td><td>'+esc(i.comentario||'')+'</td></tr>'; }).join('');
   const hist=(Array.isArray(s.historial)?s.historial:[]).slice().reverse().map(h=>'<div style="padding:3px 0;border-bottom:1px solid var(--line)"><b>'+esc(h.accion)+'</b>'+(h.detalle?' · '+esc(h.detalle):'')+' <span style="color:var(--muted)">— '+_spCuando({autor:h.por,fecha:h.fecha})+'</span></div>').join('');
   const acc=[];
-  if(gest&&abierta){ acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
+  if(gest&&abierta){ if(it.some(i=>solPend(i)>1e-9&&solGestionaItem(i))) acc.push('<button class="btn" onclick="openPanolSolEntrega('+id+')">Entregar</button>'); if(s.estado==='Pendiente') acc.push('<button class="btn ghost" onclick="panolSolEstado('+id+',\'En preparación\')">Marcar en preparación</button>'); }
+  if(abierta&&it.some(solPuedeTransferir)){ acc.push('<button class="btn ghost" onclick="openPanolSolTransferir('+id+',false)">Transferir seleccionados</button>','<button class="btn ghost" onclick="openPanolSolTransferir('+id+',true)">Transferir toda la OT</button>'); }
   if(solPuedeEditar(s)) acc.push('<button class="btn ghost" onclick="openPanolSolEditar('+id+')">Editar solicitud</button>');
   acc.push('<button class="btn ghost" onclick="panolSolDuplicar('+id+')">Duplicar</button>');
   if(canPanol()) acc.push('<button class="btn ghost" onclick="panolSolAModelo('+id+')">Guardar como modelo</button>');
   if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
   if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
   openModal('Solicitud OT '+s.nro_ot,
-    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Pañol definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Abastecimiento definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th></th><th>Artículo</th><th>Sector</th><th>Responsable</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
     +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
     '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'xwide');
 }
@@ -3292,12 +3307,44 @@ function panolSolAnular(id){
     '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" style="background:#b3261e" onclick="panolSolEstado('+id+',\'Anulada\')">Anular todo</button>');
 }
 window.panolSolAnular=panolSolAnular;
+/* ---- Transferir la responsabilidad de armar (renglones elegidos o toda la OT) ---- */
+function openPanolSolTransferir(id,todo){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const pot=solItems(id).filter(solPuedeTransferir);
+  const sel=todo?pot:pot.filter(i=>[...document.querySelectorAll('.sol-chk:checked')].some(c=>String(c.value)===String(i.id)));
+  if(!sel.length){ toast(todo?'No hay renglones pendientes para transferir.':'Tildá al menos un renglón para transferir.'); return; }
+  const dest=solRespList().filter(r=>ROLE.admin||String(r.email).toLowerCase()!==solMiMail());
+  if(!dest.length){ toast('No hay otro responsable cargado para transferir.'); return; }
+  window._TR_SEL=sel.map(i=>i.id);
+  openModal('Transferir · OT '+s.nro_ot,
+    '<div style="font-size:12.5px;margin-bottom:8px">Pasás la responsabilidad de armar y entregar estos <b>'+sel.length+'</b> renglón(es) a otra persona. El sector no cambia.</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:30vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Sector</th><th>Responsable actual</th><th>Pendiente</th></tr></thead><tbody>'+sel.map(i=>'<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td>'+solSector(i)+'</td><td>'+esc(i.responsable_nombre||'—')+'</td><td style="text-align:right">'+fmtNum(solPend(i),3)+'</td></tr>').join('')+'</tbody></table></div>'
+    +'<div class="frow c2" style="margin-top:10px"><div class="field"><label>Transferir a</label><select id="tr_a">'+dest.map(r=>'<option value="'+esc(r.email)+'">'+esc(r.nombre)+'</option>').join('')+'</select></div><div class="field"><label>Motivo (opcional)</label><input id="tr_mot" type="text"></div></div>',
+    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="trBtn" onclick="panolSolTransferirOk('+id+')">Transferir</button>','xwide');
+}
+window.openPanolSolTransferir=openPanolSolTransferir;
+async function panolSolTransferirOk(id){
+  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+  const email=(document.getElementById('tr_a')||{}).value, mot=((document.getElementById('tr_mot')||{}).value||'').trim(), r=solRespList().find(x=>x.email===email);
+  const sel=solItems(id).filter(i=>(window._TR_SEL||[]).includes(i.id)&&solPuedeTransferir(i)); if(!r||!sel.length){ toast('No hay nada para transferir'); return; }
+  const btn=document.getElementById('trBtn'); if(btn){ btn.disabled=true; btn.textContent='Transfiriendo…'; }
+  try{
+    const upd={responsable_nombre:r.nombre, responsable_email:r.email};
+    for(const i of sel){ if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+i.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); }
+    const det=sel.map(i=>(i.cod_articulo||i.articulo_libre)+' ('+(i.responsable_nombre||'sin responsable')+' → '+r.nombre+')').join(', ');
+    sel.forEach(i=>Object.assign(i,upd));
+    await panolSolGuardarCab(s,{historial:solHist(s,'Transferida',det+(mot?' · Motivo: '+mot:''))});
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Transferir'; } toast('No se pudo transferir: '+(e.message||e)+' (¿ya se corrió sql/2026-10_abastecimiento_sector.sql?)'); return; }
+  toast(sel.length+' renglón(es) transferido(s) a '+r.nombre); openPanolSolDetalle(id); renderPanol();
+}
+window.panolSolTransferirOk=panolSolTransferirOk;
 function openPanolSolEntrega(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  if(!solPuedeGestionar()){ toast('Solo Pañol puede registrar entregas.'); return; }
+  if(!solPuedeGestionar()){ toast('Solo Abastecimiento o Depósito pueden registrar entregas.'); return; }
   const dep=panolDepDefecto(), deps=(DIC.depositos||[]).filter(d=>d.inhabilitado!=='Si'), ahora=new Date(), pad=n=>String(n).padStart(2,'0');
   const fecha=ahora.getFullYear()+'-'+pad(ahora.getMonth()+1)+'-'+pad(ahora.getDate()), hora=pad(ahora.getHours())+':'+pad(ahora.getMinutes());
-  const it=solItems(id).filter(i=>solPend(i)>1e-9);
+  const it=solItems(id).filter(i=>solPend(i)>1e-9&&solGestionaItem(i));
+  if(!it.length){ toast('No hay renglones pendientes de tu sector en esta solicitud.'); return; }
   const filas=it.map(i=>{ const pend=solPend(i), sal=i.cod_articulo?panolSaldo(i.cod_articulo,dep):null;
     return '<tr data-item="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(pend,3)+' '+esc(i.um||'')+'</td><td style="text-align:right" class="sol-saldo" data-cod="'+esc(i.cod_articulo||'')+'">'+(sal==null?'—':fmtNum(sal,3))+'</td><td>'+esc(i.galpon||panolGalDefecto()||'')+'</td>'
       +'<td><input type="number" step="any" min="0" max="'+pend+'" value="'+pend+'" class="sol-qty" style="width:90px;text-align:right;border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px"></td><td style="text-align:center"><input type="checkbox" class="sol-cerrar" title="Si entregás menos de lo pendiente, lo que falta se da por cerrado (no queda pendiente)"></td></tr>'; }).join('');
@@ -3345,11 +3392,11 @@ async function panolSolEntregarOk(id){
 window.panolSolEntregarOk=panolSolEntregarOk;
 
 
-/* ---- Editar la solicitud (hasta que Pañol la bloquee): datos, cantidades, anular unidades, agregar o quitar materiales ---- */
+/* ---- Editar la solicitud (hasta que Abastecimiento la bloquee): datos, cantidades, anular unidades, agregar o quitar materiales ---- */
 let _SOL_ED=null;
 function openPanolSolEditar(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  if(!solPuedeEditar(s)){ toast(s.bloqueada?'Pañol bloqueó esta solicitud: ya no se puede editar.':'Esta solicitud ya no se puede editar.'); return; }
+  if(!solPuedeEditar(s)){ toast(s.bloqueada?'Abastecimiento bloqueó esta solicitud: ya no se puede editar.':'Esta solicitud ya no se puede editar.'); return; }
   _SOL_ED={id, k:0, quitar:new Set(), nuevos:[]};
   const it=solItems(id), ds=panolDestinos(), inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
   const galOpts=cur=>{ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre); if(cur&&!l.includes(cur)) l.push(cur); return '<option value="">—</option>'+l.map(n=>'<option value="'+esc(n)+'"'+(n===(cur||panolGalDefecto())?' selected':'')+'>'+esc(n)+'</option>').join(''); };
@@ -3363,7 +3410,7 @@ function openPanolSolEditar(id){
       +'<td><select class="ed-gal" style="'+inp+'">'+galOpts(i.galpon)+'</select></td><td><input type="date" value="'+esc(String(i.fecha_necesidad||'').slice(0,10))+'" class="ed-fec" style="'+inp+'"></td><td><input type="text" value="'+esc(i.comentario||'')+'" class="ed-com" style="width:150px;'+inp+'"></td>'
       +'<td>'+((+i.cantidad_entregada||0)+(+i.cantidad_anulada||0)===0?'<button class="iconbtn del" title="Quitar este material" onclick="panolSolEdQuitar(this,'+i.id+')">'+ICO.del+'</button>':'')+'</td></tr>'; }).join('');
   openModal('Editar solicitud OT '+s.nro_ot,
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(s.bloqueada?'Pañol la tiene bloqueada, pero vos podés editarla por ser de Pañol. ':'Podés cambiarla hasta que Pañol la bloquee. ')+'Para <b>anular unidades</b> de un material cargá cuántas en "Anular ahora"; lo ya entregado no se toca. Todo queda en el historial.</div>'
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(s.bloqueada?'Abastecimiento la tiene bloqueada, pero vos podés editarla por ser de Abastecimiento. ':'Podés cambiarla hasta que Abastecimiento la bloquee. ')+'Para <b>anular unidades</b> de un material cargá cuántas en "Anular ahora"; lo ya entregado no se toca. Todo queda en el historial.</div>'
     +'<div class="frow c2"><div class="field"><label>Destino (IF / obra)</label><select id="ed_dest">'+destOpts+'</select></div><div class="field"><label>Fecha de necesidad</label><input id="ed_fnec" type="date" value="'+esc(String(s.fecha_necesidad||'').slice(0,10))+'"></div></div>'
     +'<div class="field"><label>Comentario general</label><input id="ed_com" type="text" value="'+esc(s.comentario||'')+'"></div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:34vh"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblSolEd"><thead><tr><th>Artículo</th><th>Cantidad pedida</th><th>Entregado</th><th>Ya anulado</th><th>Anular ahora</th><th>Entregar en</th><th>Fecha de necesidad</th><th>Comentario</th><th></th></tr></thead><tbody id="edBody">'+filas+'</tbody></table></div>'
@@ -3408,7 +3455,7 @@ async function panolSolEditarGuardar(){
     const txt=tr.querySelector('.ed-art').value.trim(), cant=+tr.querySelector('.ed-cant').value;
     if(!txt&&!cant) continue; if(!txt){ toast('Falta el artículo en un material nuevo'); return; } if(!(cant>0)){ toast('Falta la cantidad de '+txt); return; }
     const ra=panolArtResolver(txt);
-    nuevos.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', galpon:tr.querySelector('.ed-gal').value||null, fecha_necesidad:tr.querySelector('.ed-fec').value||fnec, comentario:tr.querySelector('.ed-com').value.trim()||null, cantidad_entregada:0, cantidad_anulada:0});
+    nuevos.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, sector:solSectorDe(ra.cod), ...solRespDe(solSectorDe(ra.cod)), cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', galpon:tr.querySelector('.ed-gal').value||null, fecha_necesidad:tr.querySelector('.ed-fec').value||fnec, comentario:tr.querySelector('.ed-com').value.trim()||null, cantidad_entregada:0, cantidad_anulada:0});
     cambios.push('Se agregó '+(ra.cod||txt)+' × '+fmtNum(cant,3));
   }
   const dTxt=ppResolverDestino(dest); const nuevoDest=dTxt?dTxt.cod:dest;
@@ -3438,7 +3485,7 @@ window.panolSolEditarGuardar=panolSolEditarGuardar;
    Un modelo es una tarea (1 módulo, 1 bastidor de piso…) con los materiales que lleva y una cantidad estimada PARA UNA unidad de esa tarea.
    Al crear una solicitud desde un modelo se indica cuántas unidades de la tarea se contemplan y las cantidades se multiplican; se pueden ajustar
    en esa solicitud sin tocar el modelo, o editar el modelo para las próximas. Cualquier solicitud (con o sin modelo) se puede duplicar a nombre de otra persona.
-   Modelos: los administra Pañol (es_panol) o el administrador. Cualquier usuario puede usarlos para pedir; elegir "a nombre de quién" es de Pañol. */
+   Modelos: los administra Abastecimiento (es_panol) o el administrador. Cualquier usuario puede usarlos para pedir; elegir "a nombre de quién" es de Abastecimiento. */
 let PANOL_KITS_ERR='', PANOL_KITQ='';
 const kitItems=id=>(DIC.panol_kit_items||[]).filter(i=>String(i.kit_id)===String(id));
 async function panolKitsCargar(){
@@ -3454,12 +3501,13 @@ function solFilaHtml(d,o){
   return '<tr><td><input id="fa_'+k+'" class="ed-art" value="'+esc(d.texto||'')+'" style="width:340px;'+_fInp+'" placeholder="Código, nombre o sinónimo…" autocomplete="off" onfocus="comboPanolArt(\'fa_'+k+'\',()=>solArtUm(\'fa_'+k+'\'))" oninput="comboPanolArt(\'fa_'+k+'\',()=>solArtUm(\'fa_'+k+'\'))" onkeydown="panolComboKey(event)" onblur="comboHideDelayed()"></td>'
     +'<td><input type="number" step="any" min="0" class="ed-cant" value="'+(d.cantidad!=null?d.cantidad:'')+'" style="width:90px;text-align:right;'+_fInp+'"></td>'
     +'<td><select class="ed-um" style="'+_fInp+'">'+panolUmOptionsHtml(d.um||'UNI')+'</select></td>'
+    +(o.gal?'<td><select class="ed-sec" style="'+_fInp+'" onchange="this.dataset.manual=1" title="Se sugiere por el código del artículo: Pañol si empieza con GCFER, GCLIM, GCEPP, GCEQU, GCHRR o GCSPM; Depósito si no">'+['Pañol','Depósito'].map(v=>'<option'+(v===(d.sector||solSectorDe((panolArtResolver(d.texto||'')||{}).cod))?' selected':'')+'>'+v+'</option>').join('')+'</select></td>':'')
     +(o.gal?'<td><select class="ed-gal" style="'+_fInp+'">'+solGalOpts(d.galpon)+'</select></td>':'')
     +(o.fec?'<td><input type="date" class="ed-fec" value="'+esc(String(d.fecha||'').slice(0,10))+'" style="'+_fInp+'"></td>':'')
     +'<td><input type="text" class="ed-com" value="'+esc(d.comentario||'')+'" style="width:170px;'+_fInp+'"></td>'
     +'<td><button class="iconbtn del" title="Quitar" onclick="this.closest(\'tr\').remove()">'+ICO.del+'</button></td></tr>';
 }
-function solArtUm(id){ const el=document.getElementById(id); if(!el) return; const ra=panolArtResolver(el.value); if(!ra.cod) return; const u=panolUmSugerida(ra.cod); const sel=el.closest('tr').querySelector('.ed-um'); if(u&&sel&&!sel.dataset.manual) panolUmFijar(sel,u); }
+function solArtUm(id){ const el=document.getElementById(id); if(!el) return; const ra=panolArtResolver(el.value); if(!ra.cod) return; { const sec=el.closest('tr').querySelector('.ed-sec'); if(sec&&!sec.dataset.manual) sec.value=solSectorDe(ra.cod); } const u=panolUmSugerida(ra.cod); const sel=el.closest('tr').querySelector('.ed-um'); if(u&&sel&&!sel.dataset.manual) panolUmFijar(sel,u); }
 window.solArtUm=solArtUm;
 function solAgregarFila(tbodyId,o){ const tb=document.getElementById(tbodyId); tb.insertAdjacentHTML('beforeend',solFilaHtml({},o)); }
 window.solAgregarFila=solAgregarFila;
@@ -3469,7 +3517,7 @@ function solLeerFilas(tbodyId,o){
     const txt=tr.querySelector('.ed-art').value.trim(), cant=+tr.querySelector('.ed-cant').value; if(!txt&&!cant) return;
     if(!txt){ errs.push('Falta el artículo en la fila '+n); return; } if(!(cant>0)){ errs.push('Falta la cantidad de '+txt); return; }
     const ra=panolArtResolver(txt);
-    items.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', galpon:o.gal?(tr.querySelector('.ed-gal').value||null):null, fecha_necesidad:o.fec?(tr.querySelector('.ed-fec').value||null):null, comentario:tr.querySelector('.ed-com').value.trim()||null});
+    items.push({cod_articulo:ra.cod||null, articulo_libre:ra.cod?null:txt, sector:(tr.querySelector('.ed-sec')||{}).value||solSectorDe(ra.cod), cantidad:cant, um:tr.querySelector('.ed-um').value||'UNI', galpon:o.gal?(tr.querySelector('.ed-gal').value||null):null, fecha_necesidad:o.fec?(tr.querySelector('.ed-fec').value||null):null, comentario:tr.querySelector('.ed-com').value.trim()||null});
   });
   return {items,errs};
 }
@@ -3488,7 +3536,7 @@ function renderPanolKits(){
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Modelos de Kits</h3><span class="meta">'+lista.length+' de '+kits.length+' modelos</span>'
     +'<input value="'+esc(PANOL_KITQ)+'" placeholder="Buscar modelo…" onchange="PANOL_KITQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:200px">'
     +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('pkit').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolKits\')">Auto-ajustar columnas</button>'+(gest?'<button class="btn sm" onclick="openPanolKitEd()">'+ICO.plus+'Nuevo modelo</button>':'')+'</span></div>'
-    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Cada modelo es una tarea con los materiales que lleva <b>para una unidad</b> (1 módulo, 1 bastidor de piso…). Con <b>Nueva solicitud</b> se arma la solicitud con las cantidades por la cantidad de unidades que se necesiten, y se puede ajustar sin tocar el modelo.'+(gest?'':' Los modelos los administra Pañol.')+'</div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Cada modelo es una tarea con los materiales que lleva <b>para una unidad</b> (1 módulo, 1 bastidor de piso…). Con <b>Nueva solicitud</b> se arma la solicitud con las cantidades por la cantidad de unidades que se necesiten, y se puede ajustar sin tocar el modelo.'+(gest?'':' Los modelos los administra Abastecimiento.')+'</div>'
     +(PANOL_KITS_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer los modelos: '+esc(PANOL_KITS_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_kits.sql</b> en Supabase?</div>':'')
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolKits"><thead><tr>'+_pnTh('Modelo (tarea)',null,'nombre','pkit')+_pnTh('Unidad de trabajo','unidad','unidad','pkit')+_pnTh('Materiales',null,'n','pkit')+_pnTh('Estado','estado','estado','pkit')+'<th>Comentario</th><th></th></tr></thead><tbody>'
     +(filas||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">'+(kits.length?'Ningún modelo con ese filtro.':'Todavía no hay modelos'+(gest?': creá el primero con "Nuevo modelo".':'.'))+'</td></tr>')+'</tbody></table></div></div>';
@@ -3510,7 +3558,7 @@ function openPanolKitEd(id){
 }
 window.openPanolKitEd=openPanolKitEd;
 async function panolKitGuardar(id){
-  if(!canPanol()){ toast('Solo Pañol puede editar los modelos.'); return; }
+  if(!canPanol()){ toast('Solo Abastecimiento puede editar los modelos.'); return; }
   const g=i=>(document.getElementById(i)||{}).value||'', nombre=g('kt_nombre').trim(), unidad=g('kt_unidad').trim(), com=g('kt_com').trim();
   if(!nombre){ toast('Falta el nombre de la tarea'); return; }
   if((DIC.panol_kits||[]).some(k=>String(k.id)!==String(id)&&_syncFold(k.nombre)===_syncFold(nombre))){ toast('Ya existe un modelo con ese nombre'); return; }
@@ -3585,9 +3633,9 @@ function openPanolSolBorrador(d){
     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(d.kit?'Los materiales vienen del modelo <b>'+esc(d.kit.nombre)+'</b>'+(d.kit_cantidad!==1?' × '+fmtNum(d.kit_cantidad,3):'')+'. Lo que cambies acá vale <b>solo para esta solicitud</b>; para cambiarlo para siempre, editá el modelo.':'Revisá los datos y los materiales: lo que cambies vale solo para esta solicitud nueva.')+' El N° de OT se asigna al enviarla.</div>'
     +'<div class="frow c2"><div class="field"><label>Solicitante</label><select id="bd_sol"'+(canPanol()?'':' disabled')+'>'+solSolicitanteOpts(d.solicitante)+'</select></div><div class="field"><label>Destino (IF / obra)</label><select id="bd_dest">'+destOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Fecha de necesidad</label><input id="bd_fnec" type="date" value="'+esc(d.fecha||'')+'"></div><div class="field"><label>Comentario general</label><input id="bd_com" type="text" value="'+esc(d.comentario||'')+'"></div></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Entregar en</th><th>Fecha de necesidad (si es distinta)</th><th>Comentario</th><th></th></tr></thead><tbody id="bdBody">'+filas+'</tbody></table></div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Sector</th><th>Entregar en</th><th>Fecha de necesidad (si es distinta)</th><th>Comentario</th><th></th></tr></thead><tbody id="bdBody">'+filas+'</tbody></table></div>'
     +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="solAgregarFila(\'bdBody\',{gal:1,fec:1})">'+ICO.plus+'Agregar material</button></div>',
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(d.kit&&canPanol()?'<button class="btn ghost" onclick="openPanolKitEd('+d.kit.id+')">Editar el modelo</button>':'')+'<button class="btn" id="bdBtn" onclick="panolSolBorradorEnviar()">Enviar a Pañol</button>','xwide');
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(d.kit&&canPanol()?'<button class="btn ghost" onclick="openPanolKitEd('+d.kit.id+')">Editar el modelo</button>':'')+'<button class="btn" id="bdBtn" onclick="panolSolBorradorEnviar()">Enviar a Abastecimiento</button>','xwide');
 }
 window.openPanolSolBorrador=openPanolSolBorrador;
 async function panolSolBorradorEnviar(){
@@ -3598,8 +3646,8 @@ async function panolSolBorradorEnviar(){
   const dd=ppResolverDestino(destCod); items.forEach(i=>{ if(!i.fecha_necesidad) i.fecha_necesidad=fnec; if(!i.galpon) i.galpon=panolGalDefecto()||null; });
   const btn=document.getElementById('bdBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
   const S={solicitante, destino_cod:destCod, destino_txt:(dd&&dd.desc)?destCod+' — '+dd.desc:destCod, fecha_necesidad:fnec, comentario:com||null, items, kit_id:d.kit?d.kit.id:(d.kit_id||null), kit_cantidad:d.kit?d.kit_cantidad:(d.kit_cantidad||null), detalle:d.detalle||(d.kit?'Desde el modelo '+d.kit.nombre+' × '+fmtNum(d.kit_cantidad,3):'')};
-  const nro=await panolSolCrear(S); if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } return; }
-  _BD=null; closeModal(); toast('Solicitud enviada a Pañol · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
+  const nro=await panolSolCrear(S); if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } return; }
+  _BD=null; closeModal(); toast('Solicitud enviada a Abastecimiento · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
 }
 window.panolSolBorradorEnviar=panolSolBorradorEnviar;
 
@@ -3616,7 +3664,7 @@ window.panolSolDuplicar=panolSolDuplicar;
 /* ---- Guardar una solicitud como modelo de kit: se define la tarea, para cuántas unidades alcanza y se ajusta antes de guardar ---- */
 function panolSolAModelo(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  if(!canPanol()){ toast('Solo Pañol puede guardar modelos.'); return; }
+  if(!canPanol()){ toast('Solo Abastecimiento puede guardar modelos.'); return; }
   const kit=s.kit_id?(DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id)):null;
   openModal('Guardar la solicitud '+s.nro_ot+' como modelo',
     '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Los materiales de la solicitud pasan a un modelo nuevo. Las cantidades del modelo son <b>por una unidad</b> de la tarea: indicá para cuántas unidades alcanza esta solicitud y se dividen. Antes de guardarlo vas a poder cambiar lo que haga falta.</div>'
@@ -3640,7 +3688,7 @@ let PANOL_EGQ='';
 /* ---- Herramientas (GCHRR): disponibilidad, pedidos, préstamos y mantenimiento ----
    Cada herramienta física es una SERIE de Series activas (artículo GCHRR…); su Auxiliar de Tango (tipo 7) se deduce por la serie.
    compras_panol_herr tiene una fila por unidad pedida/prestada/en mantenimiento. La herramienta no se consume: no hay egreso ni costo.
-   Pedir: cualquiera. Entregar, devolver y mandar a mantenimiento: Pañol (es_panol) o administrador. Cada uno ve solo sus pedidos. */
+   Pedir: cualquiera. Entregar, devolver y mandar a mantenimiento: Abastecimiento (es_panol) o administrador. Cada uno ve solo sus pedidos. */
 let PANOL_HERR_ERR='', PANOL_HERR_VISTA='disp', PANOL_HERR_Q='';
 const herrHoy=()=>new Date().toISOString().slice(0,10);
 const herrSuma=(iso,n)=>{ const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
@@ -3757,13 +3805,13 @@ function herrSolicitud(pre){
   if(!herrArticulos().length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
   const ds=panolDestinos(), hoy=herrHoy(); pre=pre||{};
   openModal('Solicitud de herramientas',
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Indicá para dónde son y de cuándo a cuándo. Cada herramienta puede tener sus propias fechas; si las dejás vacías usa las generales. Pañol asigna la serie al entregar.</div>'
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Indicá para dónde son y de cuándo a cuándo. Cada herramienta puede tener sus propias fechas; si las dejás vacías usa las generales. Abastecimiento asigna la serie al entregar.</div>'
     +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hs_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(pre.dest)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div><div class="field"><label>Solicitante</label><select id="hs_sol">'+solSolicitanteOpts(pre.sol)+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Desde (general)</label><input id="hs_d1" type="date" value="'+(pre.d1||hoy)+'"></div><div class="field"><label>Hasta (general, devolución)</label><input id="hs_d2" type="date" value="'+(pre.d2||hoy)+'"></div></div>'
     +(pre.avisos&&pre.avisos.length?'<div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px"><b>Revisá esto del Excel:</b><ul style="margin:4px 0 0 18px;padding:0">'+pre.avisos.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>':'')
     +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Cantidad</th><th>Desde</th><th>Hasta</th><th>Comentario</th><th></th></tr></thead><tbody id="hsBody">'+((pre.lineas||[]).length?pre.lineas.map(l=>herrSolFila(l.cod,l)).join(''):herrSolFila())+'</tbody></table></div>'
     +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="document.getElementById(\'hsBody\').insertAdjacentHTML(\'beforeend\',herrSolFila())">'+ICO.plus+'Agregar herramienta</button></div>',
-    '<button class="btn ghost" onclick="herrExcelBajar()">Bajar Excel</button><button class="btn ghost" onclick="herrExcelSubir()">Subir Excel</button><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hsBtn" onclick="herrSolicitudGuardar()">Enviar a Pañol</button>','xwide');
+    '<button class="btn ghost" onclick="herrExcelBajar()">Bajar Excel</button><button class="btn ghost" onclick="herrExcelSubir()">Subir Excel</button><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hsBtn" onclick="herrSolicitudGuardar()">Enviar a Abastecimiento</button>','xwide');
 }
 window.herrSolicitud=herrSolicitud;
 /* Excel de solicitud de herramientas: se baja con listas desplegables y al subirlo se carga en el formulario para revisarlo antes de enviar */
@@ -3775,8 +3823,8 @@ async function herrExcelBajar(){
   ['Herramientas','Destinos','Solicitantes'].forEach((t,i)=>{ const c=ls.getCell(1,i+1); c.value=t; c.font={bold:true}; });
   hs.forEach((v,i)=>{ ls.getCell(i+2,1).value=v; }); dests.forEach((v,i)=>{ ls.getCell(i+2,2).value=v; }); sols.forEach((v,i)=>{ ls.getCell(i+2,3).value=v; });
   [70,50,36].forEach((w,i)=>{ ls.getColumn(i+1).width=w; }); [64,14,18,18,40].forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
-  ws.mergeCells('A1:E1'); ws.getCell('A1').value='Solicitud de herramientas a Pañol'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
-  ws.mergeCells('A2:E2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Pañol > Solicitudes > Solicitud de herramientas > Subir Excel). Vas a poder revisarla antes de enviarla.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
+  ws.mergeCells('A1:E1'); ws.getCell('A1').value='Solicitud de herramientas a Abastecimiento'; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
+  ws.mergeCells('A2:E2'); ws.getCell('A2').value='Completá las celdas amarillas y subí el archivo en la app (Abastecimiento > Solicitudes > Solicitud de herramientas > Subir Excel). Vas a poder revisarla antes de enviarla.'; ws.getCell('A2').font={size:10,italic:true,color:{argb:XL_GRIS}};
   const amarillo={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}, bd={style:'thin',color:{argb:'FFD1B96B'}}, borde={top:bd,left:bd,bottom:bd,right:bd};
   const campo=(fila,lbl,val)=>{ const a=ws.getCell(fila,1); a.value=lbl; a.font={bold:true,size:11}; a.alignment={horizontal:'right'}; ws.mergeCells(fila,2,fila,5); const b=ws.getCell(fila,2); b.value=val||null; b.fill=amarillo; b.border=borde; b.alignment={horizontal:'left'}; return b; };
   const bs=campo(3,'Solicitante',sols.includes(MI_NOMBRE)?MI_NOMBRE:''); if(sols.length) bs.dataValidation={type:'list',allowBlank:false,formulae:['Listas!$C$2:$C$'+(sols.length+1)],showErrorMessage:true,errorStyle:'warning',errorTitle:'Solicitante',error:'Elegí un solicitante de la lista.'};
@@ -3800,7 +3848,7 @@ async function herrExcelBajar(){
 window.herrExcelBajar=herrExcelBajar;
 function herrExcelSubir(){
   openModal('Subir Excel de solicitud de herramientas',
-    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel que se baja con "Bajar Excel". Se carga en el formulario para que lo revises antes de enviarlo a Pañol.</div>'
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel que se baja con "Bajar Excel". Se carga en el formulario para que lo revises antes de enviarlo a Abastecimiento.</div>'
     +'<div class="field"><label>Excel (.xlsx) *</label><input id="hx_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="hxMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
     '<button class="btn ghost" onclick="herrSolicitud()">Volver</button><button class="btn" onclick="herrExcelLeer()">Revisar</button>');
 }
@@ -3854,7 +3902,7 @@ async function herrSolicitudGuardar(){
   if(!filas.length){ toast('Agregá al menos una herramienta'); return; }
   const btn=document.getElementById('hsBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
   try{ await herrCrear(filas); }
-  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Pañol'; } toast('No se pudo enviar: '+(e.message||e)); return; }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } toast('No se pudo enviar: '+(e.message||e)); return; }
   closeModal(); toast(filas.length+' herramienta(s) pedida(s)'+(avisos.length?' · ojo: en esas fechas no alcanzan: '+avisos.join(', '):'')); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
 }
 window.herrSolicitudGuardar=herrSolicitudGuardar;
@@ -3880,7 +3928,7 @@ function herrPedidoAviso(){
   const ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===cod&&herrActivo(p)); let pico=0;
   for(let d=d1,i=0;d<=d2&&i<400;d=herrSuma(d,1),i++){ const x=ps.filter(p=>herrSolapa(p,d,d)).length; if(x>pico) pico=x; }
   const libres=a.unid.length-pico;
-  el.innerHTML=libres>=n?'<span style="color:#1f6b45">En ese período quedan <b>'+libres+'</b> de '+a.unid.length+' disponibles.</span>':'<span style="color:#b3261e">⚠ En ese período solo quedan <b>'+Math.max(0,libres)+'</b> de '+a.unid.length+' (pedidas, prestadas o en mantenimiento: '+pico+'). Se puede pedir igual; Pañol lo verá en la proyección.</span>';
+  el.innerHTML=libres>=n?'<span style="color:#1f6b45">En ese período quedan <b>'+libres+'</b> de '+a.unid.length+' disponibles.</span>':'<span style="color:#b3261e">⚠ En ese período solo quedan <b>'+Math.max(0,libres)+'</b> de '+a.unid.length+' (pedidas, prestadas o en mantenimiento: '+pico+'). Se puede pedir igual; Abastecimiento lo verá en la proyección.</span>';
 }
 window.herrPedidoAviso=herrPedidoAviso;
 async function herrCrear(filas){
@@ -3910,7 +3958,7 @@ function herrLibres(cod,d1,d2,exceptoId){
   return herrUnidades().filter(u=>u.cod_articulo===cod&&!ocupadas.has(u.serie));
 }
 
-/* ---- Entregar (Pañol asigna la serie e informa a quién y de cuándo a cuándo) ---- */
+/* ---- Entregar (Abastecimiento asigna la serie e informa a quién y de cuándo a cuándo) ---- */
 function herrEntregar(id){
   const p=herrFila(id); if(!p||!canPanol()) return;
   openModal('Entregar herramienta #'+p.id,
@@ -4002,7 +4050,7 @@ function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
   let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length; }catch(e){}
   const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('dic','Diccionario de abastecimiento')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
@@ -4489,7 +4537,7 @@ async function guardarPanolErog(id){
       else await sbEgr('/compras_panol_egresos?id=eq.'+id,'PATCH',row);
       await reloadDB();
     }
-  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Pañol de la carpeta sql/?)'); return; }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Abastecimiento de la carpeta sql/?)'); return; }
   closeModal(); toast(row.alerta?'Guardado con alarma: '+row.alerta:'Guardado'); renderPanol();
 }
 window.guardarPanolErog=guardarPanolErog;
@@ -4520,7 +4568,7 @@ async function panolRecalcularOk(){
 window.panolRecalcularOk=panolRecalcularOk;
 window.panolRecalcularPrecios=panolRecalcularPrecios;
 
-/* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario pañol) ---- */
+/* ---- Selectores del formulario: serie/módulo (Diccionarios → Módulos y Series activas), galpón y operario (Diccionario de abastecimiento) ---- */
 // Opciones de serie/módulo = Auxiliar 04 (Contenedor/Módulo) habilitado. La serie (patente) es la descripción del auxiliar; el Adic. 1
 // (número de referencia) y la descripción salen de Diccionarios → Módulos, cruzados por serie.
 function panolAuxSrc(tipo){ return pnCache('aux'+tipo,[CONTA_DB.auxopc&&CONTA_DB.auxopc[tipo],(SERIES_ACTIVAS||[]).length],()=>_panolAuxSrc0(tipo)); }
@@ -4608,13 +4656,13 @@ function comboPanolOper(qId, after){
 window.comboPanolOper=comboPanolOper;
 function panolOperNote(){
   const n=document.getElementById('pe_operNote'), v=(document.getElementById('pe_oper')||{}).value; if(!n) return;
-  if(!(DIC.panol_operarios||[]).length){ n.style.color='var(--muted)'; n.textContent='Todavía no hay operarios cargados: se cargan en la solapa "Diccionario pañol".'; }
-  else if(panolOperarioSinAlta(v)){ n.style.color='#b3261e'; n.textContent='⚠ No está en el diccionario de operarios. Se guarda igual, con alarma "OPERARIO SIN ALTA"; podés darlo de alta en "Diccionario pañol".'; }
+  if(!(DIC.panol_operarios||[]).length){ n.style.color='var(--muted)'; n.textContent='Todavía no hay operarios cargados: se cargan en la solapa "Diccionario de abastecimiento".'; }
+  else if(panolOperarioSinAlta(v)){ n.style.color='#b3261e'; n.textContent='⚠ No está en el diccionario de operarios. Se guarda igual, con alarma "OPERARIO SIN ALTA"; podés darlo de alta en "Diccionario de abastecimiento".'; }
   else n.textContent='';
 }
 window.panolOperNote=panolOperNote;
 
-/* ---- Teclado en las listas de búsqueda de Pañol ----
+/* ---- Teclado en las listas de búsqueda de Abastecimiento ----
    Con lo escrito en el campo, Tab (o Enter) elige la sugerencia marcada en verde: la primera, la que coincide exacto, o la que
    marcaste con las flechas ↑↓. Esc cierra la lista y deja lo escrito tal cual (útil para un artículo u operario sin alta). */
 function panolComboPaint(){
@@ -4645,7 +4693,7 @@ function panolComboKey(ev){
 window.panolComboKey=panolComboKey;
 function panolComboObra(qId,hidId,after){ comboObra(qId,hidId,after,panolDestinos); panolComboMark(document.getElementById(qId)); }
 
-/* ---- Unidades de medida (diccionario en Pañol → Diccionario pañol) ---- */
+/* ---- Unidades de medida (diccionario en Abastecimiento → Diccionario de abastecimiento) ---- */
 function panolUmOpts(){ const l=(DIC.unidades_medida||[]).filter(u=>u.activo!==false).map(u=>u.codigo); return l.length?l:UM_LIST.slice(); }
 function panolUmResolver(txt){
   const T=String(txt||'').trim().toUpperCase(); if(!T) return '';
@@ -4717,7 +4765,7 @@ async function panolUmImportar(){
 }
 window.panolUmImportar=panolUmImportar;
 
-/* ---- Solapa "Diccionario pañol": galpones, operarios y unidades de medida ----
+/* ---- Solapa "Diccionario de abastecimiento": galpones, operarios y unidades de medida ----
    Alta / modificación / baja. Solo se puede eliminar (o cambiar el nombre) lo que nunca se usó en una erogación;
    lo que ya se usó se puede inhabilitar para que no aparezca más en el formulario. */
 const PANOL_DIC_CFG={
@@ -4760,7 +4808,7 @@ function renderPanolDic(){
   const solS=_spOrdenar('psolic', sols.filter(r=>xlfPass('psolic',r)), {nombre:r=>r.nombre, email:r=>r.email, estado:estado, usos:r=>panolDicUsos('sol',r)});
   const solRows=solS.length?solS.map(r=>{ const u=panolDicUsos('sol',r); return '<tr data-q="'+esc(_syncFold([r.nombre,r.email,estado(r)].join(' ')))+'"><td>'+esc(r.nombre)+'</td><td>'+esc(r.email||'')+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('sol',r,u)+'</tr>'; }).join('')
     :'<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--muted)">Sin solicitantes'+(sols.length?' con esos filtros':' cargados todavía: traelos con "Traer usuarios de la app" o cargalos a mano')+'.</td></tr>';
-  const solCard='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitantes (quién pide materiales a Pañol)</h3><span class="meta">'+solS.length+' de '+sols.length+'</span>'
+  const solCard='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitantes (quién pide materiales a Abastecimiento)</h3><span class="meta">'+solS.length+' de '+sols.length+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psolic')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolSolic\')">Auto-ajustar columnas</button>'
       +'<button class="btn ghost sm" onclick="panolSolicitantesTraer()">Traer usuarios de la app</button>'
@@ -4824,7 +4872,7 @@ async function guardarPanolDic(k,id){
       else await sbFetch('/'+cfg.tabla,{method:'POST',body:JSON.stringify({...row, creado_por:(AUTH_USER&&AUTH_USER.email)||null}),prefer:'return=minimal'});
       await panolDicRecargar(k);
     }
-  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Pañol de la carpeta sql/?)'); return; }
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)+' (¿ya se corrieron los SQL de Abastecimiento de la carpeta sql/?)'); return; }
   closeModal(); toast('Guardado'); renderPanol();
 }
 window.guardarPanolDic=guardarPanolDic;
@@ -5391,7 +5439,7 @@ async function ppImportarOk(){
 }
 window.ppImportarOk=ppImportarOk;
 
-/* ===== Cierres de mes (Pañol → Cierres de mes) =====
+/* ===== Cierres de mes (Abastecimiento → Cierres de mes) =====
    Igual que la hoja "Cierres" del Excel: un mes cerrado congela los precios de sus erogaciones. Las compras nuevas (historial) solo
    impactan en meses abiertos. Un período sin cierre cargado está Abierto. Cerrar y reabrir: solo administradores; cada movimiento
    queda en el historial con usuario, fecha y hora. En la base, un trigger (sql/2026-10_panol_cierres.sql) impide tocar un mes
@@ -10876,7 +10924,7 @@ function _comboDD(){
   }
   return _comboEl;
 }
-let _comboCur=null;   // lista abierta (para elegir con Tab / flechas en Pañol)
+let _comboCur=null;   // lista abierta (para elegir con Tab / flechas en Abastecimiento)
 function comboShow(inp, items, pick){
   _comboCur={inp, items, pick, idx:-1, nav:false};
   const dd=_comboDD(); const r=inp.getBoundingClientRect();
@@ -14067,7 +14115,7 @@ function comboEvalProvObra(){ comboObra('ep_obra_q','ep_obra'); }
 window.comboEvalProvObra=comboEvalProvObra;
 function evalProvObraBlur(){ obraBlur('ep_obra_q','ep_obra'); }
 window.evalProvObraBlur=evalProvObraBlur;
-// Pañol: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
+// Abastecimiento: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
 // Destino de una erogación = Clasificación de renglón habilitada para compras (ej. ACOPIO, MANMOD, DTM, IF4430). Es otra lista que la de Obra del egreso clásico (auxiliar 3).
 function panolDestinos(){ return pnCache('destinos',[CLASIF_ALL,(CLASIF_ALL||[]).length],_panolDestinos0); }
 function _panolDestinos0(){ return (CLASIF_ALL||[]).filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({cod:r.cod, desc:r.desc||''})).sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true})); }
@@ -15630,7 +15678,7 @@ async function reloadDicts(background){
         if(provs && provs.length) PROV_CON_ORIGEN=('origen' in provs[0]);
         if(provs && provs.length) DIC.proveedores = provs.map(p=>({codigo:p.codigo, razon:p.razon||'', comercial:p.comercial||p.razon||'', cuit:p.cuit||'', tel:p.tel||'', movil:p.movil||'', email:p.email||'', web:p.web||'', provincia_cod:p.provincia_cod||'', provincia:p.provincia||'', actividad:p.actividad||'', iva:p.iva||'', domicilio:p.domicilio||'', cod_postal:p.cod_postal||'', tel2:p.tel2||'', origen:p.origen||'', creado_por:p.creado_por||'', creado_en:p.creado_en||'', origen_lbl:_provOrigenLbl(p.origen)}));
       }catch(e){ /* si la tabla está vacía o falla, queda el ejemplo embebido */ } })(),
-      // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Pañol) es un agregado
+      // Artículos: idem. Costo de referencia (ARS/USD/fecha/proveedor, para valorizar Abastecimiento) es un agregado
       // reciente: si la columna todavía no existe en producción, cae al select clásico.
       (async()=>{ try{
         let arts;
@@ -15647,7 +15695,7 @@ async function reloadDicts(background){
         const deps = await sbFetchAll('/compras_depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
         if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
-      // Pañol: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
+      // Abastecimiento: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
       (async()=>{ try{
         const egs = await sbFetchAll('/compras_panol_egresos?select=*&order=fecha.desc,id.desc');
         if(egs) DIC.panol_egresos = egs.map(r=>({...r, cantidad:+r.cantidad||0, costo_unit_ars:+r.costo_unit_ars||0, costo_unit_usd:+r.costo_unit_usd||0, total_ars:+r.total_ars||0, total_usd:+r.total_usd||0, periodo:+r.periodo, exportado:!!r.exportado}));
@@ -15667,6 +15715,7 @@ async function reloadDicts(background){
       (async()=>{ await panolSolCargar(); })(),
       (async()=>{ await panolKitsCargar(); })(),
       (async()=>{ await panolHerrCargar(); })(),
+      (async()=>{ if(DEMO_MODE) return; try{ DIC.panol_responsables=await sbFetchAll('/compras_panol_responsables?select=*&order=id.asc'); }catch(e){ /* si la tabla no existe todavía, no hay responsables */ } })(),
       (async()=>{ try{ const ps = await sbFetchAll('/compras_panol_solicitantes?select=*&order=nombre.asc'); if(ps) DIC.panol_solicitantes = ps; }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
         const pm = await sbFetchAll('/compras_panol_precios_mes?select=*&order=id.asc');
@@ -16248,7 +16297,7 @@ window.cmpGuardarTodo=cmpGuardarTodo; window.cmpDecidir=cmpDecidir; window.cmpRe
       {id:8, herr_id:7, tipo:'prestamo', fecha:'2025-03-10', persona:'L. Díaz', desde:'2025-03-10', hasta:'2025-03-14'},
     ];
     DIC.motivos_cierre = MOTIVOS_CIERRE.map((m,i)=>({id:i+1, descripcion:m, activo:true}));
-    // Pañol: costo de referencia sobre un par de artículos ya existentes, depósitos, saldos (foto de
+    // Abastecimiento: costo de referencia sobre un par de artículos ya existentes, depósitos, saldos (foto de
     // Tango) y un par de egresos de ejemplo (uno ya exportado, otro pendiente).
     (DIC.articulos||[]).forEach(a=>{
       if(a.codigo==='GCAEI02000'){ a.costo_ars=240765.52; a.costo_usd=166.05; a.costo_fecha='2026-06-19'; a.costo_proveedor='HUUP'; }
