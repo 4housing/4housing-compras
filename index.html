@@ -9803,7 +9803,7 @@ function opsView(){
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
       +'<td>'+(pagoArmado(p)?'<span class="badge b-ambar" title="Emitida y descontada de la caja; falta que se libere para marcarla Pagada">Armada</span>'
-          +(canPago()?' <button class="btn ghost sm" style="padding:2px 6px;min-height:0" onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'<br>':'')
+          +(canPago()?' <button class="btn ghost sm" style="padding:2px 6px;min-height:0'+(opArmadaLista(p)?'':';opacity:.5')+'" title="'+(opArmadaLista(p)?'Marcar pagada':'Todavía no: la OG no está certificada y liberada por este monto')+'" onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'<br>':'')
       +badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')
         +'<div style="display:flex;gap:4px;align-items:center;margin-top:2px">'
         +'<input type="text" id="asientoInp'+p.id+'" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares. Escribí y apretá Enter (o el ✓) para guardar — no se guarda solo con hacer click afuera.':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onkeydown="if(event.key===\'Enter\'){ guardarAsientoOP('+p.id+',this.value); this.blur(); }" style="width:62px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'">'
@@ -10558,16 +10558,28 @@ function _pgPendMonto(o, modo){
 }
 // Tesorería marca Pagada una OP armada: solo si lo liberado (sin pagar) ya la cubre
 function opArmadaFalta(p){
-  const o=ogById(p.og_id); if(!o) return null;
+  const o=ogById(p.og_id); if(!o) return Infinity;   // sin OG no hay cómo saber si está liberada: no se deja
+
   const monto=pagoMontoOG(p)-(+p.ajuste_redondeo||0);
   return Math.max(0, monto - ogPendPagoMonto(o));
 }
+function opArmadaLista(p){ const o=ogById(p.og_id); const f=opArmadaFalta(p); return !!o && isFinite(f) && f<=ogTotal(o)*0.01+0.01; }
 function opMarcarPagada(id){
   if(!canPago()){ toast('Solo Tesorería marca pagadas las OP.'); return; }
   const p=(mem.pagos||[]).find(x=>String(x.id)===String(id)); if(!p||!pagoArmado(p)) return;
   const o=ogById(p.og_id)||{}; const simb=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
   const falta=opArmadaFalta(p);
-  if(falta>ogTotal(o)*0.01+0.01){ toast('Todavía no se puede: falta liberar '+simb+fmtNum(falta,2)+' en la OG '+(o.numero||'')+'.'); return; }
+  if(!opArmadaLista(p)){
+    // Cartel (no un aviso que se va solo): no se puede marcar pagada sin certificar y liberar
+    const cert=o.id?ogAcumPct(o.id):0, lib=o.id?ogLiberadoPct(o):0;
+    openModal('No se puede marcar pagada',
+      '<div style="padding:12px 14px;border:1px solid #b3261e;border-radius:10px;background:#fdecea;color:#7a1c14;font-size:13.5px;line-height:1.55">'
+      +'<strong>La OP '+esc(p.op_numero)+' no se puede marcar Pagada</strong> porque la OG '+esc(o.numero||p.numero||'')+' todavía no está certificada y liberada por ese monto.'
+      +(isFinite(falta)?'<br>Falta liberar <strong>'+simb+fmtNum(falta,2)+'</strong>.':'<br>No se encontró la OG de esta OP.')+'</div>'
+      +(o.id?'<div style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6">OG '+esc(o.numero)+': certificado '+cert.toFixed(0)+'% · liberado '+lib.toFixed(0)+'%.<br>Se habilita cuando el comprador certifique y libere. Mientras tanto la OP queda <strong>Armada</strong> (ya descontada de la caja).</div>':''),
+      '<button class="btn" onclick="closeModal()">Entendido</button>');
+    return;
+  }
   openModal('Marcar pagada · OP '+esc(p.op_numero),
     '<p style="margin:0;font-size:13.5px;line-height:1.5">La OP '+esc(p.op_numero)+' (OG '+esc(o.numero||'')+') pasa de <strong>Armada</strong> a <strong>Pagada</strong>: cuenta como pago de la OG y ya se puede exportar su asiento. La caja no cambia (se descontó al armarla).</p>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="confirmOpPagada('+p.id+')">Marcar pagada</button>');
@@ -10601,12 +10613,12 @@ function armadoView(){
       +'<td>'+(canPago()?'<button class="btn sm" onclick="openPago('+o.id+',\'armada\')">Armar OP</button>':'')+'</td></tr>').join('')+'</tbody></table>':'';
   const tArm=armadas.length?'<div style="font-weight:700;font-size:12.5px;padding:12px 14px 4px">OP armadas, esperando liberación ('+armadas.length+')</div>'
     +'<table class="grid" id="armOpTabla" style="font-size:12.5px"><thead><tr><th>OP</th><th>Fecha</th><th>OG</th><th>Proveedor</th><th>Comprador</th><th>Monto</th><th>Liberado</th><th>Estado</th><th></th></tr></thead><tbody>'
-    +armadas.map(p=>{ const o=ogById(p.og_id)||{}; const falta=opArmadaFalta(p)||0; const lista=falta<=ogTotal(o)*0.01+0.01;
+    +armadas.map(p=>{ const o=ogById(p.og_id)||{}; const falta=opArmadaFalta(p); const lista=opArmadaLista(p);
       return '<tr><td><strong>OP '+esc(p.op_numero)+'</strong></td><td>'+fmtDate(p.fecha)+'</td><td>OG '+esc(p.numero||'')+'</td><td style="font-size:11px">'+esc(o.proveedor_cod||'')+'</td>'
         +'<td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td><td style="text-align:right">'+sim(o)+f2(pagoMontoOG(p))+'</td><td>'+ogLiberadoPct(o).toFixed(0)+'%</td>'
-        +'<td>'+(lista?'<span class="badge b-verde">Liberada: lista para marcar pagada</span>':'<span class="badge b-ambar">Falta liberar '+sim(o)+f2(falta)+'</span>')+'</td>'
+        +'<td>'+(lista?'<span class="badge b-verde">Liberada: lista para marcar pagada</span>':'<span class="badge b-ambar">'+(isFinite(falta)?'Falta liberar '+sim(o)+f2(falta):'Sin OG')+'</span>')+'</td>'
         +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir OP" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button>'
-        +(canPago()?'<button class="btn sm"'+(lista?'':' disabled title="Se habilita cuando el comprador libere lo suficiente"')+' onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'</div></td></tr>'; }).join('')+'</tbody></table>':'';
+        +(canPago()?'<button class="btn sm"'+(lista?'':' style="opacity:.5" title="Se habilita cuando el comprador certifique y libere"')+' onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'</div></td></tr>'; }).join('')+'</tbody></table>':'';
   return '<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Pagos armados antes de liberar</h3><span class="meta">El comprador de la OG pide armar el pago aunque no esté certificada. La OP armada descuenta de la caja; se marca Pagada cuando lo liberado alcanza.</span></div>'+tPed+tArm+'</div>';
 }
 
