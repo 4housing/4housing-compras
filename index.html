@@ -3070,7 +3070,13 @@ const solGestionaItem=i=>ROLE.admin||(i.responsable_email?solSoyRespItem(i):(sol
 const solPuedeTransferir=i=>solPend(i)>1e-9&&(ROLE.admin||solSoyRespItem(i)||(!i.responsable_email&&solGestionaItem(i)));
 const solHerrDe=id=>(DIC.panol_herr||[]).filter(p=>String(p.solicitud_id)===String(id));
 const herrEntregada=p=>['Prestada','Devuelta'].includes(p.estado);   // una herramienta cuenta como entregada cuando se presta
-function solVisibles(){ const l=DIC.panol_solicitudes||[]; if(ROLE.admin) return l; if(!solPuedeGestionar()) return l.filter(solEsMia); return l.filter(x=>solEsMia(x)||solItems(x.id).some(i=>solGestionaItem(i)||solSoyRespItem(i)||(canPanol()&&solSector(i)==='Pañol'))||(canPanol()&&solHerrDe(x.id).length>0)); }
+// Quienes gestionan (Abastecimiento, Depósito, administrador) ven todas las OT; cada uno puede elegir ver solo las suyas. Los demás ven solo las que pidieron.
+function solVisibles(){ const l=DIC.panol_solicitudes||[]; return (ROLE.admin||solPuedeGestionar())?l:l.filter(solEsMia); }
+let PANOL_MIOS=(()=>{ try{ return localStorage.getItem('panol_mios')==='1'; }catch(e){ return false; } })();
+function setPanolMios(v){ PANOL_MIOS=!!v; try{ localStorage.setItem('panol_mios',v?'1':'0'); }catch(e){} renderPanol(); }
+window.setPanolMios=setPanolMios;
+const solEsMiaOT=s=>solEsMia(s)||solItems(s.id).some(solSoyRespItem);   // mía = la pedí yo o soy responsable de algún renglón
+const solMiosSel=lbl=>(ROLE.admin||solPuedeGestionar())?'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Ver<select onchange="setPanolMios(this.value===\'1\')" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px"><option value="0"'+(PANOL_MIOS?'':' selected')+'>Todas</option><option value="1"'+(PANOL_MIOS?' selected':'')+'>Solo '+(lbl||'las mías')+'</option></select></label>':'';
 // Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
 const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
 const solPend=i=>Math.max(0,solVig(i)-(+i.cantidad_entregada||0));
@@ -3117,7 +3123,7 @@ function panolSaldo(cod,dep){ const l=(DIC.stock_saldos||[]).filter(x=>x.cod_art
 
 /* ---- Lista ---- */
 function renderPanolSolicitudes(){
-  const F=PANOL_SOL.f, todas=solVisibles(), hoy=new Date().toISOString().slice(0,10);
+  const F=PANOL_SOL.f, todas=solVisibles().filter(s=>!PANOL_MIOS||solEsMiaOT(s)), hoy=new Date().toISOString().slice(0,10);
   const abiertas=s=>['Pendiente','En preparación','Parcial'].includes(s.estado);
   xlfRegister('psol',{rows:()=>todas, onChange:renderPanol, val:(s,c)=>c==='sol'?(s.solicitante||'(sin nombre)'):c==='dest'?(s.destino_cod||s.destino_txt||'(sin destino)'):'' });
   if(!SP_SORT.psol) SP_SORT.psol={k:'fnec',dir:1};
@@ -3133,11 +3139,11 @@ function renderPanolSolicitudes(){
     +'<td><button class="btn ghost sm" onclick="openPanolSolDetalle('+s.id+')">'+(gest&&abiertas(s)&&solItems(s.id).some(i=>solPend(i)>1e-9&&solGestionaItem(i))?'Preparar / entregar':'Ver')+'</button></td></tr>'; }).join('');
   const sel=(v,l)=>'<option value="'+v+'"'+(F.est===v?' selected':'')+'>'+l+'</option>';
   C().innerHTML=panolTabs()
-    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">OTs</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">OTs</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?(PANOL_MIOS?' · solo las tuyas':''):' · solo las tuyas')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
     +'<button class="btn sm" onclick="panolSolNueva()">'+ICO.plus+'Nueva solicitud</button><button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="herrSolicitud()">Solicitud de herramientas</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn ghost sm" onclick="openPanolSolSubir()">Subir solicitud</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
-      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
+      +solMiosSel()+'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
     +(PANOL_SOL_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer las solicitudes: '+esc(PANOL_SOL_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_solicitudes.sql</b> en Supabase?</div>':'')
     +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Todas las OT usan la misma numeración. Ordenadas por fecha de necesidad (las vencidas en rojo). <b>Sectores</b> muestra qué involucra cada OT (Pañol, Depósito, Herramientas) y cuántos renglones van entregados. Doble clic en una fila para ver los renglones y a qué sector corresponde cada uno. Para pedir materiales: <b>Bajar Excel de solicitud</b>, completarlo y <b>Subir solicitud</b>.</div>'
@@ -3786,7 +3792,7 @@ const herrHasta=p=>{ const h=herrF(p.hasta); return (p.estado==='Prestada'||p.es
 const herrSolapa=(p,d1,d2)=>herrF(p.desde)<=d2&&herrHasta(p)>=d1;
 const herrVencida=p=>p.estado==='Prestada'&&herrF(p.hasta)<herrHoy();
 const herrEsMia=p=>!!(AUTH_USER&&AUTH_USER.email&&p.solicitante_email===AUTH_USER.email)||(DEMO_MODE&&!AUTH_USER);
-const herrVisibles=()=>(DIC.panol_herr||[]).filter(p=>canPanol()||herrEsMia(p));
+const herrVisibles=()=>(DIC.panol_herr||[]).filter(p=>(canPanol()||herrEsMia(p))&&(!PANOL_MIOS||herrEsMia(p)));
 // Resumen de una herramienta: total, prestadas y en mantenimiento hoy, pedidos sin entregar y necesidad máxima de cada una de las próximas 8 semanas
 function herrResumen(a){
   const hoy=herrHoy(), ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===a.cod&&herrActivo(p)), total=a.unid.length;
@@ -3862,7 +3868,7 @@ function herrHtmlPed(){
       +'<td>'+esc(p.destino_txt||p.destino_cod||'')+'</td><td>'+esc(p.solicitante||'')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+(herrVencida(p)?'<span style="color:#b3261e;font-weight:700">'+fmtDate(p.hasta)+'</span>':fmtDate(p.hasta))+'</td><td>'+herrBadge(p)+'</td><td>'+esc(p.entregado_a||'')+'</td>'
       +'<td class="tx-largo" style="color:var(--muted);font-size:11.5px" title="'+esc(p.comentario||'')+'">'+esc(p.comentario||'')+'</td><td style="white-space:nowrap">'+acc.join(' ')+'</td></tr>';
   }).join('');
-  return '<div style="display:flex;gap:10px;align-items:center;padding:0 16px 8px;flex-wrap:wrap"><input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+rows.length+'</span>'
+  return '<div style="display:flex;gap:10px;align-items:flex-end;padding:0 16px 8px;flex-wrap:wrap">'+(canPanol()?solMiosSel('los que pedí yo'):'')+'<input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+rows.length+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px">'+xlfClearAllBtn('pherr').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblHerrPed\')">Auto-ajustar columnas</button></span></div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrPed"><thead><tr>'+_pnTh('N°',null,'id','pherr')+_pnTh('OT',null,'ot','pherr')+_pnTh('Herramienta','art','art','pherr')+_pnTh('Serie / Auxiliar','serie','serie','pherr')+_pnTh('Para dónde','dest','dest','pherr')+_pnTh('Solicitante','sol','sol','pherr')+_pnTh('Desde','__fecha__','desde','pherr')+_pnTh('Hasta',null,'hasta','pherr')+_pnTh('Estado','est','est','pherr')+_pnTh('Entregada a','ent','ent','pherr')+'<th>Comentario</th><th></th></tr></thead><tbody>'
     +(filas||'<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--muted)">'+(rows.length?'Nada con ese filtro.':'Todavía no hay pedidos ni préstamos.')+'</td></tr>')+'</tbody></table></div>';
@@ -4124,8 +4130,9 @@ window.setPanolTab=setPanolTab;
 let PANOL_REN={est:'pend',q:''};
 const solEstRen=x=>x.s.estado==='Anulada'||solVig(x.i)<=1e-9?'Anulado':(solPend(x.i)<=1e-9?'Entregado':((+x.i.cantidad_entregada||0)>0?'Parcial':'Pendiente'));
 function solRenglonesSector(sec){ const l=[]; solVisibles().forEach(s=>solItems(s.id).forEach(i=>{ if(solSector(i)===sec) l.push({s,i}); })); return l; }
+const solRenglonesVer=sec=>solRenglonesSector(sec).filter(x=>!PANOL_MIOS||solSoyRespItem(x.i)||solEsMia(x.s));
 function renderPanolRenglones(sec){
-  const ns=sec==='Pañol'?'prnp':'prnd', F=PANOL_REN, gest=solPuedeGestionar(), todos=solRenglonesSector(sec), hoy=new Date().toISOString().slice(0,10);
+  const ns=sec==='Pañol'?'prnp':'prnd', F=PANOL_REN, gest=solPuedeGestionar(), todos=solRenglonesVer(sec), hoy=new Date().toISOString().slice(0,10);
   xlfRegister(ns,{rows:()=>todos, onChange:renderPanol, dateVal:x=>String(x.s.fecha_necesidad||'').slice(0,10), val:(x,c)=>c==='ot'?x.s.nro_ot:c==='sol'?(x.s.solicitante||''):c==='dest'?(x.s.destino_cod||x.s.destino_txt||'(sin destino)'):c==='art'?kitTxt(x.i):c==='resp'?(x.i.responsable_nombre||'(sin responsable)'):c==='est'?solEstRen(x):''});
   if(!SP_SORT[ns]) SP_SORT[ns]={k:'fnec',dir:1};
   const q=(F.q||'').toLowerCase().split(/\s+/).filter(Boolean), okEst=x=>F.est==='todos'||(F.est==='pend'?['Pendiente','Parcial'].includes(solEstRen(x)):solEstRen(x)===F.est);
@@ -4138,10 +4145,10 @@ function renderPanolRenglones(sec){
       +'<td style="'+(solSoyRespItem(i)?'font-weight:700':'')+'">'+esc(i.responsable_nombre||'—')+'</td><td><span class="badge '+({'Pendiente':'b-ambar','Parcial':'b-ambar','Entregado':'b-verde','Anulado':'b-rojo'}[est])+'">'+est+'</span></td>'
       +'<td><button class="btn'+(puedo?'':' ghost')+' sm" onclick="'+(puedo?'openPanolSolEntrega('+s.id+')':'openPanolSolDetalle('+s.id+')')+'">'+(puedo?'Entregar':'Ver OT')+'</button></td></tr>'; }).join('');
   C().innerHTML=panolTabs()
-    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">'+sec+' · Renglones</h3><span class="meta">'+nPend+' pendientes · '+lista.length+' de '+todos.length+' mostrados'+(gest?'':' · solo los de tus OT')+'</span>'
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">'+sec+' · Renglones</h3><span class="meta">'+nPend+' pendientes · '+lista.length+' de '+todos.length+' mostrados'+(gest?(PANOL_MIOS?' · solo los tuyos':''):' · solo los de tus OT')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn(ns).replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolRen\')">Auto-ajustar columnas</button>'+(gest?'<button class="btn ghost sm" onclick="openPanolRenTransferir()">Transferir seleccionados</button>':'')+'</span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
-      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado del renglón<select onchange="PANOL_REN.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('pend','Pendientes (pendientes y parciales)')+sel('todos','Todos')+sel('Entregado','Entregados')+sel('Anulado','Anulados')+'</select></label>'
+      +solMiosSel('los míos')+'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado del renglón<select onchange="PANOL_REN.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('pend','Pendientes (pendientes y parciales)')+sel('todos','Todos')+sel('Entregado','Entregados')+sel('Anulado','Anulados')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="OT, solicitante, artículo, responsable…" onchange="PANOL_REN.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:260px"></label></div>'
     +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Son los materiales de las OT que maneja este sector (por el código del artículo). Con <b>Entregar</b> se abre la entrega de esa OT con tus renglones; doble clic en una fila abre la OT completa.</div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolRen"><thead><tr><th></th>'
