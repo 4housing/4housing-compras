@@ -3228,6 +3228,13 @@ function panolSolPreview(errs,warns){
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(errs.length?'':'<button class="btn" id="solEnviarBtn" onclick="panolSolEnviar()">Enviar a Abastecimiento</button>'), 'xwide');
 }
 // Crea la solicitud (cabecera + renglones). S: {solicitante, destino_cod, destino_txt, fecha_necesidad, comentario, items[], kit_id?, kit_cantidad?, detalle?}. Devuelve el N° de OT asignado o null si falló.
+// Pedidos de herramientas que se cargaron junto con la OT (opcional): uno por unidad, vinculados a la OT. Devuelve '' si salió bien o el error.
+async function solCrearHerr(S,solId,nro){
+  if(!(S.herr||[]).length) return '';
+  const ahora=new Date().toISOString(), email=herrEmail(S.solicitante);
+  const filas=[]; S.herr.forEach(h=>{ for(let i=0;i<h.n;i++) filas.push({cod_articulo:h.cod, destino_cod:S.destino_cod, destino_txt:S.destino_txt, solicitante:S.solicitante, solicitante_email:email, desde:h.d1, hasta:h.d2, estado:'Solicitada', comentario:h.com||null, solicitud_id:solId, nro_ot:nro, creado_por:panolUsuario(), historial:[{accion:'Pedida',detalle:'Con la OT '+nro+' · del '+fmtDate(h.d1)+' al '+fmtDate(h.d2),por:panolUsuario(),fecha:ahora}]}); });
+  try{ await herrCrear(filas); return ''; }catch(e){ return String(e.message||e); }
+}
 async function panolSolCrear(S){
   const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFold(x.nombre)===_syncFold(S.solicitante));
   const yo=(AUTH_USER&&AUTH_USER.email)||null, esYo=_syncFold(S.solicitante)===_syncFold(MI_NOMBRE||'');
@@ -3241,12 +3248,15 @@ async function panolSolCrear(S){
       DIC.panol_solicitudes=DIC.panol_solicitudes||[]; DIC.panol_solicitud_items=DIC.panol_solicitud_items||[];
       const id=Math.max(0,...DIC.panol_solicitudes.map(x=>+x.id||0))+1, nro='OT-'+String(id).padStart(5,'0'); DIC.panol_solicitudes.push({id,nro_ot:nro,...cab,creado_en:new Date().toISOString(),solicitante_email:cab.solicitante_email||'demo'});
       let k=Math.max(0,...DIC.panol_solicitud_items.map(i=>+i.id||0)); its.forEach(i=>{ DIC.panol_solicitud_items.push({id:++k,solicitud_id:id,...i}); });
+      const eh=await solCrearHerr(S,id,nro); if(eh) toast('La OT se creó, pero no se pudieron cargar las herramientas: '+eh);
       return nro;
     }
     const r=await sbFetch('/compras_panol_solicitudes',{method:'POST',body:JSON.stringify(cab),prefer:'return=representation'}); const fila=(Array.isArray(r)?r[0]:r), id=fila.id;
     try{ await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
     catch(e){ try{ await sbFetch('/compras_panol_solicitudes?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} throw e; }
-    await panolSolCargar(); return fila.nro_ot||'';
+    await panolSolCargar();
+    const eh=await solCrearHerr(S,id,fila.nro_ot||''); if(eh) toast('La OT se creó, pero no se pudieron cargar las herramientas: '+eh+' (¿ya se corrió sql/2026-10_panol_herramientas_ot.sql?)');
+    return fila.nro_ot||'';
   }catch(e){ toast('No se pudo enviar: '+(e.message||e)+' (¿ya se corrieron sql/2026-10_panol_solicitudes.sql y sql/2026-10_panol_kits.sql?)'); return null; }
 }
 async function panolSolEnviar(){
@@ -3280,10 +3290,18 @@ function openPanolSolDetalle(id){
   openModal('Solicitud OT '+s.nro_ot,
     '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Abastecimiento definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th></th><th>Artículo</th><th>Sector</th><th>Responsable</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+    +herrDetalleOT(s)
     +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
     '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'xwide');
 }
 window.openPanolSolDetalle=openPanolSolDetalle;
+// Herramientas pedidas junto con la OT (se entregan desde la solapa Herramientas)
+function herrDetalleOT(s){
+  const hs=(DIC.panol_herr||[]).filter(p=>String(p.solicitud_id)===String(s.id)); if(!hs.length) return '';
+  return '<div style="margin-top:12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px">Herramientas de esta OT ('+hs.length+')</div><div class="tbl-hscroll tbl-compact" style="max-height:22vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Serie</th><th>Desde</th><th>Hasta</th><th>Estado</th></tr></thead><tbody>'
+    +hs.map(p=>'<tr><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+esc(p.serie||'sin asignar')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+fmtDate(p.hasta)+'</td><td>'+herrBadge(p)+'</td></tr>').join('')
+    +'</tbody></table></div><div style="margin-top:4px"><button class="btn ghost sm" onclick="closeModal();PANOL_TAB=\'herr\';PANOL_HERR_VISTA=\'ped\';PANOL_HERR_Q=\''+esc(s.nro_ot)+'\';renderPanol()">Ver en Herramientas</button></div></div>';
+}
 async function panolSolGuardarCab(s,upd){
   Object.assign(upd,{actualizado_en:new Date().toISOString(), actualizado_por:panolUsuario()});
   if(!DEMO_MODE) await sbFetch('/compras_panol_solicitudes?id=eq.'+s.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'});
@@ -3291,7 +3309,10 @@ async function panolSolGuardarCab(s,upd){
 }
 async function panolSolEstado(id,est){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
-  try{ await panolSolGuardarCab(s,{estado:est, historial:solHist(s,est==='Anulada'?'Anulada':'Cambio de estado',est==='Anulada'?'Se anuló toda la solicitud':'Pasó a '+est)}); }catch(e){ toast('No se pudo cambiar el estado: '+(e.message||e)); return; }
+  try{
+    await panolSolGuardarCab(s,{estado:est, historial:solHist(s,est==='Anulada'?'Anulada':'Cambio de estado',est==='Anulada'?'Se anuló toda la solicitud':'Pasó a '+est)});
+    if(est==='Anulada'){ for(const p of (DIC.panol_herr||[]).filter(x=>String(x.solicitud_id)===String(s.id)&&x.estado==='Solicitada')) await herrPatch(p,{estado:'Anulada'},'Anulada','Se anuló la OT '+s.nro_ot); }
+  }catch(e){ toast('No se pudo cambiar el estado: '+(e.message||e)); return; }
   toast('Solicitud '+s.nro_ot+': '+est); closeModal(); renderPanol();
 }
 window.panolSolEstado=panolSolEstado;
@@ -3634,7 +3655,11 @@ function openPanolSolBorrador(d){
     +'<div class="frow c2"><div class="field"><label>Solicitante</label><select id="bd_sol"'+(canPanol()?'':' disabled')+'>'+solSolicitanteOpts(d.solicitante)+'</select></div><div class="field"><label>Destino (IF / obra)</label><select id="bd_dest">'+destOpts+'</select></div></div>'
     +'<div class="frow c2"><div class="field"><label>Fecha de necesidad</label><input id="bd_fnec" type="date" value="'+esc(d.fecha||'')+'"></div><div class="field"><label>Comentario general</label><input id="bd_com" type="text" value="'+esc(d.comentario||'')+'"></div></div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Cantidad</th><th>U.M.</th><th>Sector</th><th>Entregar en</th><th>Fecha de necesidad (si es distinta)</th><th>Comentario</th><th></th></tr></thead><tbody id="bdBody">'+filas+'</tbody></table></div>'
-    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="solAgregarFila(\'bdBody\',{gal:1,fec:1})">'+ICO.plus+'Agregar material</button></div>',
+    +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="solAgregarFila(\'bdBody\',{gal:1,fec:1})">'+ICO.plus+'Agregar material</button></div>'
+    +(herrArticulos().length?'<details style="margin-top:14px"><summary style="cursor:pointer;font-size:13px;font-weight:600">Herramientas que van a necesitar (opcional)</summary>'
+      +'<div style="font-size:12px;color:var(--muted);margin:6px 0">Se piden para el mismo destino de la OT. Si dejás Desde / Hasta vacíos se usa la fecha de necesidad de la OT. Las entrega Abastecimiento desde la solapa Herramientas.</div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:26vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Cantidad</th><th>Desde</th><th>Hasta</th><th>Comentario</th><th></th></tr></thead><tbody id="bdhBody"></tbody></table></div>'
+      +'<div style="margin-top:8px"><button class="btn ghost sm" onclick="document.getElementById(\'bdhBody\').insertAdjacentHTML(\'beforeend\',herrSolFila())">'+ICO.plus+'Agregar herramienta</button></div></details>':''),
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'+(d.kit&&canPanol()?'<button class="btn ghost" onclick="openPanolKitEd('+d.kit.id+')">Editar el modelo</button>':'')+'<button class="btn" id="bdBtn" onclick="panolSolBorradorEnviar()">Enviar a Abastecimiento</button>','xwide');
 }
 window.openPanolSolBorrador=openPanolSolBorrador;
@@ -3644,8 +3669,13 @@ async function panolSolBorradorEnviar(){
   if(!solicitante){ toast('Elegí el solicitante'); return; } if(!destCod){ toast('Elegí el destino'); return; } if(!fnec){ toast('Ingresá la fecha de necesidad'); return; }
   const {items,errs}=solLeerFilas('bdBody',{gal:1,fec:1}); if(errs.length){ toast(errs[0]); return; } if(!items.length){ toast('Cargá al menos un material'); return; }
   const dd=ppResolverDestino(destCod); items.forEach(i=>{ if(!i.fecha_necesidad) i.fecha_necesidad=fnec; if(!i.galpon) i.galpon=panolGalDefecto()||null; });
+  const herr=[]; for(const tr of document.querySelectorAll('#bdhBody tr')){
+    const cod=tr.querySelector('.hs-art').value, n=Math.floor(+tr.querySelector('.hs-n').value), d1=tr.querySelector('.hs-d1').value||fnec, d2=tr.querySelector('.hs-d2').value||d1;
+    if(!(n>=1)){ toast('Revisá la cantidad de la herramienta '+cod); return; } if(d2<d1){ toast('"Hasta" es anterior a "Desde" en la herramienta '+cod); return; }
+    herr.push({cod,n,d1,d2,com:tr.querySelector('.hs-com').value.trim()||null});
+  }
   const btn=document.getElementById('bdBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  const S={solicitante, destino_cod:destCod, destino_txt:(dd&&dd.desc)?destCod+' — '+dd.desc:destCod, fecha_necesidad:fnec, comentario:com||null, items, kit_id:d.kit?d.kit.id:(d.kit_id||null), kit_cantidad:d.kit?d.kit_cantidad:(d.kit_cantidad||null), detalle:d.detalle||(d.kit?'Desde el modelo '+d.kit.nombre+' × '+fmtNum(d.kit_cantidad,3):'')};
+  const S={solicitante, destino_cod:destCod, destino_txt:(dd&&dd.desc)?destCod+' — '+dd.desc:destCod, fecha_necesidad:fnec, comentario:com||null, items, herr, kit_id:d.kit?d.kit.id:(d.kit_id||null), kit_cantidad:d.kit?d.kit_cantidad:(d.kit_cantidad||null), detalle:d.detalle||(d.kit?'Desde el modelo '+d.kit.nombre+' × '+fmtNum(d.kit_cantidad,3):'')};
   const nro=await panolSolCrear(S); if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } return; }
   _BD=null; closeModal(); toast('Solicitud enviada a Abastecimiento · N° de OT asignado: '+nro); PANOL_TAB='sol'; renderPanol();
 }
@@ -3736,7 +3766,7 @@ const herrEmail=nombre=>{ const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFo
 
 function renderPanolHerr(){
   const gest=canPanol(), al=herrAlertas(), arts=herrArticulos();
-  const vbtn=(id,l)=>'<button class="btn '+(PANOL_HERR_VISTA===id?'':'ghost ')+'sm" onclick="PANOL_HERR_VISTA=\''+id+'\';renderPanol()">'+l+'</button>';
+  const vbtn=(id,l)=>'<button class="btn '+(PANOL_HERR_VISTA===id?'':'ghost ')+'sm" onclick="PANOL_HERR_VISTA=\''+id+'\';PANOL_HERR_Q=\'\';renderPanol()">'+l+'</button>';
   const aviso=(al.falta.length||al.venc.length)
     ?'<div style="margin:0 16px 10px;padding:9px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px;line-height:1.6">'
       +(al.falta.length?'<div><b>⚠ Faltan herramientas:</b> '+al.falta.map(x=>esc(x.a.desc||x.a.cod)+' (hay '+x.total+', se necesitan '+x.falta.n+' desde el '+fmtDate(x.falta.dia)+')').join(' · ')+'</div>':'')
@@ -3774,8 +3804,8 @@ function herrHtmlPed(){
   xlfRegister('pherr',{rows:()=>rows, onChange:renderPanol, dateVal:p=>herrF(p.desde), val:(p,c)=>c==='art'?herrArtTxt(p.cod_articulo):c==='serie'?(p.serie||'(sin asignar)'):c==='dest'?(p.destino_txt||'(sin destino)'):c==='sol'?(p.solicitante||''):c==='est'?herrTxtEstado(p):c==='ent'?(p.entregado_a||''):''});
   if(!SP_SORT.pherr) SP_SORT.pherr={k:'id',dir:-1};
   const q=(PANOL_HERR_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
-  const lista=_spOrdenar('pherr',rows.filter(p=>xlfPass('pherr',p)&&(!q.length||q.every(w=>[p.cod_articulo,artDesc(p.cod_articulo),p.serie,p.destino_txt,p.solicitante,p.entregado_a,p.estado].join(' ').toLowerCase().includes(w)))),
-    {id:p=>+p.id,art:p=>p.cod_articulo,serie:p=>p.serie,dest:p=>p.destino_txt,sol:p=>p.solicitante,desde:p=>herrF(p.desde),hasta:p=>herrF(p.hasta),est:herrTxtEstado,ent:p=>p.entregado_a});
+  const lista=_spOrdenar('pherr',rows.filter(p=>xlfPass('pherr',p)&&(!q.length||q.every(w=>[p.cod_articulo,artDesc(p.cod_articulo),p.serie,p.destino_txt,p.solicitante,p.entregado_a,p.estado,p.nro_ot].join(' ').toLowerCase().includes(w)))),
+    {id:p=>+p.id,ot:p=>p.nro_ot,art:p=>p.cod_articulo,serie:p=>p.serie,dest:p=>p.destino_txt,sol:p=>p.solicitante,desde:p=>herrF(p.desde),hasta:p=>herrF(p.hasta),est:herrTxtEstado,ent:p=>p.entregado_a});
   const filas=lista.map(p=>{
     const aux=p.serie?herrAuxTxt(p.serie):'', acc=[];
     if(gest&&p.estado==='Solicitada') acc.push('<button class="btn sm" onclick="herrEntregar('+p.id+')">Entregar</button>');
@@ -3783,14 +3813,14 @@ function herrHtmlPed(){
     if(gest&&p.estado==='Mantenimiento') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Volvió</button>');
     if(p.estado==='Solicitada'&&(gest||herrEsMia(p))) acc.push('<button class="btn ghost sm" onclick="herrAnular('+p.id+')">Anular</button>');
     acc.push('<button class="btn ghost sm" onclick="herrHistorial('+p.id+')">Historial</button>');
-    return '<tr><td>'+p.id+'</td><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+(p.serie?'<b>'+esc(p.serie)+'</b>'+(aux?'<br><span style="font-size:11px;color:var(--muted)">'+esc(aux)+'</span>':'<br><span style="font-size:11px;color:#b3261e">sin auxiliar</span>'):'<span style="color:var(--muted)">sin asignar</span>')+'</td>'
+    return '<tr><td>'+p.id+'</td><td>'+esc(p.nro_ot||'')+'</td><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+(p.serie?'<b>'+esc(p.serie)+'</b>'+(aux?'<br><span style="font-size:11px;color:var(--muted)">'+esc(aux)+'</span>':'<br><span style="font-size:11px;color:#b3261e">sin auxiliar</span>'):'<span style="color:var(--muted)">sin asignar</span>')+'</td>'
       +'<td>'+esc(p.destino_txt||p.destino_cod||'')+'</td><td>'+esc(p.solicitante||'')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+(herrVencida(p)?'<span style="color:#b3261e;font-weight:700">'+fmtDate(p.hasta)+'</span>':fmtDate(p.hasta))+'</td><td>'+herrBadge(p)+'</td><td>'+esc(p.entregado_a||'')+'</td>'
       +'<td class="tx-largo" style="color:var(--muted);font-size:11.5px" title="'+esc(p.comentario||'')+'">'+esc(p.comentario||'')+'</td><td style="white-space:nowrap">'+acc.join(' ')+'</td></tr>';
   }).join('');
   return '<div style="display:flex;gap:10px;align-items:center;padding:0 16px 8px;flex-wrap:wrap"><input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+rows.length+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px">'+xlfClearAllBtn('pherr').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblHerrPed\')">Auto-ajustar columnas</button></span></div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrPed"><thead><tr>'+_pnTh('N°',null,'id','pherr')+_pnTh('Herramienta','art','art','pherr')+_pnTh('Serie / Auxiliar','serie','serie','pherr')+_pnTh('Para dónde','dest','dest','pherr')+_pnTh('Solicitante','sol','sol','pherr')+_pnTh('Desde','__fecha__','desde','pherr')+_pnTh('Hasta',null,'hasta','pherr')+_pnTh('Estado','est','est','pherr')+_pnTh('Entregada a','ent','ent','pherr')+'<th>Comentario</th><th></th></tr></thead><tbody>'
-    +(filas||'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--muted)">'+(rows.length?'Nada con ese filtro.':'Todavía no hay pedidos ni préstamos.')+'</td></tr>')+'</tbody></table></div>';
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblHerrPed"><thead><tr>'+_pnTh('N°',null,'id','pherr')+_pnTh('OT',null,'ot','pherr')+_pnTh('Herramienta','art','art','pherr')+_pnTh('Serie / Auxiliar','serie','serie','pherr')+_pnTh('Para dónde','dest','dest','pherr')+_pnTh('Solicitante','sol','sol','pherr')+_pnTh('Desde','__fecha__','desde','pherr')+_pnTh('Hasta',null,'hasta','pherr')+_pnTh('Estado','est','est','pherr')+_pnTh('Entregada a','ent','ent','pherr')+'<th>Comentario</th><th></th></tr></thead><tbody>'
+    +(filas||'<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--muted)">'+(rows.length?'Nada con ese filtro.':'Todavía no hay pedidos ni préstamos.')+'</td></tr>')+'</tbody></table></div>';
 }
 
 /* ---- Solicitud de herramientas (desde Solicitudes): varias herramientas para un mismo destino y período ---- */
