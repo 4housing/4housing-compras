@@ -7673,7 +7673,17 @@ function ogCerradoPct(og){ const t=ogTotal(og); return t? ogCerradoMonto(og)/t*1
 function cierresOf(o, idx){ return idx!=null ? ((o.items[idx]||{}).cierres||[]) : (o.cierres||[]); }
 function ogLiberado(og){ return certsOf(og.id).filter(c=>c.aprobacion==='SI' && c.estado==='Liberado').reduce((a,c)=>a+certMonto(c,og),0); }
 /* Pagos reales (tesorería) */
-function pagosOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId)); }
+// OP "Armada": emitida y descontada de la caja, pero todavía no pagada (la OG puede no estar liberada).
+// No cuenta como pagado para la OG hasta que Tesorería la marque "Pagada" (ver opMarcarPagada).
+function pagoArmado(p){ return !!p && p.estado_op==='Armada'; }
+function pagosOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && !pagoArmado(p)); }
+function armadasOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && pagoArmado(p)); }
+function ogArmadoMonto(og){ return armadasOf(og.id).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
+// Lo ya armado contra el pedido del comprador (armadas + las que salieron de un armado y ya se pagaron)
+function ogPedidoConsumido(og){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(og.id) && (pagoArmado(p)||p.pagada_en)).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
+function ogPedidoRestante(og){ return Math.max(0, (+og.pago_pedido_monto||0) - ogPedidoConsumido(og)); }
+// Pide armar el pago: solo el comprador de esa OG (o admin)
+function puedePedirArmado(o){ return !!o && !o.anulada && (ROLE.admin || (ROLE.comprador && !!MI_NOMBRE && _syncFold(o.comprador)===_syncFold(MI_NOMBRE))); }
 // Monto de un pago ya registrado, reexpresado en la moneda de la OG (deshace la conversión de caja
 // hecha con el TC del pago si la moneda de pago no coincide con la de la OG).
 function pagoMontoOG(pago){
@@ -8180,6 +8190,7 @@ async function renderCompras(){
         +'<td>'+(ogTienePendiente(o)?'<span class="badge b-ambar">Con pendientes</span>':'<span class="badge b-verde">Sin pendientes</span>')+'</td>'
         +'<td><div class="row-actions">'
         +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
+        +(puedePedirArmado(o)?'<button class="iconbtn" title="'+(+o.pago_pedido_monto>0?'Pago pedido a Tesorería — ver / cambiar':'Pedir a Tesorería que arme el pago (aunque no esté certificada)')+'" onclick="openPedirArmado('+o.id+')" style="'+(+o.pago_pedido_monto>0?'color:var(--olive-deep);border-color:var(--olive)':'')+'">$</button>':'')
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
         +(puedeCrearOG()?'<button class="iconbtn" title="Duplicar OG (crea una copia abierta, sin certificar ni pagar)" onclick="duplicateOG('+o.id+')">'+ICO.copy+'</button>':'')
         +((puedeEditarOG(o)&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
@@ -8565,7 +8576,9 @@ function opSelectedPagoIds(){ return Array.from(document.querySelectorAll('.opch
 function opToggleAll(cb){ document.querySelectorAll('.opchk').forEach(c=>{ c.checked=cb.checked; }); }
 function _selPagosToOgs(){
   const ids=opSelectedPagoIds(); if(!ids.length) return null;
-  const pagos=(mem.pagos||[]).filter(p=>ids.includes(String(p.id)));
+  let pagos=(mem.pagos||[]).filter(p=>ids.includes(String(p.id)));
+  const nArm=pagos.filter(pagoArmado).length;
+  if(nArm){ toast(nArm+' OP armada'+(nArm>1?'s':'')+' sin pagar: no se exporta'+(nArm>1?'n':'')+' (su asiento va cuando se marque Pagada).'); pagos=pagos.filter(p=>!pagoArmado(p)); if(!pagos.length) return null; }
   const byOg={};
   pagos.forEach(p=>{ const og=ogById(p.og_id)||(mem.ogs||[]).find(o=>String(o.numero)===String(p.numero));
     if(og){ (byOg[og.id]=byOg[og.id]||{og,pagos:[]}).pagos.push(p); } });
@@ -8622,7 +8635,7 @@ function renderTesoreria(){
   if(tab==='arqueo') body=arqueoView();
   else if(tab==='op') body=opsView();
   else if(tab==='proy') body=proyectadoView();
-  else body=colaView(cola);
+  else body=armadoView()+colaView(cola);
   const roleNote=canPago() ? '' : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Sección de <strong>Tesorería</strong>: podés ver el estado de pago de las OG. Registrar pagos, cargar N° de asiento e ingresar fondos está reservado al rol Tesorero (o Admin).</div>';
   C().innerHTML=kpis+tabs+roleNote+body;
 }
@@ -9650,7 +9663,7 @@ function opColVal(p,col){
   if(col==='lugar') return pagoLugarPago(p)||ogLugarPago(o)||'(sin lugar)';   // el que se cargó al registrar ESTE pago; si es viejo y no lo tiene, el default de la OG
   if(col==='medio') return p.medio||'';
   if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
-  if(col==='asiento') return p._anulada?'Anulada':((p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente');
+  if(col==='asiento') return p._anulada?'Anulada':(pagoArmado(p)?'Armada (sin pagar)':((p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente'));
   return '';
 }
 // OP anulada (compras_pagos_anulados) vista como un pago más, para mostrarla en su lugar dentro de la lista.
@@ -9782,7 +9795,9 @@ function opsView(){
       +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
       +'<td style="text-align:right">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
-      +'<td>'+badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')
+      +'<td>'+(pagoArmado(p)?'<span class="badge b-ambar" title="Emitida y descontada de la caja; falta que se libere para marcarla Pagada">Armada</span>'
+          +(canPago()?' <button class="btn ghost sm" style="padding:2px 6px;min-height:0" onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'<br>':'')
+      +badge(p.asiento_num&&String(p.asiento_num).trim()?'Registrado':'Pendiente')
         +'<div style="display:flex;gap:4px;align-items:center;margin-top:2px">'
         +'<input type="text" id="asientoInp'+p.id+'" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares. Escribí y apretá Enter (o el ✓) para guardar — no se guarda solo con hacer click afuera.':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onkeydown="if(event.key===\'Enter\'){ guardarAsientoOP('+p.id+',this.value); this.blur(); }" style="width:62px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'">'
         +(canAsiento()?'<button class="iconbtn" title="Guardar N° de asiento" onclick="guardarAsientoOP('+p.id+',document.getElementById(\'asientoInp'+p.id+'\').value)" style="flex:none">'+ICO.check+'</button>':'')
@@ -9914,7 +9929,7 @@ function colaView(colaAll){
       +'<td style="text-align:right"><strong>'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</strong></td>'
       +'<td><div class="row-actions"><button class="btn ghost sm" onclick="verRespaldo('+o.id+')">Ver respaldo</button>'
       +'<button class="btn ghost sm" onclick="openImputacion('+o.id+')">Imputación</button>'
-      +'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button></div></td></tr>';
+      +(_pgPendMonto(o)>0.01?'<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button>':'<span class="badge b-ambar" title="Lo liberado ya lo cubre una OP armada: marcala Pagada arriba">Cubierto por OP armada</span>')+'</div></td></tr>';
   }).join('') || '<tr><td colspan="15" style="color:var(--muted);padding:14px">Ninguna OG coincide con los filtros.</td></tr>';
   return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Certificado y liberado, pendiente de pago. Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span>'+_tesMiasBtn('margin-left:auto')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Comprador','comp')+xlfTh('cola','Clasif.','clasif')+'<th>Estado</th>'+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+xlfTh('cola','Lugar de pago','lugar')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
@@ -10429,10 +10444,113 @@ function exportPagoOP(pagoId){
 }
 window.exportPagoOP=exportPagoOP;
 
-function openPago(ogId){
+/* ===== Pago armado antes de certificar / liberar =====
+   El comprador de la OG pide armar el pago (monto); Tesorería emite la OP "Armada" (descuenta de la caja,
+   se imprime y se envía al taller) y la marca "Pagada" cuando lo liberado alcanza. */
+function openPedirArmado(ogId){
+  const o=ogById(ogId); if(!puedePedirArmado(o)){ toast('Solo el comprador de esta OG puede pedir que se arme el pago.'); return; }
+  const simb=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const pendTotal=Math.max(0, ogTotal(o)-ogPagadoMonto(o)-ogArmadoMonto(o));
+  const consumido=ogPedidoConsumido(o);
+  const def = +o.pago_pedido_monto>0 ? +o.pago_pedido_monto : pendTotal;
+  const body='<div style="background:#f3f1e8;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;line-height:1.6">'
+    +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||o.proveedor_cod||'')+'<br>Total: '+simb+fmtNum(ogTotal(o),2)+' · Liberado: '+ogLiberadoPct(o).toFixed(0)+'% · Pagado: '+ogPagadoPct(o).toFixed(0)+'%'
+    +(consumido>0?'<br>Ya armado por Tesorería: '+simb+fmtNum(consumido,2):'')
+    +(+o.pago_pedido_monto>0?'<br>Pedido actual: '+simb+fmtNum(o.pago_pedido_monto,2)+' · '+esc(o.pago_pedido_por||'')+' · '+fmtDate(String(o.pago_pedido_en||'').slice(0,10)):'')+'</div>'
+    +'<p style="margin:0 0 10px;font-size:12.5px;color:var(--muted);line-height:1.5">Tesorería arma la OP por este monto (aunque la OG no esté certificada) y la tiene lista para el taller. La marca Pagada cuando certifiques y liberes.</p>'
+    +'<div class="field"><label>Monto total a armar ('+simb.trim()+', moneda de la OG) *</label><input id="pa_monto" type="number" step="0.01" value="'+def.toFixed(2)+'"><div style="font-size:11px;color:var(--muted);margin-top:3px">Pendiente de pago de la OG: '+simb+fmtNum(pendTotal+consumido,2)+'</div></div>'
+    +'<div class="field"><label>Nota para Tesorería (opcional)</label><input id="pa_nota" type="text" value="'+esc(o.pago_pedido_nota||'')+'" placeholder="Ej: lo retira el taller el viernes"></div>'
+    +'<div id="paMsg" style="font-size:12px;color:#b3261e;min-height:16px"></div>';
+  openModal('Pedir que se arme el pago · OG '+esc(o.numero), body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button>'
+    +(+o.pago_pedido_monto>0?'<button class="btn ghost" style="color:#b3261e" onclick="guardarPedidoArmado('+o.id+',true)">Quitar pedido</button>':'')
+    +'<button class="btn" onclick="guardarPedidoArmado('+o.id+')">'+(+o.pago_pedido_monto>0?'Guardar':'Pedir armado')+'</button>');
+}
+window.openPedirArmado=openPedirArmado;
+async function guardarPedidoArmado(ogId, quitar){
+  const o=ogById(ogId); if(!puedePedirArmado(o)) return;
+  const msg=document.getElementById('paMsg');
+  const consumido=ogPedidoConsumido(o);
+  let patch;
+  if(quitar){
+    patch={pago_pedido_monto:consumido>0?consumido:null, pago_pedido_nota:null};   // lo ya armado queda; se deja de pedir el resto
+  } else {
+    const monto=+document.getElementById('pa_monto').value||0;
+    const tope=Math.max(0, ogTotal(o)-ogPagadoMonto(o)-ogArmadoMonto(o))+consumido;
+    if(monto<=0){ msg.textContent='Poné un monto mayor a 0.'; return; }
+    if(monto<consumido-0.01){ msg.textContent='Ya hay '+fmtNum(consumido,2)+' armado: el pedido no puede ser menor.'; return; }
+    if(monto>tope+ogTotal(o)*0.01){ msg.textContent='Supera lo pendiente de pago de la OG ('+fmtNum(tope,2)+').'; return; }
+    patch={pago_pedido_monto:monto, pago_pedido_nota:(document.getElementById('pa_nota').value||'').trim()||null,
+      pago_pedido_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', pago_pedido_en:new Date().toISOString()};
+  }
+  try{
+    if(DEMO_MODE) Object.assign(o,patch);
+    else{ await sbFetch('/compras_ogs?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(patch)}); Object.assign(o,patch); }
+    closeModal(); toast(quitar?'Pedido de armado quitado':'Pedido enviado a Tesorería'); renderComprasKeepScroll();
+  }catch(e){ msg.textContent='Error: '+(e.message||e); }
+}
+window.guardarPedidoArmado=guardarPedidoArmado;
+// Cuánto se puede pagar/armar ahora en la OG (moneda de la OG) según el modo
+function _pgPendMonto(o, modo){
+  if(modo==='armada') return Math.min(ogPedidoRestante(o), Math.max(0, ogTotal(o)-ogPagadoMonto(o)-ogArmadoMonto(o)));
+  return Math.max(0, ogPendPagoMonto(o)-ogArmadoMonto(o));   // lo liberado que no cubre ya una OP armada
+}
+// Tesorería marca Pagada una OP armada: solo si lo liberado (sin pagar) ya la cubre
+function opArmadaFalta(p){
+  const o=ogById(p.og_id); if(!o) return null;
+  const monto=pagoMontoOG(p)-(+p.ajuste_redondeo||0);
+  return Math.max(0, monto - ogPendPagoMonto(o));
+}
+function opMarcarPagada(id){
+  if(!canPago()){ toast('Solo Tesorería marca pagadas las OP.'); return; }
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(id)); if(!p||!pagoArmado(p)) return;
+  const o=ogById(p.og_id)||{}; const simb=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const falta=opArmadaFalta(p);
+  if(falta>ogTotal(o)*0.01+0.01){ toast('Todavía no se puede: falta liberar '+simb+fmtNum(falta,2)+' en la OG '+(o.numero||'')+'.'); return; }
+  openModal('Marcar pagada · OP '+esc(p.op_numero),
+    '<p style="margin:0;font-size:13.5px;line-height:1.5">La OP '+esc(p.op_numero)+' (OG '+esc(o.numero||'')+') pasa de <strong>Armada</strong> a <strong>Pagada</strong>: cuenta como pago de la OG y ya se puede exportar su asiento. La caja no cambia (se descontó al armarla).</p>',
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="confirmOpPagada('+p.id+')">Marcar pagada</button>');
+}
+window.opMarcarPagada=opMarcarPagada;
+async function confirmOpPagada(id){
+  const p=(mem.pagos||[]).find(x=>String(x.id)===String(id)); if(!p) return;
+  const patch={estado_op:'Pagada', pagada_en:new Date().toISOString(), pagada_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||''};
+  try{
+    if(!DEMO_MODE) await sbFetch('/compras_pagos?id=eq.'+p.id,{method:'PATCH',body:JSON.stringify(patch)});
+    Object.assign(p,patch); closeModal(); toast('OP '+p.op_numero+' marcada pagada'); renderTesoreria();
+  }catch(e){ toast('No se pudo: '+(e.message||e)); }
+}
+window.confirmOpPagada=confirmOpPagada;
+// Card en "Pagos pendientes": pedidos de armado y OP armadas esperando liberación
+function armadoView(){
+  const pedidos=(mem.ogs||[]).filter(o=>!o.anulada && ogPedidoRestante(o)>0.01 && _tesMia(o));
+  const armadas=(mem.pagos||[]).filter(pagoArmado).filter(p=>_tesMia(ogById(p.og_id)||{}));
+  if(!pedidos.length && !armadas.length) return '';
+  const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const sim=o=>ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  const tPed=pedidos.length?'<div style="font-weight:700;font-size:12.5px;padding:10px 14px 4px">Pedidos de Compras para armar el pago ('+pedidos.length+')</div>'
+    +'<table class="grid" id="armPedTabla" style="font-size:12.5px"><thead><tr><th>OG</th><th>Proveedor</th><th>Comprador</th><th>Liberado</th><th>Pedido</th><th>Ya armado</th><th>Falta armar</th><th>Pedido por</th><th>Nota</th><th></th></tr></thead><tbody>'
+    +pedidos.map(o=>'<tr><td><strong>'+esc(o.numero)+'</strong></td><td style="font-size:11px">'+esc(o.proveedor_cod||o.proveedor||'')+'</td><td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
+      +'<td>'+ogLiberadoPct(o).toFixed(0)+'%</td><td style="text-align:right">'+sim(o)+f2(o.pago_pedido_monto)+'</td><td style="text-align:right">'+sim(o)+f2(ogPedidoConsumido(o))+'</td>'
+      +'<td style="text-align:right"><strong>'+sim(o)+f2(ogPedidoRestante(o))+'</strong></td>'
+      +'<td style="font-size:11px">'+_spCuando({autor:o.pago_pedido_por, fecha:o.pago_pedido_en})+'</td><td style="font-size:11px">'+esc(o.pago_pedido_nota||'')+'</td>'
+      +'<td>'+(canPago()?'<button class="btn sm" onclick="openPago('+o.id+',\'armada\')">Armar OP</button>':'')+'</td></tr>').join('')+'</tbody></table>':'';
+  const tArm=armadas.length?'<div style="font-weight:700;font-size:12.5px;padding:12px 14px 4px">OP armadas, esperando liberación ('+armadas.length+')</div>'
+    +'<table class="grid" id="armOpTabla" style="font-size:12.5px"><thead><tr><th>OP</th><th>Fecha</th><th>OG</th><th>Proveedor</th><th>Comprador</th><th>Monto</th><th>Liberado</th><th>Estado</th><th></th></tr></thead><tbody>'
+    +armadas.map(p=>{ const o=ogById(p.og_id)||{}; const falta=opArmadaFalta(p)||0; const lista=falta<=ogTotal(o)*0.01+0.01;
+      return '<tr><td><strong>OP '+esc(p.op_numero)+'</strong></td><td>'+fmtDate(p.fecha)+'</td><td>OG '+esc(p.numero||'')+'</td><td style="font-size:11px">'+esc(o.proveedor_cod||'')+'</td>'
+        +'<td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td><td style="text-align:right">'+sim(o)+f2(pagoMontoOG(p))+'</td><td>'+ogLiberadoPct(o).toFixed(0)+'%</td>'
+        +'<td>'+(lista?'<span class="badge b-verde">Liberada: lista para marcar pagada</span>':'<span class="badge b-ambar">Falta liberar '+sim(o)+f2(falta)+'</span>')+'</td>'
+        +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir OP" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button>'
+        +(canPago()?'<button class="btn sm"'+(lista?'':' disabled title="Se habilita cuando el comprador libere lo suficiente"')+' onclick="opMarcarPagada('+p.id+')">Marcar pagada</button>':'')+'</div></td></tr>'; }).join('')+'</tbody></table>':'';
+  return '<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Pagos armados antes de liberar</h3><span class="meta">El comprador de la OG pide armar el pago aunque no esté certificada. La OP armada descuenta de la caja; se marca Pagada cuando lo liberado alcanza.</span></div>'+tPed+tArm+'</div>';
+}
+
+function openPago(ogId, modo){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
   const monPagoDef=ogMonedaPagoCode(o)||monOG;   // de qué caja sale la plata (Condición de compra + tilde USD), no la moneda pactada
-  const pendPct=ogPendPagoPct(o); const pendMonto=ogPendPagoMonto(o); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
+  const pendPct=ogPendPagoPct(o); const pendMonto=_pgPendMonto(o, modo); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
+  window._pgModo=modo||'';
   const hoy=new Date().toISOString().slice(0,10);
   const sugInicial=tcDiaAnterior(hoy);
   const tc=usdProm(sugInicial)!=null?usdProm(sugInicial):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'');
@@ -10451,8 +10569,11 @@ function openPago(ogId){
     +'<div id="pg_result" style="background:#eef2e6;border-radius:10px;padding:12px;font-size:13px;margin-top:6px"></div>'
     +'<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;font-weight:600;color:var(--ink)"><input type="checkbox" id="pg_redondear" onchange="pgCalc()"> Redondear (si hay una diferencia chica, de hasta 1% de la OG, cerrar la OG y ajustar la caja) — tildalo solo si querés redondear; si no, se registra como pago parcial y el resto queda pendiente</label>'
     +'<div class="field" style="margin-top:12px"><label>Observaciones</label><input id="pg_obs" type="text"></div>';
-  openModal('Registrar pago · OG '+esc(o.numero), body,
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="savePago('+ogId+')">Registrar pago</button>');
+  const avisoArm = modo==='armada'
+    ? '<div style="background:#fbf1e0;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12.5px;color:#7a5a20;line-height:1.5"><strong>OP armada</strong> (pedido del comprador: '+simbOG+fmtNum(ogPedidoRestante(o),2)+' por armar'+(o.pago_pedido_nota?' · '+esc(o.pago_pedido_nota):'')+'). Descuenta de la caja ahora; queda <strong>Armada</strong> hasta que la OG se libere y la marques Pagada.</div>'
+    : (ogArmadoMonto(o)>0.01?'<div style="background:#fbf1e0;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12.5px;color:#7a5a20">Esta OG tiene OP armadas por '+simbOG+fmtNum(ogArmadoMonto(o),2)+': ese monto no se puede volver a pagar (marcalas Pagada cuando se liberen).</div>':'');
+  openModal((modo==='armada'?'Armar OP · OG ':'Registrar pago · OG ')+esc(o.numero), avisoArm+body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="savePago('+ogId+(modo==='armada'?',\'armada\'':'')+')">'+(modo==='armada'?'Armar OP':'Registrar pago')+'</button>');
   window._pgOG=o; pgCalc();
 }
 window.openPago=openPago;
@@ -10477,7 +10598,7 @@ function pgCalc(){
   }
   const caja=CAJAS[monPago]; const simb=monPago==='USD'?'US$ ':'$ ';
   const pct=ogTotal(o)? montoOG/ogTotal(o)*100 : 0;
-  const pendMonto=ogPendPagoMonto(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
+  const pendMonto=_pgPendMonto(o, window._pgModo); const simbOG=monOG==='USD'?'US$ ':'$ ';
   const diffPend=montoOG-pendMonto; const tolMonto=ogTotal(o)*0.01;
   const redondear=(document.getElementById('pg_redondear')||{}).checked;
   let ajusteTxt='';
@@ -10492,11 +10613,11 @@ function pgCalc(){
   window._pgImporte=importe;
 }
 window.pgCalc=pgCalc;
-async function savePago(ogId){
+async function savePago(ogId, modo){
   if(!canPago()){ toast('Solo el tesorero puede registrar pagos.'); return; }
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
   let montoOG=+document.getElementById('pg_imp').value||0;    // importe en moneda de la OG
-  const pendMonto=ogPendPagoMonto(o);
+  const pendMonto=_pgPendMonto(o, modo);
   if(montoOG<=0){ toast('Ingresá un importe mayor a 0'); return; }
   const diffPend=montoOG-pendMonto;               // + = pagó de más, - = pagó de menos
   const tolMonto=ogTotal(o)*0.01;                 // tolerancia de redondeo de caja: 1% de la OG
@@ -10522,6 +10643,7 @@ async function savePago(ogId){
     lugar_pago_txt:document.getElementById('pg_lugar_pago_txt').value,
     sin_caja: COND_SIN_CAJA.includes(o.condicion),
     importe_pago:importe, ajuste_redondeo:(ajusteRedondeo||null), observaciones:document.getElementById('pg_obs').value };
+  if(modo==='armada') pago.estado_op='Armada';   // descuenta de la caja; se marca Pagada al liberarse
   try{
     if(DEMO_MODE){ pago.id=Math.max(0,...(mem.pagos||[]).map(p=>+p.id||0))+1; pago.op_numero=Math.max(0,...(mem.pagos||[]).map(p=>+p.op_numero||0))+1; mem.pagos=mem.pagos||[]; mem.pagos.push(pago); }
     else {
@@ -10534,7 +10656,7 @@ async function savePago(ogId){
     toast('No se pudo registrar el pago: '+(e && e.message ? e.message : e));
     return;
   }
-  closeModal(); toast('Pago registrado'); renderTesoreria();
+  closeModal(); toast(modo==='armada'?'OP armada (descontada de la caja; se marca Pagada al liberarse)':'Pago registrado'); renderTesoreria();
 }
 window.savePago=savePago;
 /* N° de asiento Tango de cada OP: se carga a mano después de importar el asiento en Tango y corregir
