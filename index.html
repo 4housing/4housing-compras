@@ -2678,6 +2678,8 @@ function panolResumenPor(rows, key){
 }
 function renderPanol(){
   if(PANOL_TAB==='erog'||PANOL_TAB==='dep') return renderPanolErog();
+  if(PANOL_TAB==='pren') return renderPanolRenglones('Pañol');
+  if(PANOL_TAB==='dren') return renderPanolRenglones('Depósito');
   if(PANOL_TAB==='dic') return renderPanolDic();
   if(PANOL_TAB==='cierres') return renderPanolCierres();
   if(PANOL_TAB==='sol') return renderPanolSolicitudes();
@@ -3066,18 +3068,40 @@ const solPuedeGestionar=()=>canPanol()||solEsResp();
 // Entrega y arma: su responsable o el administrador. Si el renglón no tiene responsable (carga vieja o sin configurar): Pañol lo maneja quien tiene es_panol; Depósito, solo el administrador.
 const solGestionaItem=i=>ROLE.admin||(i.responsable_email?solSoyRespItem(i):(solSector(i)==='Pañol'&&canPanol()));
 const solPuedeTransferir=i=>solPend(i)>1e-9&&(ROLE.admin||solSoyRespItem(i)||(!i.responsable_email&&solGestionaItem(i)));
-function solVisibles(){ const l=DIC.panol_solicitudes||[]; if(ROLE.admin) return l; if(!solPuedeGestionar()) return l.filter(solEsMia); return l.filter(x=>solEsMia(x)||solItems(x.id).some(i=>solGestionaItem(i)||solSoyRespItem(i)||(canPanol()&&solSector(i)==='Pañol'))); }
+const solHerrDe=id=>(DIC.panol_herr||[]).filter(p=>String(p.solicitud_id)===String(id));
+const herrEntregada=p=>['Prestada','Devuelta'].includes(p.estado);   // una herramienta cuenta como entregada cuando se presta
+function solVisibles(){ const l=DIC.panol_solicitudes||[]; if(ROLE.admin) return l; if(!solPuedeGestionar()) return l.filter(solEsMia); return l.filter(x=>solEsMia(x)||solItems(x.id).some(i=>solGestionaItem(i)||solSoyRespItem(i)||(canPanol()&&solSector(i)==='Pañol'))||(canPanol()&&solHerrDe(x.id).length>0)); }
 // Cantidad vigente de un renglón = pedida − anulada; pendiente = vigente − entregada
 const solVig=i=>Math.max(0,(+i.cantidad||0)-(+i.cantidad_anulada||0));
 const solPend=i=>Math.max(0,solVig(i)-(+i.cantidad_entregada||0));
-function solProgreso(s){ const it=solItems(s.id), ped=it.reduce((a,i)=>a+solVig(i),0), ent=it.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0); return {it, ped, ent, pct:ped?Math.round(ent/ped*100):(it.length?100:0), pend:it.filter(i=>solPend(i)>1e-9).length}; }
+function solProgreso(s){
+  const it=solItems(s.id), hv=solHerrDe(s.id).filter(p=>p.estado!=='Anulada'), ped=it.reduce((a,i)=>a+solVig(i),0), ent=it.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0);
+  let pct=ped?Math.round(ent/ped*100):(it.length?100:0);
+  if(hv.length){ const fr=it.filter(i=>solVig(i)>1e-9).map(i=>Math.min(1,(+i.cantidad_entregada||0)/solVig(i))).concat(hv.map(p=>herrEntregada(p)?1:0)); pct=fr.length?Math.round(fr.reduce((a,x)=>a+x,0)/fr.length*100):0; }
+  return {it, ped, ent, pct, pend:it.filter(i=>solPend(i)>1e-9).length+hv.filter(p=>!herrEntregada(p)).length, total:it.length+hv.length, nHerr:hv.length};
+}
+// Sectores que involucra una OT y el avance de cada uno (Pañol y Depósito por cantidad entregada, Herramientas por unidades prestadas)
+function solSectores(s){
+  const it=solItems(s.id), out=[];
+  ['Pañol','Depósito'].forEach(sec=>{ const l=it.filter(i=>solSector(i)===sec&&solVig(i)>1e-9); if(!l.length) return; const ped=l.reduce((a,i)=>a+solVig(i),0), ent=l.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0); out.push({sec,n:l.length,ok:ent>=ped-1e-9,txt:l.filter(i=>solPend(i)<=1e-9).length+'/'+l.length}); });
+  const h=solHerrDe(s.id).filter(p=>p.estado!=='Anulada'); if(h.length) out.push({sec:'Herramientas',n:h.length,ok:h.every(herrEntregada),txt:h.filter(herrEntregada).length+'/'+h.length});
+  return out;
+}
+const solSecBadges=s=>{ const l=solSectores(s); return l.length?l.map(x=>'<span class="badge '+(x.ok?'b-verde':'b-ambar')+'" title="'+x.sec+': '+x.txt+' entregado(s)" style="white-space:nowrap">'+(x.sec==='Herramientas'?'Herram.':x.sec)+' '+x.txt+'</span>').join(' '):'<span style="color:var(--muted)">—</span>'; };
 function solEstadoCalc(s, items){
   if(s.estado==='Anulada') return 'Anulada';
+  const hv=solHerrDe(s.id), hvig=hv.filter(p=>p.estado!=='Anulada'), TE=hvig.filter(herrEntregada).length;
   const ped=items.reduce((a,i)=>a+solVig(i),0), ent=items.reduce((a,i)=>a+Math.min(+i.cantidad_entregada||0,solVig(i)),0);
-  if(items.length && ped<=1e-9 && ent<=1e-9) return 'Anulada';          // se anuló todo y no se entregó nada
-  if(ped>0 && ent>=ped-1e-9) return 'Entregada';
-  if(ent>0) return 'Parcial';
+  if((items.length||hv.length) && ped<=1e-9 && hvig.length===0) return 'Anulada';   // se anuló todo y no se entregó nada
+  if((ped>1e-9||hvig.length) && (ped>1e-9?ent>=ped-1e-9:true) && (hvig.length?TE>=hvig.length:true)) return 'Entregada';
+  if(ent>0||TE>0) return 'Parcial';
   return s.estado==='En preparación'?'En preparación':'Pendiente';
+}
+// Cuando cambia una herramienta de una OT (se presta, se anula), se recalcula el estado de la OT
+async function solRecalcDesdeHerr(p){
+  if(!p||!p.solicitud_id) return; const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(p.solicitud_id)); if(!s||s.estado==='Anulada') return;
+  const est=solEstadoCalc(s,solItems(s.id)); if(est===s.estado) return;
+  try{ await panolSolGuardarCab(s,{estado:est, historial:solHist(s,'Cambio de estado','Pasó a '+est+' (por herramientas)')}); }catch(e){ /* el estado se recalcula en la próxima acción */ }
 }
 // Historial con usuario, fecha y hora de cada movimiento de la solicitud
 const solHist=(s,accion,detalle)=>(Array.isArray(s.historial)?s.historial:[]).concat([{accion, detalle:detalle||'', por:panolUsuario(), fecha:new Date().toISOString()}]);
@@ -3099,27 +3123,27 @@ function renderPanolSolicitudes(){
   if(!SP_SORT.psol) SP_SORT.psol={k:'fnec',dir:1};
   const q=(F.q||'').toLowerCase().split(/\s+/).filter(Boolean);
   const lista=todas.filter(s=>(F.est==='todas'||(F.est==='abiertas'?abiertas(s):s.estado===F.est))&&xlfPass('psol',s)&&(!q.length||q.every(w=>[s.nro_ot,s.solicitante,s.destino_cod,s.destino_txt,s.comentario].join(' ').toLowerCase().includes(w))));
-  const shown=_spOrdenar('psol',lista,{ot:s=>s.nro_ot, sol:s=>s.solicitante, dest:s=>s.destino_cod||s.destino_txt, fsol:s=>s.creado_en, fnec:s=>s.fecha_necesidad||'9999', items:s=>solItems(s.id).length, est:s=>s.estado, av:s=>solProgreso(s).pct});
+  const shown=_spOrdenar('psol',lista,{ot:s=>s.nro_ot, sol:s=>s.solicitante, dest:s=>s.destino_cod||s.destino_txt, fsol:s=>s.creado_en, fnec:s=>s.fecha_necesidad||'9999', items:s=>solProgreso(s).total, sect:s=>solSectores(s).map(x=>x.sec).join(), est:s=>s.estado, av:s=>solProgreso(s).pct});
   const nAb=todas.filter(abiertas).length, nVenc=todas.filter(s=>abiertas(s)&&s.fecha_necesidad&&String(s.fecha_necesidad).slice(0,10)<hoy).length;
   const gest=solPuedeGestionar();
   const filas=shown.map(s=>{ const p=solProgreso(s); return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td><b>'+esc(s.nro_ot)+'</b>'+(s.bloqueada?' <span title="Abastecimiento la bloqueó: ya no se puede editar">🔒</span>':'')+'</td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td>'
-    +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td style="text-align:right">'+p.it.length+'</td><td>'+solBadge(s.estado)+'</td>'
+    +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td>'+solSecBadges(s)+'</td><td style="text-align:right">'+p.total+'</td><td>'+solBadge(s.estado)+'</td>'
     +'<td style="min-width:110px"><div style="height:7px;background:#e6ece8;border-radius:4px;overflow:hidden"><div style="height:7px;width:'+p.pct+'%;background:#2f6f5e"></div></div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+p.pct+'% · faltan '+p.pend+' renglón(es)</div></td>'
     +'<td style="font-size:11.5px;color:var(--muted)" class="tx-largo" title="'+esc(s.comentario||'')+'">'+esc(s.comentario||'')+'</td>'
     +'<td><button class="btn ghost sm" onclick="openPanolSolDetalle('+s.id+')">'+(gest&&abiertas(s)&&solItems(s.id).some(i=>solPend(i)>1e-9&&solGestionaItem(i))?'Preparar / entregar':'Ver')+'</button></td></tr>'; }).join('');
   const sel=(v,l)=>'<option value="'+v+'"'+(F.est===v?' selected':'')+'>'+l+'</option>';
   C().innerHTML=panolTabs()
-    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">OTs</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
     +'<button class="btn sm" onclick="panolSolNueva()">'+ICO.plus+'Nueva solicitud</button><button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="herrSolicitud()">Solicitud de herramientas</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn ghost sm" onclick="openPanolSolSubir()">Subir solicitud</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
     +(PANOL_SOL_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer las solicitudes: '+esc(PANOL_SOL_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_solicitudes.sql</b> en Supabase?</div>':'')
-    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Ordenadas por fecha de necesidad (las vencidas en rojo). Doble clic en una fila para abrirla. Para pedir materiales: <b>Bajar Excel de solicitud</b>, completarlo y <b>Subir solicitud</b>.</div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Todas las OT usan la misma numeración. Ordenadas por fecha de necesidad (las vencidas en rojo). <b>Sectores</b> muestra qué involucra cada OT (Pañol, Depósito, Herramientas) y cuántos renglones van entregados. Doble clic en una fila para ver los renglones y a qué sector corresponde cada uno. Para pedir materiales: <b>Bajar Excel de solicitud</b>, completarlo y <b>Subir solicitud</b>.</div>'
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolSol"><thead><tr>'
-      +_pnTh('N° OT',null,'ot','psol')+_pnTh('Solicitante','sol','sol','psol')+_pnTh('Destino','dest','dest','psol')+_pnTh('Solicitada',null,'fsol','psol')+_pnTh('Fecha de necesidad',null,'fnec','psol')+_pnTh('Renglones',null,'items','psol')+_pnTh('Estado',null,'est','psol')+_pnTh('Avance',null,'av','psol')+'<th>Comentario</th><th></th></tr></thead><tbody>'
-      +(filas||'<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">No hay solicitudes con este filtro.</td></tr>')+'</tbody></table></div></div>';
+      +_pnTh('N° OT',null,'ot','psol')+_pnTh('Solicitante','sol','sol','psol')+_pnTh('Destino','dest','dest','psol')+_pnTh('Solicitada',null,'fsol','psol')+_pnTh('Fecha de necesidad',null,'fnec','psol')+_pnTh('Sectores',null,'sect','psol')+_pnTh('Renglones',null,'items','psol')+_pnTh('Estado',null,'est','psol')+_pnTh('Avance',null,'av','psol')+'<th>Comentario</th><th></th></tr></thead><tbody>'
+      +(filas||'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--muted)">No hay OTs con este filtro.</td></tr>')+'</tbody></table></div></div>';
 }
 
 /* ---- Excel de solicitud (se baja con listas desplegables) ---- */
@@ -3239,7 +3263,7 @@ async function panolSolCrear(S){
   const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFold(x.nombre)===_syncFold(S.solicitante));
   const yo=(AUTH_USER&&AUTH_USER.email)||null, esYo=_syncFold(S.solicitante)===_syncFold(MI_NOMBRE||'');
   const email=(sol&&sol.email)||(esYo?yo:null)||(canPanol()?null:yo);   // la ve el solicitante si se conoce su usuario
-  const hist=[{accion:'Creada',detalle:S.items.length+' renglón(es)'+(S.detalle?' · '+S.detalle:(S.desdeExcel?' desde Excel':''))+((email&&email!==yo)||(!email&&yo)?' · cargada por '+panolUsuario():''),por:panolUsuario(),fecha:new Date().toISOString()}];
+  const hist=[{accion:'Creada',detalle:S.items.length+' renglón(es)'+((S.herr||[]).length?' + '+S.herr.reduce((a,h)=>a+h.n,0)+' herramienta(s)':'')+(S.detalle?' · '+S.detalle:(S.desdeExcel?' desde Excel':''))+((email&&email!==yo)||(!email&&yo)?' · cargada por '+panolUsuario():''),por:panolUsuario(),fecha:new Date().toISOString()}];
   const cab={solicitante:S.solicitante, solicitante_email:email, destino_cod:S.destino_cod, destino_txt:S.destino_txt, fecha_necesidad:S.fecha_necesidad, comentario:S.comentario, estado:'Pendiente', bloqueada:false, historial:hist, creado_por:panolUsuario()};
   if(S.kit_id){ cab.kit_id=S.kit_id; cab.kit_cantidad=S.kit_cantidad||null; }
   const its=S.items.map(i=>({cod_articulo:i.cod_articulo, articulo_libre:i.articulo_libre, sector:i.sector||solSectorDe(i.cod_articulo), ...(i.responsable_email?{responsable_nombre:i.responsable_nombre,responsable_email:i.responsable_email}:solRespDe(i.sector||solSectorDe(i.cod_articulo))), cantidad:i.cantidad, um:i.um, galpon:i.galpon, fecha_necesidad:i.fecha_necesidad, comentario:i.comentario, cantidad_entregada:0, cantidad_anulada:0}));
@@ -3252,7 +3276,7 @@ async function panolSolCrear(S){
       return nro;
     }
     const r=await sbFetch('/compras_panol_solicitudes',{method:'POST',body:JSON.stringify(cab),prefer:'return=representation'}); const fila=(Array.isArray(r)?r[0]:r), id=fila.id;
-    try{ await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
+    try{ if(its.length) await sbFetch('/compras_panol_solicitud_items',{method:'POST',body:JSON.stringify(its.map(i=>({...i,solicitud_id:id}))),prefer:'return=minimal'}); }
     catch(e){ try{ await sbFetch('/compras_panol_solicitudes?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} throw e; }
     await panolSolCargar();
     const eh=await solCrearHerr(S,id,fila.nro_ot||''); if(eh) toast('La OT se creó, pero no se pudieron cargar las herramientas: '+eh+' (¿ya se corrió sql/2026-10_panol_herramientas_ot.sql?)');
@@ -3287,9 +3311,9 @@ function openPanolSolDetalle(id){
   if(canPanol()) acc.push('<button class="btn ghost" onclick="panolSolAModelo('+id+')">Guardar como modelo</button>');
   if(gest&&abierta) acc.push('<button class="btn ghost" onclick="panolSolBloquear('+id+','+(s.bloqueada?'false':'true')+')">'+(s.bloqueada?'🔓 Permitir editar de nuevo':'🔒 Bloquear edición')+'</button>');
   if((gest||(solEsMia(s)&&!s.bloqueada&&s.estado==='Pendiente'))&&abierta) acc.push('<button class="btn ghost" style="color:#b3261e" onclick="panolSolAnular('+id+')">Anular toda la solicitud</button>');
-  openModal('Solicitud OT '+s.nro_ot,
-    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+(s.bloqueada?' <span class="badge b-gris" title="Abastecimiento definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th></th><th>Artículo</th><th>Sector</th><th>Responsable</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>'
+  openModal('OT '+s.nro_ot,
+    '<div style="font-size:13px;line-height:1.8"><b>Estado:</b> '+solBadge(s.estado)+' · <b>Sectores:</b> '+solSecBadges(s)+(s.bloqueada?' <span class="badge b-gris" title="Abastecimiento definió que ya no se puede editar">🔒 Bloqueada</span>':'')+' · <b>Solicitante:</b> '+esc(s.solicitante||'')+' · <b>Destino:</b> '+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'<br><b>Solicitada:</b> '+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+' · <b>Fecha de necesidad:</b> '+solFechaHtml(s)+(s.comentario?'<br><b>Comentario:</b> '+esc(s.comentario):'')+(s.kit_id?'<br><b>Modelo:</b> '+esc(((DIC.panol_kits||[]).find(k=>String(k.id)===String(s.kit_id))||{}).nombre||'(modelo borrado)')+(s.kit_cantidad&&+s.kit_cantidad!==1?' × '+fmtNum(s.kit_cantidad,3):''):'')+'</div>'
+    +(!it.length?'<div style="margin-top:10px;font-size:12.5px;color:var(--muted)">Esta OT no lleva materiales: solo herramientas.</div>':'<div class="tbl-hscroll tbl-compact" style="max-height:48vh;margin-top:10px"><table class="grid tbl-ajustada" style="font-size:11.5px"><thead><tr><th></th><th>Artículo</th><th>Sector</th><th>Responsable</th><th>Pedido</th><th>Anulado</th><th>Entregado</th><th>Entregar en</th><th>Pendiente</th><th>Saldo en depósito '+esc(dep||'')+'</th><th>Necesidad</th><th>Comentario</th></tr></thead><tbody>'+filas+'</tbody></table></div>')
     +herrDetalleOT(s)
     +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(s.historial)?s.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos registrados.</span>')+'</div></details>',
     '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+acc.join(''), 'xwide');
@@ -3298,7 +3322,7 @@ window.openPanolSolDetalle=openPanolSolDetalle;
 // Herramientas pedidas junto con la OT (se entregan desde la solapa Herramientas)
 function herrDetalleOT(s){
   const hs=(DIC.panol_herr||[]).filter(p=>String(p.solicitud_id)===String(s.id)); if(!hs.length) return '';
-  return '<div style="margin-top:12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px">Herramientas de esta OT ('+hs.length+')</div><div class="tbl-hscroll tbl-compact" style="max-height:22vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Serie</th><th>Desde</th><th>Hasta</th><th>Estado</th></tr></thead><tbody>'
+  return '<div style="margin-top:12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px">Sector Herramientas ('+hs.length+') <span style="font-weight:400;color:var(--muted)">· las entrega Abastecimiento desde la solapa Herramientas</span></div><div class="tbl-hscroll tbl-compact" style="max-height:22vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Herramienta</th><th>Serie</th><th>Desde</th><th>Hasta</th><th>Estado</th></tr></thead><tbody>'
     +hs.map(p=>'<tr><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+esc(p.serie||'sin asignar')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+fmtDate(p.hasta)+'</td><td>'+herrBadge(p)+'</td></tr>').join('')
     +'</tbody></table></div><div style="margin-top:4px"><button class="btn ghost sm" onclick="closeModal();PANOL_TAB=\'herr\';PANOL_HERR_VISTA=\'ped\';PANOL_HERR_Q=\''+esc(s.nro_ot)+'\';renderPanol()">Ver en Herramientas</button></div></div>';
 }
@@ -3334,29 +3358,39 @@ function openPanolSolTransferir(id,todo){
   const pot=solItems(id).filter(solPuedeTransferir);
   const sel=todo?pot:pot.filter(i=>[...document.querySelectorAll('.sol-chk:checked')].some(c=>String(c.value)===String(i.id)));
   if(!sel.length){ toast(todo?'No hay renglones pendientes para transferir.':'Tildá al menos un renglón para transferir.'); return; }
-  const dest=solRespList().filter(r=>ROLE.admin||String(r.email).toLowerCase()!==solMiMail());
-  if(!dest.length){ toast('No hay otro responsable cargado para transferir.'); return; }
-  window._TR_SEL=sel.map(i=>i.id);
-  openModal('Transferir · OT '+s.nro_ot,
-    '<div style="font-size:12.5px;margin-bottom:8px">Pasás la responsabilidad de armar y entregar estos <b>'+sel.length+'</b> renglón(es) a otra persona. El sector no cambia.</div>'
-    +'<div class="tbl-hscroll tbl-compact" style="max-height:30vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Artículo</th><th>Sector</th><th>Responsable actual</th><th>Pendiente</th></tr></thead><tbody>'+sel.map(i=>'<tr><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td>'+solSector(i)+'</td><td>'+esc(i.responsable_nombre||'—')+'</td><td style="text-align:right">'+fmtNum(solPend(i),3)+'</td></tr>').join('')+'</tbody></table></div>'
-    +'<div class="frow c2" style="margin-top:10px"><div class="field"><label>Transferir a</label><select id="tr_a">'+dest.map(r=>'<option value="'+esc(r.email)+'">'+esc(r.nombre)+'</option>').join('')+'</select></div><div class="field"><label>Motivo (opcional)</label><input id="tr_mot" type="text"></div></div>',
-    '<button class="btn ghost" onclick="openPanolSolDetalle('+id+')">Volver</button><button class="btn" id="trBtn" onclick="panolSolTransferirOk('+id+')">Transferir</button>','xwide');
+  solTransferirModal(sel,id);
 }
 window.openPanolSolTransferir=openPanolSolTransferir;
-async function panolSolTransferirOk(id){
-  const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
+// Desde la solapa de un sector: renglones tildados de distintas OT
+function openPanolRenTransferir(){
+  const ids=[...document.querySelectorAll('.ren-chk:checked')].map(c=>String(c.value));
+  const sel=(DIC.panol_solicitud_items||[]).filter(i=>ids.includes(String(i.id))&&solPuedeTransferir(i));
+  if(!sel.length){ toast('Tildá al menos un renglón para transferir.'); return; }
+  solTransferirModal(sel,null);
+}
+window.openPanolRenTransferir=openPanolRenTransferir;
+function solTransferirModal(sel,otId){
+  const dest=solRespList().filter(r=>ROLE.admin||String(r.email).toLowerCase()!==solMiMail());
+  if(!dest.length){ toast('No hay otro responsable cargado para transferir.'); return; }
+  window._TR_SEL=sel.map(i=>i.id); window._TR_OT=otId;
+  const ot=i=>((DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(i.solicitud_id))||{}).nro_ot||'';
+  openModal('Transferir renglones',
+    '<div style="font-size:12.5px;margin-bottom:8px">Pasás la responsabilidad de armar y entregar estos <b>'+sel.length+'</b> renglón(es) a otra persona. El sector no cambia.</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:30vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OT</th><th>Artículo</th><th>Sector</th><th>Responsable actual</th><th>Pendiente</th></tr></thead><tbody>'+sel.map(i=>'<tr><td>'+esc(ot(i))+'</td><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td>'+solSector(i)+'</td><td>'+esc(i.responsable_nombre||'—')+'</td><td style="text-align:right">'+fmtNum(solPend(i),3)+'</td></tr>').join('')+'</tbody></table></div>'
+    +'<div class="frow c2" style="margin-top:10px"><div class="field"><label>Transferir a</label><select id="tr_a">'+dest.map(r=>'<option value="'+esc(r.email)+'">'+esc(r.nombre)+'</option>').join('')+'</select></div><div class="field"><label>Motivo (opcional)</label><input id="tr_mot" type="text"></div></div>',
+    '<button class="btn ghost" onclick="'+(otId?'openPanolSolDetalle('+otId+')':'closeModal()')+'">Volver</button><button class="btn" id="trBtn" onclick="panolSolTransferirOk()">Transferir</button>','xwide');
+}
+async function panolSolTransferirOk(){
   const email=(document.getElementById('tr_a')||{}).value, mot=((document.getElementById('tr_mot')||{}).value||'').trim(), r=solRespList().find(x=>x.email===email);
-  const sel=solItems(id).filter(i=>(window._TR_SEL||[]).includes(i.id)&&solPuedeTransferir(i)); if(!r||!sel.length){ toast('No hay nada para transferir'); return; }
+  const sel=(DIC.panol_solicitud_items||[]).filter(i=>(window._TR_SEL||[]).includes(i.id)&&solPuedeTransferir(i)); if(!r||!sel.length){ toast('No hay nada para transferir'); return; }
   const btn=document.getElementById('trBtn'); if(btn){ btn.disabled=true; btn.textContent='Transfiriendo…'; }
   try{
-    const upd={responsable_nombre:r.nombre, responsable_email:r.email};
-    for(const i of sel){ if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+i.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); }
-    const det=sel.map(i=>(i.cod_articulo||i.articulo_libre)+' ('+(i.responsable_nombre||'sin responsable')+' → '+r.nombre+')').join(', ');
-    sel.forEach(i=>Object.assign(i,upd));
-    await panolSolGuardarCab(s,{historial:solHist(s,'Transferida',det+(mot?' · Motivo: '+mot:''))});
+    const upd={responsable_nombre:r.nombre, responsable_email:r.email}, porOT=new Map();
+    for(const i of sel){ if(!DEMO_MODE) await sbFetch('/compras_panol_solicitud_items?id=eq.'+i.id,{method:'PATCH',body:JSON.stringify(upd),prefer:'return=minimal'}); (porOT.get(i.solicitud_id)||porOT.set(i.solicitud_id,[]).get(i.solicitud_id)).push({i,de:i.responsable_nombre||'sin responsable'}); }
+    for(const [sid,l] of porOT){ const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(sid)); l.forEach(x=>Object.assign(x.i,upd));
+      if(s) await panolSolGuardarCab(s,{historial:solHist(s,'Transferida',l.map(x=>(x.i.cod_articulo||x.i.articulo_libre)+' ('+x.de+' → '+r.nombre+')').join(', ')+(mot?' · Motivo: '+mot:''))}); }
   }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Transferir'; } toast('No se pudo transferir: '+(e.message||e)+' (¿ya se corrió sql/2026-10_abastecimiento_sector.sql?)'); return; }
-  toast(sel.length+' renglón(es) transferido(s) a '+r.nombre); openPanolSolDetalle(id); renderPanol();
+  toast(sel.length+' renglón(es) transferido(s) a '+r.nombre); if(window._TR_OT) openPanolSolDetalle(window._TR_OT); else closeModal(); renderPanol();
 }
 window.panolSolTransferirOk=panolSolTransferirOk;
 function openPanolSolEntrega(id){
@@ -3485,7 +3519,7 @@ async function panolSolEditarGuardar(){
   if(fnec!==String(s.fecha_necesidad||'').slice(0,10)){ cab.fecha_necesidad=fnec; cambios.push('Fecha de necesidad: '+fmtDate(fnec)); }
   if(coment!==(s.comentario||'')){ cab.comentario=coment||null; cambios.push('Comentario general'); }
   if(!cambios.length){ toast('No hay cambios para guardar'); return; }
-  if(!items.length&&!nuevos.length){ toast('La solicitud tiene que quedar con al menos un material'); return; }
+  if(!items.length&&!nuevos.length&&!solHerrDe(s.id).length){ toast('La solicitud tiene que quedar con al menos un material'); return; }
   const btn=document.getElementById('edBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
   try{
     if(DEMO_MODE){
@@ -3930,21 +3964,21 @@ window.herrExcelLeer=herrExcelLeer;
 async function herrSolicitudGuardar(){
   const g=i=>(document.getElementById(i)||{}).value||'', dc=g('hs_dest'), sol=g('hs_sol'), D1=g('hs_d1'), D2=g('hs_d2');
   if(!dc){ toast('Elegí para dónde son'); return; } if(!sol){ toast('Elegí el solicitante'); return; }
-  const dest=panolDestinos().find(o=>String(o.cod)===dc), email=herrEmail(sol), ahora=new Date().toISOString(), filas=[], avisos=[];
+  const dest=panolDestinos().find(o=>String(o.cod)===dc), lineas=[], avisos=[];
   for(const tr of document.querySelectorAll('#hsBody tr')){
     const cod=tr.querySelector('.hs-art').value, n=Math.floor(+tr.querySelector('.hs-n').value), d1=tr.querySelector('.hs-d1').value||D1, d2=tr.querySelector('.hs-d2').value||D2;
     if(!(n>=1)){ toast('Revisá la cantidad de '+herrArtTxt(cod)); return; } if(!d1||!d2){ toast('Falta desde / hasta'); return; } if(d2<d1){ toast('"Hasta" es anterior a "Desde" en '+herrArtTxt(cod)); return; }
     const a=herrArticulos().find(x=>x.cod===cod), ps=(DIC.panol_herr||[]).filter(p=>p.cod_articulo===cod&&herrActivo(p)); let pico=0;
     for(let d=d1,i=0;d<=d2&&i<400;d=herrSuma(d,1),i++){ const x=ps.filter(p=>herrSolapa(p,d,d)).length; if(x>pico) pico=x; }
     if(a&&a.unid.length-pico<n) avisos.push(a.desc||cod);
-    const com=tr.querySelector('.hs-com').value.trim()||null;
-    for(let i=0;i<n;i++) filas.push({cod_articulo:cod, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, solicitante:sol, solicitante_email:email, desde:d1, hasta:d2, estado:'Solicitada', comentario:com, creado_por:panolUsuario(), historial:[{accion:'Pedida',detalle:'Solicitud de herramientas · del '+fmtDate(d1)+' al '+fmtDate(d2),por:panolUsuario(),fecha:ahora}]});
+    lineas.push({cod,n,d1,d2,com:tr.querySelector('.hs-com').value.trim()||null});
   }
-  if(!filas.length){ toast('Agregá al menos una herramienta'); return; }
+  if(!lineas.length){ toast('Agregá al menos una herramienta'); return; }
   const btn=document.getElementById('hsBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  try{ await herrCrear(filas); }
-  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } toast('No se pudo enviar: '+(e.message||e)); return; }
-  closeModal(); toast(filas.length+' herramienta(s) pedida(s)'+(avisos.length?' · ojo: en esas fechas no alcanzan: '+avisos.join(', '):'')); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+  // la solicitud de herramientas es una OT más (misma numeración), con solo la parte de herramientas
+  const nro=await panolSolCrear({solicitante:sol, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, fecha_necesidad:lineas.map(l=>l.d1).sort()[0], comentario:null, items:[], herr:lineas, detalle:'Solicitud de herramientas'});
+  if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar a Abastecimiento'; } return; }
+  closeModal(); toast('OT '+nro+' · '+lineas.reduce((a,l)=>a+l.n,0)+' herramienta(s) pedida(s)'+(avisos.length?' · ojo: en esas fechas no alcanzan: '+avisos.join(', '):'')); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
 }
 window.herrSolicitudGuardar=herrSolicitudGuardar;
 
@@ -3979,12 +4013,11 @@ async function herrCrear(filas){
 async function herrPedidoGuardar(){
   const g=i=>(document.getElementById(i)||{}).value||'', cod=g('hp_art'), n=Math.floor(+g('hp_n')), dc=g('hp_dest'), sol=g('hp_sol'), d1=g('hp_d1'), d2=g('hp_d2');
   if(!(n>=1)){ toast('Poné la cantidad'); return; } if(!dc){ toast('Elegí para dónde es'); return; } if(!sol){ toast('Elegí el solicitante'); return; } if(!d1||!d2){ toast('Completá desde y hasta'); return; } if(d2<d1){ toast('"Hasta" no puede ser anterior a "Desde"'); return; }
-  const dest=panolDestinos().find(o=>String(o.cod)===dc), email=herrEmail(sol), ahora=new Date().toISOString();
-  const fila=()=>({cod_articulo:cod, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, solicitante:sol, solicitante_email:email, desde:d1, hasta:d2, estado:'Solicitada', comentario:g('hp_com').trim()||null, creado_por:panolUsuario(), historial:[{accion:'Pedida',detalle:'Del '+fmtDate(d1)+' al '+fmtDate(d2),por:panolUsuario(),fecha:ahora}]});
+  const dest=panolDestinos().find(o=>String(o.cod)===dc);
   const btn=document.getElementById('hpBtn'); if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  try{ await herrCrear(Array.from({length:n},fila)); }
-  catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar pedido'; } toast('No se pudo enviar el pedido: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_herramientas.sql?)'); return; }
-  closeModal(); toast(n+' herramienta(s) pedida(s)'); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+  const nro=await panolSolCrear({solicitante:sol, destino_cod:dc, destino_txt:dest?(dest.cod+' — '+(dest.desc||'')):dc, fecha_necesidad:d1, comentario:null, items:[], herr:[{cod,n,d1,d2,com:g('hp_com').trim()||null}], detalle:'Pedido de herramienta'});
+  if(nro==null){ if(btn){ btn.disabled=false; btn.textContent='Enviar pedido'; } return; }
+  closeModal(); toast('OT '+nro+' · '+n+' herramienta(s) pedida(s)'); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
 }
 window.herrPedidoGuardar=herrPedidoGuardar;
 async function herrPatch(p,campos,accion,detalle){
@@ -4021,7 +4054,7 @@ async function herrEntregarOk(id){
   const p=herrFila(id); if(!p||!canPanol()) return; const g=i=>(document.getElementById(i)||{}).value||'', d1=g('he_d1'), d2=g('he_d2'), serie=g('he_serie'), a=g('he_a').trim();
   if(!d1||!d2||d2<d1){ toast('Revisá las fechas'); return; } if(!serie){ toast('No hay serie libre para entregar'); return; } if(!a){ toast('Poné a quién se la entregás'); return; }
   const btn=document.getElementById('heBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
-  try{ await herrPatch(p,{estado:'Prestada',serie,desde:d1,hasta:d2,entregado_a:a,entregado_por:panolUsuario(),entregado_en:new Date().toISOString()},'Entregada','Serie '+serie+' a '+a+' · del '+fmtDate(d1)+' al '+fmtDate(d2)); }
+  try{ await herrPatch(p,{estado:'Prestada',serie,desde:d1,hasta:d2,entregado_a:a,entregado_por:panolUsuario(),entregado_en:new Date().toISOString()},'Entregada','Serie '+serie+' a '+a+' · del '+fmtDate(d1)+' al '+fmtDate(d2)); await solRecalcDesdeHerr(p); }
   catch(e){ if(btn){ btn.disabled=false; btn.textContent='Entregar'; } toast('No se pudo entregar: '+(e.message||e)); return; }
   closeModal(); toast('Entregada: '+serie); renderPanol();
 }
@@ -4034,7 +4067,7 @@ async function herrDevolver(id){
 window.herrDevolver=herrDevolver;
 async function herrAnular(id){
   const p=herrFila(id); if(!p||p.estado!=='Solicitada'||!(canPanol()||herrEsMia(p))) return;
-  try{ await herrPatch(p,{estado:'Anulada'},'Anulada','Pedido anulado'); }catch(e){ toast('No se pudo anular: '+(e.message||e)); return; }
+  try{ await herrPatch(p,{estado:'Anulada'},'Anulada','Pedido anulado'); await solRecalcDesdeHerr(p); }catch(e){ toast('No se pudo anular: '+(e.message||e)); return; }
   toast('Pedido anulado'); renderPanol();
 }
 window.herrAnular=herrAnular;
@@ -4084,16 +4117,47 @@ function herrUnidadesModal(cod){
 }
 window.herrUnidadesModal=herrUnidadesModal;
 
-let PANOL_TAB='erog';
+let PANOL_TAB='sol';
 function setPanolTab(t){ if((t==='erog'||t==='dep')&&PANOL_TAB!==t&&typeof XLF_STORE!=='undefined'&&XLF_STORE.pnl){ XLF_STORE.pnl={}; if(typeof XLF_DATE!=='undefined') delete XLF_DATE.pnl; } PANOL_TAB=t; renderPanol(); }
 window.setPanolTab=setPanolTab;
+/* ---- Pañol / Depósito · Renglones: los materiales de las OT que maneja cada sector ---- */
+let PANOL_REN={est:'pend',q:''};
+const solEstRen=x=>x.s.estado==='Anulada'||solVig(x.i)<=1e-9?'Anulado':(solPend(x.i)<=1e-9?'Entregado':((+x.i.cantidad_entregada||0)>0?'Parcial':'Pendiente'));
+function solRenglonesSector(sec){ const l=[]; solVisibles().forEach(s=>solItems(s.id).forEach(i=>{ if(solSector(i)===sec) l.push({s,i}); })); return l; }
+function renderPanolRenglones(sec){
+  const ns=sec==='Pañol'?'prnp':'prnd', F=PANOL_REN, gest=solPuedeGestionar(), todos=solRenglonesSector(sec), hoy=new Date().toISOString().slice(0,10);
+  xlfRegister(ns,{rows:()=>todos, onChange:renderPanol, dateVal:x=>String(x.s.fecha_necesidad||'').slice(0,10), val:(x,c)=>c==='ot'?x.s.nro_ot:c==='sol'?(x.s.solicitante||''):c==='dest'?(x.s.destino_cod||x.s.destino_txt||'(sin destino)'):c==='art'?kitTxt(x.i):c==='resp'?(x.i.responsable_nombre||'(sin responsable)'):c==='est'?solEstRen(x):''});
+  if(!SP_SORT[ns]) SP_SORT[ns]={k:'fnec',dir:1};
+  const q=(F.q||'').toLowerCase().split(/\s+/).filter(Boolean), okEst=x=>F.est==='todos'||(F.est==='pend'?['Pendiente','Parcial'].includes(solEstRen(x)):solEstRen(x)===F.est);
+  const lista=_spOrdenar(ns,todos.filter(x=>okEst(x)&&xlfPass(ns,x)&&(!q.length||q.every(w=>[x.s.nro_ot,x.s.solicitante,x.s.destino_cod,x.s.destino_txt,kitTxt(x.i),x.i.responsable_nombre].join(' ').toLowerCase().includes(w)))),
+    {ot:x=>x.s.nro_ot, sol:x=>x.s.solicitante, dest:x=>x.s.destino_cod||x.s.destino_txt, fnec:x=>x.s.fecha_necesidad||'9999', art:x=>kitTxt(x.i), ped:x=>solVig(x.i), ent:x=>+x.i.cantidad_entregada||0, pend:x=>solPend(x.i), resp:x=>x.i.responsable_nombre, est:solEstRen});
+  const nPend=todos.filter(x=>['Pendiente','Parcial'].includes(solEstRen(x))).length, sel=(v,l)=>'<option value="'+v+'"'+(F.est===v?' selected':'')+'>'+l+'</option>';
+  const filas=lista.map(x=>{ const i=x.i, s=x.s, est=solEstRen(x), abierta=['Pendiente','En preparación','Parcial'].includes(s.estado), puedo=gest&&abierta&&solPend(i)>1e-9&&solGestionaItem(i);
+    return '<tr style="cursor:pointer" ondblclick="openPanolSolDetalle('+s.id+')"><td>'+(solPuedeTransferir(i)&&s.estado!=='Anulada'?'<input type="checkbox" class="ren-chk" value="'+i.id+'">':'')+'</td><td><b>'+esc(s.nro_ot)+'</b></td><td>'+esc(s.solicitante||'')+'</td><td>'+esc(s.destino_cod?anDestTxt(s.destino_cod):(s.destino_txt||''))+'</td><td>'+solFechaHtml(s)+'</td>'
+      +'<td class="tx-largo" title="'+esc(kitTxt(i))+'">'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td><td style="text-align:right">'+fmtNum(solVig(i),3)+' '+esc(i.um||'')+'</td><td style="text-align:right">'+fmtNum(i.cantidad_entregada||0,3)+'</td><td style="text-align:right;'+(solPend(i)>1e-9?'font-weight:700':'')+'">'+fmtNum(solPend(i),3)+'</td>'
+      +'<td style="'+(solSoyRespItem(i)?'font-weight:700':'')+'">'+esc(i.responsable_nombre||'—')+'</td><td><span class="badge '+({'Pendiente':'b-ambar','Parcial':'b-ambar','Entregado':'b-verde','Anulado':'b-rojo'}[est])+'">'+est+'</span></td>'
+      +'<td><button class="btn'+(puedo?'':' ghost')+' sm" onclick="'+(puedo?'openPanolSolEntrega('+s.id+')':'openPanolSolDetalle('+s.id+')')+'">'+(puedo?'Entregar':'Ver OT')+'</button></td></tr>'; }).join('');
+  C().innerHTML=panolTabs()
+    +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">'+sec+' · Renglones</h3><span class="meta">'+nPend+' pendientes · '+lista.length+' de '+todos.length+' mostrados'+(gest?'':' · solo los de tus OT')+'</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn(ns).replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolRen\')">Auto-ajustar columnas</button>'+(gest?'<button class="btn ghost sm" onclick="openPanolRenTransferir()">Transferir seleccionados</button>':'')+'</span></div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado del renglón<select onchange="PANOL_REN.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('pend','Pendientes (pendientes y parciales)')+sel('todos','Todos')+sel('Entregado','Entregados')+sel('Anulado','Anulados')+'</select></label>'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="OT, solicitante, artículo, responsable…" onchange="PANOL_REN.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:260px"></label></div>'
+    +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Son los materiales de las OT que maneja este sector (por el código del artículo). Con <b>Entregar</b> se abre la entrega de esa OT con tus renglones; doble clic en una fila abre la OT completa.</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolRen"><thead><tr><th></th>'
+      +_pnTh('OT','ot','ot',ns)+_pnTh('Solicitante','sol','sol',ns)+_pnTh('Destino','dest','dest',ns)+_pnTh('Fecha de necesidad','__fecha__','fnec',ns)+_pnTh('Artículo','art','art',ns)+_pnTh('Pedido',null,'ped',ns)+_pnTh('Entregado',null,'ent',ns)+_pnTh('Pendiente',null,'pend',ns)+_pnTh('Responsable','resp','resp',ns)+_pnTh('Estado','est','est',ns)+'<th></th></tr></thead><tbody>'
+      +(filas||'<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--muted)">'+(todos.length?'No hay renglones con este filtro.':'Todavía no hay renglones de '+sec+' en las OT.')+'</td></tr>')+'</tbody></table></div></div>';
+}
+
 function panolTabs(){
   const tab=(id,lbl,act)=>'<button class="mtab'+((act!=null?act:PANOL_TAB===id)?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
   let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length; }catch(e){}
-  const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length, enPanol=PANOL_TAB==='erog'||PANOL_TAB==='herr';
-  // Pañol (con Erogaciones y Herramientas adentro) · Depósito · Solicitudes · Modelos de Kits · Precios · Egresos y saldos · Análisis · Diccionario · Cierres de mes
-  return '<div class="mtabs" style="margin:4px 0 '+(enPanol?'6px':'14px')+'">'+tab(PANOL_TAB==='herr'?'herr':'erog','Pañol'+(nHerr?' ⚠'+nHerr:''),enPanol)+tab('dep','Depósito')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('precios','Precios')+tab('egresos','Egresos y saldos')+tab('anal','Análisis')+tab('dic','Diccionario de abastecimiento')+tab('cierres','Cierres de mes')+'</div>'
-    +(enPanol?'<div class="mtabs" style="margin:0 0 14px;font-size:12.5px">'+tab('erog','Erogaciones')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+'</div>':'');
+  const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
+  const nRen=sec=>{ try{ return solRenglonesSector(sec).filter(x=>['Pendiente','Parcial'].includes(solEstRen(x))).length; }catch(e){ return 0; } };
+  const enPan=PANOL_TAB==='pren'||PANOL_TAB==='erog', enDep=PANOL_TAB==='dren'||PANOL_TAB==='dep', sub=enPan||enDep;
+  // OTs · Pañol (Renglones y Erogaciones) · Depósito (Renglones y Erogaciones) · Herramientas · Modelos de Kits · Precios · Egresos y saldos · Análisis · Diccionario · Cierres de mes
+  return '<div class="mtabs" style="margin:4px 0 '+(sub?'6px':'14px')+'">'+tab('sol','OTs'+(nSol?' ('+nSol+')':''))+tab(PANOL_TAB==='erog'?'erog':'pren','Pañol',enPan)+tab(PANOL_TAB==='dep'?'dep':'dren','Depósito',enDep)+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('kits','Modelos de Kits')+tab('precios','Precios')+tab('egresos','Egresos y saldos')+tab('anal','Análisis')+tab('dic','Diccionario de abastecimiento')+tab('cierres','Cierres de mes')+'</div>'
+    +(sub?'<div class="mtabs" style="margin:0 0 14px;font-size:12.5px">'+(enPan?tab('pren','Renglones'+(nRen('Pañol')?' ('+nRen('Pañol')+')':''))+tab('erog','Erogaciones'):tab('dren','Renglones'+(nRen('Depósito')?' ('+nRen('Depósito')+')':''))+tab('dep','Erogaciones'))+'</div>':'');
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
