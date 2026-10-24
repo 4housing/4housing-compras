@@ -3106,7 +3106,7 @@ function renderPanolSolicitudes(){
     +'<td>'+(s.creado_en?fmtDate(String(s.creado_en).slice(0,10)):'')+'</td><td>'+solFechaHtml(s)+'</td><td style="text-align:right">'+p.it.length+'</td><td>'+solBadge(s.estado)+'</td>'
     +'<td style="min-width:110px"><div style="height:7px;background:#e6ece8;border-radius:4px;overflow:hidden"><div style="height:7px;width:'+p.pct+'%;background:#2f6f5e"></div></div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+p.pct+'% · faltan '+p.pend+' renglón(es)</div></td>'
     +'<td style="font-size:11.5px;color:var(--muted)" class="tx-largo" title="'+esc(s.comentario||'')+'">'+esc(s.comentario||'')+'</td>'
-    +'<td><button class="btn ghost sm" onclick="openPanolSolDetalle('+s.id+')">'+(gest&&abiertas(s)?'Preparar / entregar':'Ver')+'</button></td></tr>'; }).join('');
+    +'<td><button class="btn ghost sm" onclick="openPanolSolDetalle('+s.id+')">'+(gest&&abiertas(s)&&solItems(s.id).some(i=>solPend(i)>1e-9&&solGestionaItem(i))?'Preparar / entregar':'Ver')+'</button></td></tr>'; }).join('');
   const sel=(v,l)=>'<option value="'+v+'"'+(F.est===v?' selected':'')+'>'+l+'</option>';
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
