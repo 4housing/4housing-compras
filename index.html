@@ -3129,7 +3129,7 @@ async function panolSolPlantilla(){
   const ws=wb.addWorksheet('Solicitud',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}}), ls=wb.addWorksheet('Listas',{properties:{tabColor:{argb:'FF9CA3AF'}}});
   const artsO=(DIC.articulos||[]).filter(a=>a.codigo&&a.descripcion).slice().sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
   const arts=artsO.map(a=>a.codigo+' — '+panolArtNombre(a)), umSug=artsO.map(a=>{ const u=panolUmSugerida(a.codigo)||a.um||''; return panolUmResolver(u)||u; });   // código de U.M. del diccionario (UNI, KG…)
-  const dests=panolDestinos().map(o=>o.cod+' — '+(o.desc||'')), ums=panolUmOpts();
+  const dests=panolDestinosSol().map(o=>o.cod+' — '+(o.desc||'')), ums=panolUmOpts();
   const defGal=panolGalDefecto(), gals=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre).sort((a,b)=>(a===defGal?-1:b===defGal?1:a.localeCompare(b)));
   const sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false).map(x=>x.nombre).sort((a,b)=>a.localeCompare(b,'es'));
   ['Artículos','Destinos','U.M.','U.M. sugerida','Solicitantes','Entregar en'].forEach((t,i)=>{ const c=ls.getCell(1,i+1); c.value=t; c.font={bold:true}; });
@@ -3419,10 +3419,11 @@ function openPanolSolEditar(id){
   const s=(DIC.panol_solicitudes||[]).find(x=>String(x.id)===String(id)); if(!s) return;
   if(!solPuedeEditar(s)){ toast(s.bloqueada?'Abastecimiento bloqueó esta solicitud: ya no se puede editar.':'Esta solicitud ya no se puede editar.'); return; }
   _SOL_ED={id, k:0, quitar:new Set(), nuevos:[]};
-  const it=solItems(id), ds=panolDestinos(), inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
+  const it=solItems(id), ds=panolDestinosSol(), inp='border:1px solid var(--line-strong);border-radius:6px;padding:4px 6px;font-size:12px';
   const galOpts=cur=>{ const l=(DIC.panol_galpones||[]).filter(g=>g.activo!==false).map(g=>g.nombre); if(cur&&!l.includes(cur)) l.push(cur); return '<option value="">—</option>'+l.map(n=>'<option value="'+esc(n)+'"'+(n===(cur||panolGalDefecto())?' selected':'')+'>'+esc(n)+'</option>').join(''); };
   window._SOL_GALOPTS=galOpts;
-  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(s.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
+  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(s.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')
+    +((s.destino_cod&&!ds.some(o=>String(o.cod)===String(s.destino_cod)))?'<option value="'+esc(s.destino_cod)+'" selected>'+esc(s.destino_txt||s.destino_cod)+'</option>':'');
   const filas=it.map(i=>{ const pend=solPend(i), fija=(+i.cantidad_entregada||0)+(+i.cantidad_anulada||0);
     return '<tr data-id="'+i.id+'"><td>'+esc(i.cod_articulo?panolArtTxt(i.cod_articulo):'⚠ '+(i.articulo_libre||''))+'</td>'
       +'<td><input type="number" step="any" min="'+fija+'" value="'+i.cantidad+'" class="ed-cant" style="width:80px;text-align:right;'+inp+'" title="Cantidad pedida. No puede ser menor a lo entregado más lo ya anulado ('+fmtNum(fija,3)+')"></td>'
@@ -3656,8 +3657,9 @@ function solSolicitanteOpts(sel){
 function panolSolNueva(){ openPanolSolBorrador({titulo:'Nueva solicitud', solicitante:MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:'', fecha:'', comentario:'', items:[{texto:'',cantidad:'',um:'UNI'}]}); }
 window.panolSolNueva=panolSolNueva;
 function openPanolSolBorrador(d){
-  _BD=d; const ds=panolDestinos();
-  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(d.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
+  _BD=d; const ds=panolDestinosSol();
+  const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(d.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')
+    +((d.destino_cod&&!ds.some(o=>String(o.cod)===String(d.destino_cod)))?'<option value="'+esc(d.destino_cod)+'" selected>'+esc(d.destino_cod)+'</option>':'');
   const filas=d.items.map(i=>solFilaHtml({texto:i.texto,cantidad:i.cantidad,um:i.um,galpon:i.galpon,fecha:i.fecha,comentario:i.comentario},{gal:1,fec:1})).join('');
   openModal(d.titulo||'Nueva solicitud',
     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+(d.kit?'Los materiales vienen del modelo <b>'+esc(d.kit.nombre)+'</b>'+(d.kit_cantidad!==1?' × '+fmtNum(d.kit_cantidad,3):'')+'. Lo que cambies acá vale <b>solo para esta solicitud</b>; para cambiarlo para siempre, editá el modelo.':'Revisá los datos y los materiales: lo que cambies vale solo para esta solicitud nueva.')+' El N° de OT se asigna al enviarla.</div>'
@@ -3842,7 +3844,7 @@ function herrSolFila(cod,d){
 }
 function herrSolicitud(pre){
   if(!herrArticulos().length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
-  const ds=panolDestinos(), hoy=herrHoy(); pre=pre||{};
+  const ds=panolDestinosSol(), hoy=herrHoy(); pre=pre||{};
   openModal('Solicitud de herramientas',
     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Indicá para dónde son y de cuándo a cuándo. Cada herramienta puede tener sus propias fechas; si las dejás vacías usa las generales. Abastecimiento asigna la serie al entregar.</div>'
     +'<div class="frow c2"><div class="field"><label>Para dónde (destino)</label><select id="hs_dest"><option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(pre.dest)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('')+'</select></div><div class="field"><label>Solicitante</label><select id="hs_sol">'+solSolicitanteOpts(pre.sol)+'</select></div></div>'
@@ -3858,7 +3860,7 @@ async function herrExcelBajar(){
   let EJ; try{ EJ=await panolExcelJS(); }catch(e){ toast('No se pudo cargar el generador de Excel. Verificá tu conexión e intentá de nuevo.'); return; }
   const wb=new EJ.Workbook(); wb.creator='4housing';
   const ws=wb.addWorksheet('Solicitud',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}}), ls=wb.addWorksheet('Listas',{properties:{tabColor:{argb:'FF9CA3AF'}}});
-  const hs=herrArticulos().map(a=>a.cod+' — '+a.desc+' (hay '+a.unid.length+')'), dests=panolDestinos().map(o=>o.cod+' — '+(o.desc||'')), sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false).map(x=>x.nombre).sort((a,b)=>a.localeCompare(b,'es'));
+  const hs=herrArticulos().map(a=>a.cod+' — '+a.desc+' (hay '+a.unid.length+')'), dests=panolDestinosSol().map(o=>o.cod+' — '+(o.desc||'')), sols=(DIC.panol_solicitantes||[]).filter(x=>x.activo!==false).map(x=>x.nombre).sort((a,b)=>a.localeCompare(b,'es'));
   ['Herramientas','Destinos','Solicitantes'].forEach((t,i)=>{ const c=ls.getCell(1,i+1); c.value=t; c.font={bold:true}; });
   hs.forEach((v,i)=>{ ls.getCell(i+2,1).value=v; }); dests.forEach((v,i)=>{ ls.getCell(i+2,2).value=v; }); sols.forEach((v,i)=>{ ls.getCell(i+2,3).value=v; });
   [70,50,36].forEach((w,i)=>{ ls.getColumn(i+1).width=w; }); [64,14,18,18,40].forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
@@ -3949,7 +3951,7 @@ window.herrSolicitudGuardar=herrSolicitudGuardar;
 /* ---- Pedido ---- */
 function herrNuevoPedido(cod){
   const arts=herrArticulos(); if(!arts.length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
-  const ds=panolDestinos(), hoy=herrHoy();
+  const ds=panolDestinosSol(), hoy=herrHoy();
   openModal('Pedir herramienta',
     '<div class="frow c2"><div class="field"><label>Herramienta</label><select id="hp_art" onchange="herrPedidoAviso()">'+arts.map(a=>'<option value="'+esc(a.cod)+'"'+(a.cod===cod?' selected':'')+'>'+esc(a.cod+' · '+a.desc+' ('+a.unid.length+')')+'</option>').join('')+'</select></div>'
     +'<div class="field"><label>Cantidad</label><input id="hp_n" type="number" min="1" step="1" value="1" onchange="herrPedidoAviso()"></div></div>'
@@ -14211,6 +14213,8 @@ window.evalProvObraBlur=evalProvObraBlur;
 // Abastecimiento: obras del auxiliar 3 de Tango (misma lista que tenía el desplegable).
 // Destino de una erogación = Clasificación de renglón habilitada para compras (ej. ACOPIO, MANMOD, DTM, IF4430). Es otra lista que la de Obra del egreso clásico (auxiliar 3).
 function panolDestinos(){ return pnCache('destinos',[CLASIF_ALL,(CLASIF_ALL||[]).length],_panolDestinos0); }
+// Destinos para pedir en una solicitud (OT, herramientas): sin las herramientas individuales (categoría HERRAMIENTAS: XA…, XE…); en Erogaciones siguen estando
+function panolDestinosSol(){ const cat={}; (CLASIF_ALL||[]).forEach(r=>{ cat[r.cod]=String(r.categoria||'').toUpperCase(); }); return panolDestinos().filter(o=>cat[o.cod]!=='HERRAMIENTAS'); }
 function _panolDestinos0(){ return (CLASIF_ALL||[]).filter(r=>String(r.habil_comp||'').toLowerCase()==='si').map(r=>({cod:r.cod, desc:r.desc||''})).sort((a,b)=>String(a.cod).localeCompare(String(b.cod),'es',{numeric:true})); }
 function panolDestinoNom(cod){ const o=(CLASIF_ALL||[]).find(x=>x.cod===cod); return o?(o.desc||cod):cod; }
 function comboPanolDestino(){ comboObra('pn_obra_q','pn_obra',panolErogDestino,panolDestinos); panolComboMark(document.getElementById('pn_obra_q')); }
