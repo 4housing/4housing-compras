@@ -2685,7 +2685,6 @@ function renderPanol(){
   if(PANOL_TAB==='herr') return renderPanolHerr();
   if(PANOL_TAB==='precios') return renderPanolPrecios();
   if(PANOL_TAB==='anal') return renderPanolAnalisis();
-  if(PANOL_TAB==='conc') return renderPanolConc();
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||(+b.id)-(+a.id));
   const pendientesTot=(DIC.panol_egresos||[]).filter(r=>!r.exportado).length;
@@ -2939,163 +2938,7 @@ function renderPanolAnalisis(){
     +'<div style="padding:0 16px 16px">'+cuerpo+'</div></div>';
 }
 
-/* ===================== Conciliación del mes contra el movimiento de stock ("stock completo") =====================
-   Se carga una vez el Excel de valorización (hoja MOVIMIENTO STOCK COMPLETO) como referencia del período. La comparación se calcula en vivo
-   contra las erogaciones cargadas: a medida que se corrigen precios o cantidades, las diferencias se actualizan solas. Por IF y por artículo. */
-let PANOL_REF=null, PANOL_REF_ERR='', PANOL_CONC={f:'dif', q:'', dest:'', sort:null};
-async function panolRefCargar(){
-  if(DEMO_MODE){ PANOL_REF=PANOL_REF||[]; return; }
-  try{ PANOL_REF=await sbFetchAll('/compras_panol_ref_stock?select=*&order=id.asc'); PANOL_REF_ERR=''; }
-  catch(e){ PANOL_REF=[]; PANOL_REF_ERR=String(e.message||e); }
-}
-function concSet(k,v){ PANOL_CONC[k]=v; renderPanol(); }
-function concSort(ev,k){ if(ev&&ev.target&&ev.target.closest&&ev.target.closest('.xlfbtn,.col-resizer')) return; const c=PANOL_CONC.sort; PANOL_CONC.sort={k, dir:(c&&c.k===k&&c.dir===1)?-1:1}; renderPanol(); }
-window.concSet=concSet; window.concSort=concSort;
-const _cnN=s=>String(s||'').replace(/\s+/g,' ').trim().toUpperCase();
-function panolConcCalcular(per){
-  const app=(DIC.panol_egresos||[]).filter(r=>+r.periodo===per), ref=(PANOL_REF||[]).filter(r=>+r.periodo===per), dest=PANOL_CONC.dest;
-  const kApp=r=>r.cod_articulo||('~'+_cnN(r.articulo_libre)), kRef=r=>r.cod_articulo||('~'+_cnN(r.articulo));
-  const D=new Map(), A=new Map();
-  const dget=k=>{ let o=D.get(k); if(!o){ o={k, app:0, ref:0, n:0}; D.set(k,o); } return o; };
-  app.forEach(r=>{ const o=dget(r.proyecto_cod||'(sin destino)'); o.app+=+r.total_ars||0; o.n++; });
-  ref.forEach(r=>{ dget(r.destino_cod||('?'+(r.if_txt||''))).ref+=+r.total_ars||0; });
-  const aget=(k,n)=>{ let o=A.get(k); if(!o){ o={k, nombre:n, qa:0, qr:0, ta:0, tr:0, pa:new Set(), pr:new Set(), refUsd:0, nApp:0}; A.set(k,o); } return o; };
-  app.filter(r=>!dest||r.proyecto_cod===dest).forEach(r=>{ const o=aget(kApp(r), r.cod_articulo?panolArtTxt(r.cod_articulo).replace(' — ',' · '):'⚠ '+(r.articulo_libre||'')); o.qa+=+r.cantidad||0; o.ta+=+r.total_ars||0; o.pa.add(+(+r.costo_unit_ars||0).toFixed(2)); o.nApp++; });
-  ref.filter(r=>!dest||r.destino_cod===dest).forEach(r=>{ const o=aget(kRef(r), r.cod_articulo?panolArtTxt(r.cod_articulo).replace(' — ',' · '):'⚠ '+(r.articulo||'')); o.qr+=+r.cantidad||0; o.tr+=+r.total_ars||0; o.pr.add(+(+r.precio_ars||0).toFixed(2)); if(+r.precio_usd>0) o.refUsd=+r.precio_usd; });
-  const art=[...A.values()].map(o=>{
-    const pu=o.qa?o.ta/o.qa:0, ru=o.qr?o.tr/o.qr:0, dq=o.qa-o.qr, dt=o.ta-o.tr;
-    const estado=!o.qr?'Solo en la app':!o.qa?'Solo en la referencia':Math.abs(dq)>1e-9?'Cantidad distinta':Math.abs(dt)>=1?'Precio distinto':'OK';
-    return {...o, pu, ru, dq, dt, estado, multi:o.pa.size>1};
-  });
-  return {app, ref, dest:[...D.values()], art};
-}
-function panolConcCuerpo(per){
-  const R=panolConcCalcular(per), F=PANOL_CONC;
-  const totApp=R.dest.reduce((a,x)=>a+x.app,0), totRef=R.dest.reduce((a,x)=>a+x.ref,0);
-  const nPrecio=R.art.filter(x=>x.estado==='Precio distinto').length, nCant=R.art.filter(x=>x.estado==='Cantidad distinta').length, nSolo=R.art.filter(x=>/^Solo/.test(x.estado)).length;
-  const kpi=(l,v,warn)=>'<div style="flex:1;min-width:160px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 14px;background:#fff"><div style="font-size:11px;color:var(--muted)">'+l+'</div><div style="font-size:17px;font-weight:700;'+(warn?'color:#b3261e':'')+'">'+v+'</div></div>';
-  xlfRegister('concart',{ rows:()=>R.art, onChange:renderPanol, val:(r,col)=>col==='estado'?r.estado:r.nombre });
-  const th=(k,l)=>{ const fl=F.sort&&F.sort.k===k?(F.sort.dir===1?' ▲':' ▼'):''; if(k==='nombre'||k==='estado') return xlfTh('concart',l,k).replace('<th style="white-space:nowrap">'+esc(l),'<th style="white-space:nowrap;cursor:pointer" title="Ordenar" onclick="concSort(event,\''+k+'\')">'+esc(l)+fl); return '<th style="cursor:pointer;white-space:nowrap" title="Ordenar" onclick="concSort(event,\''+k+'\')">'+l+fl+'</th>'; };
-  const ord=(rows,def)=>{ const S=F.sort; if(!S) return rows.sort(def); return rows.sort((a,b)=>{ const x=a[S.k], y=b[S.k]; return (typeof x==='number'||typeof y==='number'?((+x||0)-(+y||0)):String(x||'').localeCompare(String(y||''),'es'))*S.dir; }); };
-  const dRows=R.dest.map(x=>({...x,dif:x.app-x.ref,dl:(x.k.startsWith('?')?'(sin resolver) '+x.k.slice(1):anDestTxt(x.k))})).sort((a,b)=>Math.abs(b.dif)-Math.abs(a.dif));
-  const tDest='<div class="tbl-hscroll tbl-compact" style="max-height:300px"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblConcDest"><thead><tr><th>Destino</th><th>Movs. app</th><th>Total app (ARS)</th><th>Total referencia (ARS)</th><th>Diferencia (app − ref.)</th></tr></thead><tbody>'
-    +dRows.map(x=>'<tr><td>'+esc(x.dl)+'</td><td style="text-align:right">'+x.n+'</td><td style="text-align:right">'+fmtNum(x.app,2)+'</td><td style="text-align:right">'+fmtNum(x.ref,2)+'</td><td style="text-align:right;'+(Math.abs(x.dif)>=1?'color:#b3261e;font-weight:600':'color:#2f6f5e')+'">'+fmtNum(x.dif,2)+'</td></tr>').join('')
-    +'</tbody><tfoot><tr style="font-weight:700"><td>TOTAL</td><td style="text-align:right">'+R.app.length+'</td><td style="text-align:right">'+fmtNum(totApp,2)+'</td><td style="text-align:right">'+fmtNum(totRef,2)+'</td><td style="text-align:right">'+fmtNum(totApp-totRef,2)+'</td></tr></tfoot></table></div>';
-  const words=F.q.toLowerCase().split(/\s+/).filter(Boolean);
-  let aRows=R.art.filter(x=>xlfPass('concart',x)&&(F.f==='todo'||(F.f==='dif'?x.estado!=='OK':F.f==='precio'?x.estado==='Precio distinto':F.f==='cant'?x.estado==='Cantidad distinta':/^Solo/.test(x.estado)))&&(!words.length||words.every(w=>x.nombre.toLowerCase().includes(w))));
-  ord(aRows,(a,b)=>Math.abs(b.dt)-Math.abs(a.dt)); window._CONC_ROWS=aRows;
-  const cerr=panolPeriodoCerrado(per), puede=canEditOG()&&!cerr;
-  const tArt='<div class="tbl-hscroll tbl-compact" style="max-height:520px"><table class="grid tbl-ajustada" style="font-size:11.5px" id="tblConcArt"><thead><tr>'+th('nombre','Artículo')+th('estado','Estado')+th('qa','Cant. app')+th('qr','Cant. ref.')+th('pu','Precio unit. app')+th('ru','Precio unit. ref.')+th('ta','Total app')+th('tr','Total ref.')+th('dt','Diferencia')+'<th></th></tr></thead><tbody>'
-    +(aRows.length?aRows.slice(0,600).map((x,i)=>'<tr><td>'+esc(x.nombre)+'</td><td><span class="badge '+(x.estado==='OK'?'b-verde':'b-rojo')+'">'+esc(x.estado)+'</span></td><td style="text-align:right">'+fmtNum(x.qa,2)+'</td><td style="text-align:right">'+fmtNum(x.qr,2)+'</td>'
-      +'<td style="text-align:right"'+(x.multi?' title="Hay más de un precio para este artículo en la app (promedio ponderado)"':'')+'>'+fmtNum(x.pu,2)+(x.multi?' *':'')+'</td><td style="text-align:right">'+fmtNum(x.ru,2)+'</td><td style="text-align:right">'+fmtNum(x.ta,2)+'</td><td style="text-align:right">'+fmtNum(x.tr,2)+'</td>'
-      +'<td style="text-align:right;'+(Math.abs(x.dt)>=1?'color:#b3261e;font-weight:600':'')+'">'+fmtNum(x.dt,2)+'</td>'
-      +'<td>'+(puede&&x.qa&&x.ru>0&&Math.abs(x.pu-x.ru)>=0.005?'<button class="btn ghost sm" style="white-space:nowrap" onclick="panolConcAplicar('+i+')">Usar precio ref.</button>':'')+'</td></tr>').join('')
-      :'<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">Nada para mostrar con este filtro.</td></tr>')+'</tbody></table></div>'+(aRows.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 4px">Mostrando 600 de '+aRows.length+'. Acotá con el buscador.</div>':'');
-  const destOpts=[['','Todos los destinos']].concat(R.dest.map(x=>[x.k,x.k.startsWith('?')?'(sin resolver) '+x.k.slice(1):anDestTxt(x.k)]).sort((a,b)=>a[1].localeCompare(b[1])));
-  return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+kpi('Total app','$ '+fmtNum(totApp,2))+kpi('Total referencia','$ '+fmtNum(totRef,2))+kpi('Diferencia','$ '+fmtNum(totApp-totRef,2),Math.abs(totApp-totRef)>=1)+kpi('Artículos con precio distinto',nPrecio,nPrecio>0)+kpi('Con cantidad distinta',nCant,nCant>0)+kpi('Sin par',nSolo,nSolo>0)+'</div>'
-    +'<h4 style="margin:0 0 6px;font-size:13px">Por destino (IF)</h4>'+tDest
-    +'<h4 style="margin:16px 0 6px;font-size:13px">Por artículo</h4><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">'
-    +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Mostrar<select onchange="concSet(\'f\',this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+[['dif','Solo con diferencia'],['precio','Solo precio distinto'],['cant','Solo cantidad distinta'],['solo','Solo sin par'],['todo','Todos']].map(o=>'<option value="'+o[0]+'"'+(F.f===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select></label>'
-    +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Destino<select onchange="concSet(\'dest\',this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px;max-width:240px">'+destOpts.map(o=>'<option value="'+esc(o[0])+'"'+(F.dest===o[0]?' selected':'')+'>'+esc(o[1])+'</option>').join('')+'</select></label>'
-    +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar artículo<input value="'+esc(F.q)+'" onchange="concSet(\'q\',this.value)" placeholder="código o nombre…" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px;width:200px"></label>'
-    +''+xlfClearAllBtn('concart').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblConcArt\')">Auto-ajustar columnas</button><button class="btn ghost sm" onclick="panolConcExportar()">Exportar Excel</button></div>'
-    +(cerr?'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Período cerrado: los precios están congelados, no se pueden cambiar desde acá.</div>':'')
-    +tArt+'<div style="font-size:11px;color:var(--muted);padding:6px 4px">Diferencia = total app − total referencia. Los precios de la app salen del mes cargado; "Usar precio ref." los reemplaza (como precio manual) en todas las filas de ese artículo del período, previa confirmación.</div>';
-}
-function panolConcExportar(){
-  const x=window._CONC_ROWS||[]; if(!x.length){ toast('No hay filas para exportar'); return; }
-  const aoa=[['Artículo','Estado','Cant. app','Cant. referencia','Precio unit. app','Precio unit. referencia','Total app','Total referencia','Diferencia']].concat(x.map(r=>[r.nombre,r.estado,r.qa,r.qr,+r.pu.toFixed(4),+r.ru.toFixed(4),+r.ta.toFixed(2),+r.tr.toFixed(2),+r.dt.toFixed(2)]));
-  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Conciliación'); XLSX.writeFile(wb,'Conciliacion_Panol_'+PANOL_PERIODO+'.xlsx'); toast('Exportado: '+x.length+' filas');
-}
-window.panolConcExportar=panolConcExportar;
-function panolConcAplicar(i){
-  const x=(window._CONC_ROWS||[])[i]; if(!x) return;
-  if(panolBloqueoCierre(PANOL_PERIODO)) return;
-  const n=(DIC.panol_egresos||[]).filter(r=>+r.periodo===PANOL_PERIODO&&(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===x.k&&(!PANOL_CONC.dest||r.proyecto_cod===PANOL_CONC.dest)).length;
-  openModal('Usar el precio de la referencia',
-    '<div style="font-size:14px;line-height:1.7"><b>'+esc(x.nombre)+'</b><br>Precio unitario en la app: <b>$ '+fmtNum(x.pu,2)+'</b> → precio de la referencia: <b>$ '+fmtNum(x.ru,2)+'</b><br>Se va a cambiar en <b>'+n+'</b> erogaciones de '+panolPerTxt(PANOL_PERIODO)+(PANOL_CONC.dest?' (solo del destino elegido)':' (de todos los destinos)')+'. Queda como precio manual y la observación de precio de esas filas se limpia. El USD sale de la referencia o, si no lo trae, del tipo de cambio de cada fecha.</div>',
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="pcaBtn" onclick="panolConcAplicarOk('+i+')">Cambiar precio</button>');
-}
-window.panolConcAplicar=panolConcAplicar;
-async function panolConcAplicarOk(i){
-  const x=(window._CONC_ROWS||[])[i]; if(!x) return;
-  if(panolBloqueoCierre(PANOL_PERIODO)) return;
-  const btn=document.getElementById('pcaBtn'); if(btn){ btn.disabled=true; btn.textContent='Cambiando…'; }
-  const per=PANOL_PERIODO, ars=+x.ru.toFixed(4);
-  const rows=(DIC.panol_egresos||[]).filter(r=>+r.periodo===per&&(r.cod_articulo||('~'+_cnN(r.articulo_libre)))===x.k&&(!PANOL_CONC.dest||r.proyecto_cod===PANOL_CONC.dest));
-  try{
-    for(let j=0;j<rows.length;j+=10){
-      await Promise.all(rows.slice(j,j+10).map(async r=>{
-        const usd=x.refUsd>0?x.refUsd:(()=>{ const tc=panolTcOficial(String(r.fecha).slice(0,10))||((+r.costo_unit_usd>0&&+r.costo_unit_ars>0)?r.costo_unit_ars/r.costo_unit_usd:0); return tc?ars/tc:0; })();
-        const pr=panolCamposPrecio(r.cod_articulo||'', per, +r.cantidad||0, {ars, usd});
-        const upd={costo_unit_ars:pr.costo_unit_ars, costo_unit_usd:pr.costo_unit_usd, total_ars:pr.total_ars, total_usd:pr.total_usd, fuente_precio:'Manual', precio_fecha_ref:null, precio_proveedor:null, precio_oc:null, desvio_tc:null, var_tango:null};
-        const all=panolCsv(panolAlertaDe({control:'OK'}, !r.cod_articulo, panolOperarioSinAlta(r.operario)));
-        Object.assign(upd, panolCamposAprobacion({pend:all,aprob:[],por:'',en:''}, ars));
-        if(!DEMO_MODE) await sbEgr('/compras_panol_egresos?id=eq.'+r.id,'PATCH',upd,'return=minimal');
-        Object.assign(r,upd);
-      }));
-    }
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Cambiar precio'; } toast('No se pudo cambiar todo: '+(e.message||e)); renderPanol(); return; }
-  closeModal(); toast('Precio actualizado en '+rows.length+' erogaciones'); renderPanol();
-}
-window.panolConcAplicarOk=panolConcAplicarOk;
-function openPanolRefImport(){
-  openModal('Cargar el stock completo como referencia',
-    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Subí el Excel de valorización del mes (hoja <b>MOVIMIENTO STOCK COMPLETO</b>, con columnas PERIODO, ARTICULO, IF, U.M, Cantidad, Precio, TOTAL, UNIT. USD, TOTAL USD). Reemplaza la referencia que hubiera de ese período; no toca las erogaciones.</div>'
-    +'<div class="field"><label>Excel (.xlsx) *</label><input id="pcr_file" type="file" accept=".xlsx,.xlsm,.xls"></div><div id="pcrMsg" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>',
-    '<button class="btn ghost" onclick="closeModal()">Cerrar</button><button class="btn" id="pcrBtn" onclick="panolRefImportar()">Cargar</button>');
-}
-window.openPanolRefImport=openPanolRefImport;
-async function panolRefImportar(){
-  const f=(document.getElementById('pcr_file').files||[])[0], msg=document.getElementById('pcrMsg');
-  if(!f){ msg.style.color='#b3261e'; msg.textContent='Necesito el archivo.'; return; }
-  msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
-  try{
-    const wb=await _syncReadWb(f);
-    const esHoja=rows=>rows.length&&(h=>_syncIdx(h,'ARTICULO','Artículo')>=0&&_syncIdx(h,'IF')>=0&&_syncIdx(h,'Cantidad')>=0&&_syncIdx(h,'TOTAL')>=0)(rows[0].map(_syncNorm));
-    const leer=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''});
-    const nom=wb.SheetNames.find(n=>/COMPLETO/i.test(n))||wb.SheetNames.find(n=>esHoja(leer(n)));
-    if(!nom) throw new Error('No encontré la hoja MOVIMIENTO STOCK COMPLETO (columnas ARTICULO, IF, Cantidad, TOTAL).');
-    const rows=leer(nom); if(!esHoja(rows)) throw new Error('La hoja "'+nom+'" no tiene las columnas ARTICULO, IF, Cantidad y TOTAL.');
-    const H=rows[0].map(_syncNorm), ix=(...c)=>_syncIdx(H,...c);
-    const iP=ix('PERIODO'), iA=ix('ARTICULO','Artículo'), iI=ix('IF'), iU=ix('U.M','UM'), iQ=ix('Cantidad'), iPr=ix('Precio'), iT=ix('TOTAL'), iPu=ix('UNIT. USD'), iTu=ix('TOTAL USD'), iC=ix('COD TANGO'), iO=ix('OBSERVACION','Observación');
-    const num=v=>typeof v==='number'?v:_syncNum(v);
-    let per=PANOL_PERIODO; const mp=String(rows[1]&&rows[1][iP]||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*AL/i); if(mp){ const y=+mp[3]<100?2000+ +mp[3]:+mp[3]; per=y*100+ +mp[2]; }
-    const out=[]; let sinDest=0, sinArt=0;
-    for(let i=1;i<rows.length;i++){
-      const r=rows[i], art=_syncNorm(r[iA]); if(!art) continue;
-      const ifx=_syncNorm(r[iI]), d=ppResolverDestino(ifx), cd=iC>=0?_syncNorm(r[iC]):'', aC=(cd&&panolArtPorCod(cd))?{cod:cd}:panolArtResolver(art);
-      if(!d) sinDest++; if(!aC.cod) sinArt++;
-      out.push({periodo:per, destino_cod:d?d.cod:null, if_txt:ifx, cod_articulo:aC.cod||null, articulo:art, um:iU>=0?_syncNorm(r[iU]):null, cantidad:num(r[iQ]), precio_ars:num(r[iPr]), total_ars:num(r[iT]), precio_usd:iPu>=0?num(r[iPu]):null, total_usd:iTu>=0?num(r[iTu]):null, observacion:iO>=0?(_syncNorm(r[iO])||null):null, cargado_por:panolUsuario()});
-    }
-    if(!out.length) throw new Error('La hoja no tiene filas con artículo.');
-    msg.textContent='Guardando '+out.length+' líneas del período '+panolPerTxt(per)+'…';
-    if(DEMO_MODE){ PANOL_REF=(PANOL_REF||[]).filter(x=>+x.periodo!==per).concat(out.map((o,k)=>({id:k+1,...o}))); }
-    else{
-      await sbFetch('/compras_panol_ref_stock?periodo=eq.'+per,{method:'DELETE',prefer:'return=minimal'});
-      for(let k=0;k<out.length;k+=200) await sbFetch('/compras_panol_ref_stock',{method:'POST',body:JSON.stringify(out.slice(k,k+200)),prefer:'return=minimal'});
-      await panolRefCargar();
-    }
-    PANOL_PERIODO=per; closeModal();
-    toast('Referencia cargada: '+out.length+' líneas de '+panolPerTxt(per)+(sinArt?' · '+sinArt+' sin artículo reconocido':'')+(sinDest?' · '+sinDest+' con destino sin resolver':'')); renderPanol();
-  }catch(e){ msg.style.color='#b3261e'; msg.textContent='Error: '+(e.message||e)+(/compras_panol_ref_stock/.test(String(e.message||e))?' (¿ya se corrió sql/2026-10_panol_ref_stock.sql?)':''); }
-}
-window.panolRefImportar=panolRefImportar;
-function renderPanolConc(){
-  if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
-  if(PANOL_REF==null){ C().innerHTML=panolTabs()+'<div class="card"><div style="padding:20px;color:var(--muted)">Cargando la referencia…</div></div>'; panolRefCargar().then(()=>{ if(PANOL_TAB==='conc') renderPanol(); }); return; }
-  const per=PANOL_PERIODO, ref=PANOL_REF.filter(r=>+r.periodo===per);
-  const pMes=String(per).slice(4,6), pAnio=String(per).slice(0,4);
-  const periodoInput='<input type="month" value="'+pAnio+'-'+pMes+'" onchange="setPanolPeriodo(this.value)" style="border:1px solid var(--line-strong);border-radius:8px;padding:4px 6px;font-size:12.5px">';
-  const quien=ref[0]?(' · cargada por '+esc(ref[0].cargado_por||'?')+(ref[0].cargado_en?' el '+fmtDate(String(ref[0].cargado_en).slice(0,10)):'')):'';
-  C().innerHTML=panolTabs()
-    +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Conciliación con el stock completo</h3><span class="meta">Período '+periodoInput+' · '+(ref.length?ref.length+' líneas de referencia'+quien:'sin referencia cargada')+'</span>'
-    +'<span style="margin-left:auto"><button class="btn sm" onclick="openPanolRefImport()">'+(ref.length?'Reemplazar':'Cargar')+' referencia (Excel)</button></span></div>'
-    +'<div style="padding:0 16px 16px">'
-    +(PANOL_REF_ERR?'<div style="background:#fdecea;color:#8a1f17;border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:10px">No se pudo leer la tabla de referencia: '+esc(PANOL_REF_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_ref_stock.sql</b> en Supabase?</div>':'')
-    +(ref.length?panolConcCuerpo(per):'<div style="padding:18px 4px;color:var(--muted);font-size:13px">Cargá el Excel de valorización del mes para comparar. Después, a medida que corrijas precios o cantidades en Erogaciones, las diferencias se actualizan solas.</div>')
-    +'</div></div>';
-}
+const _cnN=s=>String(s||'').replace(/\s+/g,' ').trim().toUpperCase();   // normaliza el nombre de un artículo sin código (lo usan Precios y el informe de cierre)
 
 /* ===================== Solapa Precios: precio de referencia por artículo y mes =====================
    Lista los artículos que aparecen en las erogaciones del mes con el precio con el que se están valorizando. Modificar un precio lo guarda para
@@ -4159,7 +4002,7 @@ function panolTabs(){
   const tab=(id,lbl)=>'<button class="mtab'+(PANOL_TAB===id?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
   let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length; }catch(e){}
   const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
-  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('conc','Conciliación')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
+  return '<div class="mtabs" style="margin:4px 0 14px">'+tab('egresos','Egresos y saldos')+tab('sol','Solicitudes'+(nSol?' ('+nSol+')':''))+tab('kits','Modelos de Kits')+tab('herr','Herramientas'+(nHerr?' ⚠'+nHerr:''))+tab('erog','Erogaciones')+tab('precios','Precios')+tab('anal','Análisis')+tab('dic','Diccionario pañol')+tab('cierres','Cierres de mes')+'</div>';
 }
 const PANOL_TOL_TC=0.05, PANOL_TOL_TANGO=0.05;          // mismas tolerancias que la hoja Cierres del Excel
 // Qué auxiliar contable pide cada clasificación de destino (tipo de auxiliar de Tango): 4 contenedor/módulo, 5 mant. bienes de uso, 6 muebles y útiles, 7 herramientas, 8 rodados
