@@ -9641,10 +9641,27 @@ function opColVal(p,col){
   if(col==='lugar') return pagoLugarPago(p)||ogLugarPago(o)||'(sin lugar)';   // el que se cargó al registrar ESTE pago; si es viejo y no lo tiene, el default de la OG
   if(col==='medio') return p.medio||'';
   if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
-  if(col==='asiento') return (p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente';
+  if(col==='asiento') return p._anulada?'Anulada':((p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente');
   return '';
 }
-function opUniqueVals(col){ const s=new Set(); (mem.pagos||[]).forEach(p=>{ const v=opColVal(p,col); if(v!=='') s.add(v); }); return [...s].sort((a,b)=>String(a).localeCompare(String(b),'es',{numeric:true})); }
+// OP anulada (compras_pagos_anulados) vista como un pago más, para mostrarla en su lugar dentro de la lista.
+function opAnuladaComoPago(a){
+  const d=a.datos||{};
+  return Object.assign({}, d, { id:'an'+a.id, op_numero:a.op_numero, og_id:a.og_id!=null?a.og_id:d.og_id, numero:a.og_numero!=null?a.og_numero:d.numero,
+    fecha:a.fecha_pago||d.fecha, moneda_pago:a.moneda_pago||d.moneda_pago, importe_pago:a.importe_pago!=null?a.importe_pago:d.importe_pago, _anulada:a });
+}
+// Orden por columna: clic en el título (no en ▾ ni en el borde de ajuste). Sin orden elegido = por N° de OP.
+let OP_SORT={k:null,dir:1};
+function opSort(ev,k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.opfbtn,.col-resizer')) return;
+  OP_SORT = (OP_SORT.k===k) ? {k, dir:-OP_SORT.dir} : {k, dir:1};
+  renderTesoreria();
+}
+window.opSort=opSort;
+let OP_VER_ANULADAS=true;   // las anuladas se ven dentro de la lista, en su número (pedido de Mica)
+function opToggleAnuladas(){ OP_VER_ANULADAS=!OP_VER_ANULADAS; renderTesoreria(); }
+window.opToggleAnuladas=opToggleAnuladas;
+function opUniqueVals(col){ const s=new Set(); (mem.pagos||[]).concat(OP_VER_ANULADAS?(mem.pagos_anulados||[]).map(opAnuladaComoPago):[]).forEach(p=>{ const v=opColVal(p,col); if(v!=='') s.add(v); }); return [...s].sort((a,b)=>String(a).localeCompare(String(b),'es',{numeric:true})); }
 let OP_FECHA={desde:'',hasta:''};
 function opFilterActive(col){ if(col==='fecha') return !!(OP_FECHA.desde||OP_FECHA.hasta); return !!(OP_FILTRO[col] && OP_FILTRO[col].length); }
 function opPassFilter(p){
@@ -9696,19 +9713,53 @@ window.openOpFilter=openOpFilter; window.opFilterSearch=opFilterSearch; window.o
 
 function opsView(){
   let pagos=(mem.pagos||[]).slice();
-  if(!pagos.length) return '<div class="card"><div class="empty">Todavía no se registraron pagos / órdenes de pago.</div></div>';
-  pagos=pagos.filter(opPassFilter);   // filtro tipo Excel
+  if(!pagos.length && !(mem.pagos_anulados||[]).length) return '<div class="card"><div class="empty">Todavía no se registraron pagos / órdenes de pago.</div></div>';
+  // Las anuladas van en la misma lista, en su número (tachadas, con motivo, quién y cuándo); no suman a los totales.
+  const anuladas=OP_VER_ANULADAS?(mem.pagos_anulados||[]).map(opAnuladaComoPago):[];
+  pagos=pagos.concat(anuladas).filter(opPassFilter);   // filtro tipo Excel
   pagos.sort((a,b)=>((+a.op_numero||1e9)-(+b.op_numero||1e9)) || (String(a.numero||'').localeCompare(String(b.numero||''))));
+  const montos=p=>{ const imp=+p.importe_pago||0, tc=+p.tc||0; return p.moneda_pago==='USD' ? {usd:imp, ars:tc?imp*tc:null} : {ars:imp, usd:tc?imp/tc:null}; };
+  const clavesOrden={ op:p=>+p.op_numero||null, fecha:p=>p.fecha, og:p=>+p.numero||p.numero, tc:p=>+p.tc||null, usd:p=>montos(p).usd, ars:p=>montos(p).ars };
+  if(OP_SORT.k){
+    const fn=clavesOrden[OP_SORT.k]||(p=>opColVal(p,OP_SORT.k));
+    pagos=pagos.slice().sort((x,y)=>{ const a=fn(x), b=fn(y);
+      if(a==null||a==='') return 1; if(b==null||b==='') return -1;   // vacíos siempre al final
+      return ((typeof a==='number'&&typeof b==='number')?a-b:String(a).localeCompare(String(b),'es',{numeric:true}))*OP_SORT.dir; });
+  }
   let totARS=0, totUSD=0;
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const hayFiltroOp=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
+  // Números salteados sin ningún registro (ni pago ni anulada): solo sin filtros, para no confundir con lo filtrado.
+  const huecos={};
+  if(OP_VER_ANULADAS && !hayFiltroOp && (!OP_SORT.k || (OP_SORT.k==='op' && OP_SORT.dir===1))){
+    const usados=new Set(); (mem.pagos||[]).concat(mem.pagos_anulados||[]).forEach(x=>{ const n=parseInt(x.op_numero,10); if(n>0) usados.add(n); });
+    const ns=[...usados].sort((a,b)=>a-b);
+    for(let i=1;i<ns.length;i++) if(ns[i]-ns[i-1]>1) huecos[ns[i-1]]=[ns[i-1]+1, ns[i]-1];   // clave: el número después del cual va la fila
+  }
+  const filaHueco=([d,h])=>'<tr><td></td><td colspan="15" style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px 12px">'
+    +'OP '+d+(h>d?'–'+h:'')+': sin registro. El número quedó salteado (una carga que falló igual consume el número) o se eliminó antes de que existiera el registro de OP anuladas.</td></tr>';
   const rows=pagos.map(p=>{
     const o=ogById(p.og_id)||{};
     const mon=p.moneda_pago; const imp=+p.importe_pago||0; const tc=+p.tc||0;
     let mUSD=null, mARS=null;
     if(mon==='USD'){ mUSD=imp; mARS = tc? imp*tc : null; }
     else { mARS=imp; mUSD = tc? imp/tc : null; }
-    if(mUSD!=null) totUSD+=mUSD; if(mARS!=null) totARS+=mARS;
     const caja=CAJAS[mon]?CAJAS[mon].nombre:mon;
+    const hueco=huecos[parseInt(p.op_numero,10)]?filaHueco(huecos[parseInt(p.op_numero,10)]):'';
+    if(p._anulada){
+      const a=p._anulada, tach='text-decoration:line-through;';
+      return '<tr style="color:var(--muted);background:#faf6f5"><td></td><td><strong style="'+tach+'">OP '+esc(p.op_numero!=null?p.op_numero:'—')+'</strong> <span class="badge b-rojo">Anulada</span></td>'
+        +'<td>'+fmtDate(p.fecha)+'</td><td>OG '+esc(p.numero||'—')+'</td>'
+        +'<td style="font-size:11px">'+esc(o.proveedor_cod||(a.datos||{}).proveedor_cod||'')+'</td><td>'+esc(o.clasif_og||'')+'</td>'
+        +'<td>'+esc(o.solp!=null&&o.solp!==''?o.solp:'—')+'</td><td style="font-size:11px">'+esc(o.comprador||'')+'</td>'
+        +'<td style="font-size:11px">'+esc(pagoLugarPago(p)||ogLugarPago(o)||'—')+'</td><td>'+esc(p.medio||'')+'</td><td style="font-size:11px">'+esc(caja||'')+'</td>'
+        +'<td style="text-align:right">'+(tc?fmtNum(tc,2):'—')+'</td>'
+        +'<td style="text-align:right;'+tach+'">'+(mUSD!=null?'US$ '+fmt2(mUSD):'—')+'</td>'
+        +'<td style="text-align:right;'+tach+'">'+(mARS!=null?'$ '+fmt2(mARS):'—')+'</td>'
+        +'<td colspan="2" style="font-size:11px;color:var(--ink);white-space:normal;min-width:180px"><strong>Motivo:</strong> '+esc(a.motivo||'—')
+        +'<div style="color:var(--muted);font-size:10.5px">'+_spCuando({fecha:a.anulado_en, autor:a.anulado_por})+(a.asiento_num?' · tenía asiento N° '+esc(a.asiento_num):'')+'</div></td></tr>'+hueco;
+    }
+    if(mUSD!=null) totUSD+=mUSD; if(mARS!=null) totARS+=mARS;
     return '<tr><td style="text-align:center"><input type="checkbox" class="opchk" value="'+esc(p.id)+'"></td><td><strong>OP '+esc(p.op_numero!=null?p.op_numero:'—')+'</strong></td>'
       +'<td>'+fmtDate(p.fecha)+'</td>'
       +'<td>OG '+esc(p.numero||'—')+'</td>'
@@ -9727,18 +9778,21 @@ function opsView(){
         +'<input type="text" id="asientoInp'+p.id+'" value="'+esc(p.asiento_num||'')+'" placeholder="N° asiento"'+(canAsiento()?'':' disabled')+' title="'+(canAsiento()?'N° de asiento en Tango, una vez importado y corregidos los auxiliares. Escribí y apretá Enter (o el ✓) para guardar — no se guarda solo con hacer click afuera.':'Solo un grupo chico de personas puede cargar el N° de asiento')+'" onkeydown="if(event.key===\'Enter\'){ guardarAsientoOP('+p.id+',this.value); this.blur(); }" style="width:62px;border:1px solid var(--line-strong);border-radius:6px;padding:3px 5px;font-size:11px'+(canAsiento()?'':';background:#f3f1e8;color:var(--muted);cursor:not-allowed')+'">'
         +(canAsiento()?'<button class="iconbtn" title="Guardar N° de asiento" onclick="guardarAsientoOP('+p.id+',document.getElementById(\'asientoInp'+p.id+'\').value)" style="flex:none">'+ICO.check+'</button>':'')
         +'</div></td>'
-      +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button>'+(canEliminarPago()?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+p.id+')">'+ICO.del+'</button>':'')+'</div></td></tr>';
+      +'<td><div class="row-actions"><button class="iconbtn" title="Imprimir orden de pago" onclick="exportPagoOP('+p.id+')">'+ICO.pdf+'</button>'+(canEliminarPago()?'<button class="iconbtn del" title="Eliminar pago" onclick="askDelPago('+p.id+')">'+ICO.del+'</button>':'')+'</div></td></tr>'+hueco;
   }).join('') || '<tr><td colspan="16" style="color:var(--muted);padding:14px">Ningún pago coincide con los filtros.</td></tr>';
   const foot='<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="12" style="text-align:right">Total mostrado</td>'
     +'<td style="text-align:right">'+(totUSD?'US$ '+fmt2(totUSD):'—')+'</td>'
     +'<td style="text-align:right">'+(totARS?'$ '+fmt2(totARS):'—')+'</td><td></td><td></td></tr>';
+  const fl=k=>OP_SORT.k===k?(OP_SORT.dir===1?' ▲':' ▼'):'';
+  const thS=(label,k,extra)=>'<th style="white-space:nowrap;cursor:pointer'+(extra||'')+'" title="Ordenar" onclick="opSort(event,\''+k+'\')">'+label+fl(k)+'</th>';
   const th=(label,col)=>{ if(!col) return '<th style="white-space:nowrap">'+label+'</th>';
     const opener= col==='fecha' ? 'openOpFechaFilter(event)' : ("openOpFilter('"+col+"',event)");
-    return '<th style="white-space:nowrap">'+label+' <button class="opfbtn" onclick="'+opener+'" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(opFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>'; };
-  const hayFiltro=Object.keys(OP_FILTRO).some(c=>opFilterActive(c))||opFilterActive('fecha');
-  const limpiar = hayFiltro ? '<button class="btn ghost sm" style="margin-left:auto" onclick="opFilterClearAll()">Limpiar filtros</button>' : '';
-  return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Cargá el N° de asiento de Tango una vez que lo corregiste e importaste, para llevar el control de qué quedó realmente asentado. Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+'</div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Lugar de pago','lugar')+th('Medio','medio')+th('Caja','caja')+'<th style="text-align:right">TC pago</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th>'+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>'
+    return '<th style="white-space:nowrap;cursor:pointer" title="Ordenar" onclick="opSort(event,\''+col+'\')">'+label+fl(col)+' <button class="opfbtn" onclick="'+opener+'" title="Filtrar" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px;color:'+(opFilterActive(col)?'var(--olive-deep)':'var(--muted)')+'">▾</button></th>'; };
+  const hayFiltro=hayFiltroOp;
+  const nAn=(mem.pagos_anulados||[]).length;
+  const btnAnuladas = nAn?'<button class="btn ghost sm" style="margin-left:8px" onclick="opToggleAnuladas()">'+(OP_VER_ANULADAS?'Ocultar anuladas':'Mostrar anuladas')+' ('+nAn+')</button>':'';
+  return '<div class="card"><div class="card-h"><h3>Órdenes de pago</h3><span class="meta">Una fila por OG pagada. Tildá las OP y exportá su asiento (lo arma finanzas después del pago). Cargá el N° de asiento de Tango una vez que lo corregiste e importaste, para llevar el control de qué quedó realmente asentado. Filtrá con ▾.</span><button class="btn ghost sm" style="margin-left:auto" onclick="exportAsientoSelCaja()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoSelTango()">Exportar asiento (Tango)</button>'+(hayFiltro?'<button class="btn ghost sm" style="margin-left:8px" onclick="opFilterClearAll()">Limpiar filtros</button>':'')+btnAnuladas+'</div>'
+    +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:28px;text-align:center"><input type="checkbox" onclick="opToggleAll(this)" title="Seleccionar todo"></th>'+th('OP N°','op')+th('Fecha','fecha')+th('OG','og')+th('Prov.','prov')+th('Clasif.','clasif')+th('SOLP','solp')+th('Comprador','comprador')+th('Lugar de pago','lugar')+th('Medio','medio')+th('Caja','caja')+''+thS('TC pago','tc')+thS('Monto USD','usd')+thS('Monto ARS','ars')+''+th('Asiento Tango','asiento')+'<th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+foot+'</tbody></table></div>'
     +opsAnuladasView();
 }
 // --- OP anuladas: registro de pagos eliminados (compras_pagos_anulados). No cuentan para caja, erogación ni asientos. ---
