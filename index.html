@@ -2980,7 +2980,7 @@ function renderPanolPrecios(){
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Precios de referencia de los materiales</h3><span class="meta">Período '+periodoInput+' · '+(shown.length!==lista.length?shown.length+' de ':'')+lista.length+' artículos'+(cerr?' · <b>mes cerrado: precios congelados</b>':'')+'</span>'
     +'<input value="'+esc(PANOL_PRQ)+'" placeholder="Buscar artículo…" onchange="PANOL_PRQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:200px">'
-    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('ppr').replace('margin-left:auto','')+(PANOL_PRQ?'<button class="btn ghost sm" onclick="PANOL_PRQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPrecios\')">Auto-ajustar columnas</button></span></div>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('ppr').replace('margin-left:auto','')+(PANOL_PRQ?'<button class="btn ghost sm" onclick="PANOL_PRQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button><button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button><button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPrecios\')">Auto-ajustar columnas</button></span></div>'
     +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Precio con el que se valorizan hoy las erogaciones del mes. <b>Modificar</b> lo guarda para ese artículo y mes y lo aplica a sus erogaciones abiertas; las que se carguen después también lo toman. Al cerrar el mes queda congelado.</div>'
     +(PANOL_PRECIOS_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudo leer la tabla de precios del mes: '+esc(PANOL_PRECIOS_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_precios_mes.sql</b> en Supabase? Sin eso los cambios no se guardan.</div>':'')
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolPrecios"><thead><tr>'
@@ -3111,7 +3111,7 @@ function renderPanolSolicitudes(){
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Solicitudes de OT</h3><span class="meta">'+nAb+' abiertas'+(nVenc?' · <b style="color:#b3261e">'+nVenc+' vencidas</b>':'')+' · '+shown.length+' de '+todas.length+' mostradas'+(gest?'':' · solo las tuyas')+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('psol').replace('margin-left:auto','')
-    +'<button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="herrSolicitud()">Solicitud de herramientas</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn sm" onclick="openPanolSolSubir()">'+ICO.plus+'Subir solicitud</button></span></div>'
+    +'<button class="btn sm" onclick="panolSolNueva()">'+ICO.plus+'Nueva solicitud</button><button class="btn ghost sm" onclick="openPanolSolDesdeKit()">Nueva desde modelo</button><button class="btn ghost sm" onclick="herrSolicitud()">Solicitud de herramientas</button><button class="btn ghost sm" onclick="panolSolPlantilla()">Bajar Excel de solicitud</button><button class="btn ghost sm" onclick="openPanolSolSubir()">Subir solicitud</button></span></div>'
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:0 16px 10px">'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_SOL.f.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas (pendientes, en preparación, parciales)')+sel('todas','Todas')+PANOL_SOL_ESTADOS.map(e=>sel(e,e)).join('')+'</select></label>'
       +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Buscar<input value="'+esc(F.q)+'" placeholder="N° de OT, solicitante, destino…" onchange="PANOL_SOL.f.q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:240px"></label></div>'
@@ -3646,6 +3646,9 @@ function solSolicitanteOpts(sel){
   l=l.filter(Boolean).sort((a,b)=>a.localeCompare(b,'es'));
   return l.map(n=>'<option value="'+esc(n)+'"'+(_syncFold(n)===_syncFold(sel||yo)?' selected':'')+'>'+esc(n)+'</option>').join('');
 }
+// Solicitud simple: sin modelo, se carga a mano (materiales y, opcional, herramientas)
+function panolSolNueva(){ openPanolSolBorrador({titulo:'Nueva solicitud', solicitante:MI_NOMBRE||(AUTH_USER&&AUTH_USER.email)||'', destino_cod:'', fecha:'', comentario:'', items:[{texto:'',cantidad:'',um:'UNI'}]}); }
+window.panolSolNueva=panolSolNueva;
 function openPanolSolBorrador(d){
   _BD=d; const ds=panolDestinos();
   const destOpts='<option value="">— elegí —</option>'+ds.map(o=>'<option value="'+esc(o.cod)+'"'+(String(o.cod)===String(d.destino_cod)?' selected':'')+'>'+esc(o.cod+' — '+(o.desc||''))+'</option>').join('');
@@ -4348,16 +4351,13 @@ function renderPanolErog(){
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
       +'<td><div class="row-actions">'+panolBtnAprobar(r,cerr)+(r.exportado||cerr?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
     : '<tr><td colspan="19" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
-  const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" para precios por mes.</div>':'')
+  const aviso=(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" (solapa Precios) para precios por mes.</div>':'')
     +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Erogaciones de materiales</h3>'
       +'<span class="meta">Período '+periodoInput+(cerr?' <span class="badge b-gris">🔒 Cerrado</span>':'')+' · '+shown.length+' de '+base.length+' · $ '+fmtNum(totArs,2)+' ARS / US$ '+fmtNum(totUsd,2)+(conAlerta?' · <b style="color:#b3261e">'+conAlerta+' con alarma</b>':'')+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pnl')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolErog\')">Auto-ajustar columnas</button>'
-      +'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button>'
-      +'<button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button>'
-      +'<button class="btn ghost sm" onclick="openPanolAsiento('+PANOL_PERIODO+')">Asiento propuesto</button>'
       +(canEditOG()&&!cerr&&base.some(r=>panolPendAprobables(r).length)?'<button class="btn ghost sm" onclick="openPanolAprobar()">Aprobar observaciones de precio ('+base.filter(r=>panolPendAprobables(r).length).length+')</button>':'')
       +'<button class="btn ghost sm" onclick="panolExportErogExcel()">Exportar Excel</button>'
       +'<button class="btn ghost sm" onclick="openPanolPlanilla()">Planilla de carga</button>'
@@ -5523,7 +5523,7 @@ function renderPanolCierres(){
     const cer=est(f)==='Cerrado', h=ult(f), tieneHist=!!(f.c&&(f.c.historial||[]).length);
     const acc=(ROLE.admin?(cer?'<button class="btn ghost sm" onclick="openPanolReabrir('+f.per+')">Reabrir</button>':'<button class="btn sm" onclick="openPanolCerrar('+f.per+')">Cerrar mes</button>'):'')
       +(tieneHist?' <button class="btn ghost sm" onclick="openPanolCierreHist('+f.per+')">Historial</button>':'')
-      +(f.res.n?' <button class="btn ghost sm" onclick="openPanolInforme('+f.per+')">Informe</button>':'');
+      +(f.res.n?' <button class="btn ghost sm" onclick="openPanolInforme('+f.per+')">Informe</button> <button class="btn ghost sm" onclick="openPanolAsiento('+f.per+')">Asiento propuesto</button>':'');
     const num=v=>v?'<span style="color:#b3261e">'+v+'</span>':'0';
     return '<tr><td><b>'+panolPerTxt(f.per)+'</b></td><td>'+(cer?'<span class="badge b-gris">🔒 Cerrado</span>':'<span class="badge b-verde">Abierto</span>')+'</td>'
       +'<td style="text-align:right">'+f.res.n+'</td><td style="text-align:right">'+fmtNum(f.res.ars,2)+'</td><td style="text-align:right">'+fmtNum(f.res.usd,2)+'</td>'
