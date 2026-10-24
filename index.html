@@ -3810,7 +3810,9 @@ function herrResumen(a){
   }
   return {a,total,prest,mant,disp:Math.max(0,total-prest-mant),pend,vencidas,sem,falta};
 }
-const herrAlertas=()=>{ const r=herrArticulos().map(herrResumen); return {falta:r.filter(x=>x.falta), venc:(DIC.panol_herr||[]).filter(herrVencida)}; };
+// OM abiertas que se necesitan en una fecha y todavía no tienen fecha de regreso, o vuelven después
+const omUrgentes=()=>(DIC.panol_om||[]).filter(o=>omAbierta(o)&&o.fecha_necesidad&&(!o.fecha_regreso_estimada||herrF(o.fecha_regreso_estimada)>herrF(o.fecha_necesidad)));
+const herrAlertas=()=>{ const r=herrArticulos().map(herrResumen); return {falta:r.filter(x=>x.falta), venc:(DIC.panol_herr||[]).filter(herrVencida), om:omUrgentes()}; };
 function herrBadge(p){
   if(herrVencida(p)) return '<span class="badge b-rojo" title="Pasó la fecha de devolución">Prestada · vencida</span>';
   const c={'Solicitada':'b-ambar','Prestada':'b-gris','Devuelta':'b-verde','Mantenimiento':'b-ambar','Anulada':'b-rojo'}[p.estado]||'b-gris';
@@ -3823,18 +3825,19 @@ const herrEmail=nombre=>{ const sol=(DIC.panol_solicitantes||[]).find(x=>_syncFo
 function renderPanolHerr(){
   const gest=canPanol(), al=herrAlertas(), arts=herrArticulos();
   const vbtn=(id,l)=>'<button class="btn '+(PANOL_HERR_VISTA===id?'':'ghost ')+'sm" onclick="PANOL_HERR_VISTA=\''+id+'\';PANOL_HERR_Q=\'\';renderPanol()">'+l+'</button>';
-  const aviso=(al.falta.length||al.venc.length)
+  const aviso=(al.falta.length||al.venc.length||al.om.length)
     ?'<div style="margin:0 16px 10px;padding:9px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px;line-height:1.6">'
       +(al.falta.length?'<div><b>⚠ Faltan herramientas:</b> '+al.falta.map(x=>esc(x.a.desc||x.a.cod)+' (hay '+x.total+', se necesitan '+x.falta.n+' desde el '+fmtDate(x.falta.dia)+')').join(' · ')+'</div>':'')
+      +(al.om.length?'<div><b>⚠ Mantenimiento que no llega a tiempo:</b> '+al.om.map(o=>esc(o.nro_om)+' · '+esc(herrArtTxt(o.cod_articulo))+' '+esc(o.serie||'')+' (se necesita desde el '+fmtDate(o.fecha_necesidad)+(o.fecha_regreso_estimada?', vuelve el '+fmtDate(o.fecha_regreso_estimada):', sin fecha de regreso')+')').join(' · ')+'</div>':'')
       +(al.venc.length?'<div><b>⚠ Sin devolver pasada la fecha:</b> '+al.venc.map(p=>esc(herrArtTxt(p.cod_articulo))+' '+esc(p.serie||'')+' — '+esc(p.entregado_a||p.solicitante||'')+' (debía volver el '+fmtDate(p.hasta)+')').join(' · ')+'</div>':'')+'</div>':'';
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Herramientas</h3>'
-    +'<span style="display:flex;gap:6px">'+vbtn('disp','Disponibilidad y proyección')+vbtn('ped','Pedidos y préstamos')+'</span>'
+    +'<span style="display:flex;gap:6px">'+vbtn('disp','Disponibilidad y proyección')+vbtn('ped','Pedidos y préstamos')+vbtn('om','Mantenimiento (OM)'+((DIC.panol_om||[]).filter(omAbierta).length?' ('+(DIC.panol_om||[]).filter(omAbierta).length+')':''))+'</span>'
     +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" onclick="herrNuevoPedido()">'+ICO.plus+'Pedir herramienta</button>'+(gest?'<button class="btn ghost sm" onclick="herrMantForm()">Enviar a mantenimiento</button>':'')+'</span></div>'
     +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Herramientas = artículos <b>GCHRR</b> de Series activas (cada serie es una herramienta; el Auxiliar de Tango se deduce por la serie). La herramienta <b>no se consume</b>: se presta de una fecha a otra y se devuelve.'+(gest?'':' Ves solo tus pedidos.')+'</div>'
     +(PANOL_HERR_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer los préstamos: '+esc(PANOL_HERR_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_herramientas.sql</b> en Supabase?</div>':'')
     +aviso
-    +(PANOL_HERR_VISTA==='disp'?herrHtmlDisp(arts):herrHtmlPed())+'</div>';
+    +(PANOL_HERR_VISTA==='disp'?herrHtmlDisp(arts):PANOL_HERR_VISTA==='om'?herrHtmlOM():herrHtmlPed())+'</div>';
 }
 function herrHtmlDisp(arts){
   const res=arts.map(herrResumen), sw=r=>r.falta?'Falta':(r.vencidas?'Sin devolver':'OK');
@@ -3860,17 +3863,18 @@ function herrHtmlPed(){
   xlfRegister('pherr',{rows:()=>rows, onChange:renderPanol, dateVal:p=>herrF(p.desde), val:(p,c)=>c==='art'?herrArtTxt(p.cod_articulo):c==='serie'?(p.serie||'(sin asignar)'):c==='dest'?(p.destino_txt||'(sin destino)'):c==='sol'?(p.solicitante||''):c==='est'?herrTxtEstado(p):c==='ent'?(p.entregado_a||''):''});
   if(!SP_SORT.pherr) SP_SORT.pherr={k:'id',dir:-1};
   const q=(PANOL_HERR_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
-  const lista=_spOrdenar('pherr',rows.filter(p=>xlfPass('pherr',p)&&(!q.length||q.every(w=>[p.cod_articulo,artDesc(p.cod_articulo),p.serie,p.destino_txt,p.solicitante,p.entregado_a,p.estado,p.nro_ot].join(' ').toLowerCase().includes(w)))),
+  const lista=_spOrdenar('pherr',rows.filter(p=>xlfPass('pherr',p)&&(!q.length||q.every(w=>[p.cod_articulo,artDesc(p.cod_articulo),p.serie,p.destino_txt,p.solicitante,p.entregado_a,p.estado,p.nro_ot,p.nro_om].join(' ').toLowerCase().includes(w)))),
     {id:p=>+p.id,ot:p=>p.nro_ot,art:p=>p.cod_articulo,serie:p=>p.serie,dest:p=>p.destino_txt,sol:p=>p.solicitante,desde:p=>herrF(p.desde),hasta:p=>herrF(p.hasta),est:herrTxtEstado,ent:p=>p.entregado_a});
   const filas=lista.map(p=>{
     const aux=p.serie?herrAuxTxt(p.serie):'', acc=[];
     if(gest&&p.estado==='Solicitada') acc.push('<button class="btn sm" onclick="herrEntregar('+p.id+')">Entregar</button>');
     if(gest&&p.estado==='Prestada') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Devuelta</button>','<button class="btn ghost sm" onclick="herrMantForm(\''+esc(p.serie||'')+'\','+p.id+')">A mantenimiento</button>');
-    if(gest&&p.estado==='Mantenimiento') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Volvió</button>');
+    if(p.estado==='Mantenimiento'&&p.om_id) acc.push('<button class="btn sm" onclick="herrOmAbrir('+p.om_id+')">Abrir '+esc(p.nro_om||'OM')+'</button>');
+    else if(gest&&p.estado==='Mantenimiento') acc.push('<button class="btn sm" onclick="herrDevolver('+p.id+')">Volvió</button>');
     if(p.estado==='Solicitada'&&(gest||herrEsMia(p))) acc.push('<button class="btn ghost sm" onclick="herrAnular('+p.id+')">Anular</button>');
     acc.push('<button class="btn ghost sm" onclick="herrHistorial('+p.id+')">Historial</button>');
-    return '<tr><td>'+p.id+'</td><td>'+esc(p.nro_ot||'')+'</td><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+(p.serie?'<b>'+esc(p.serie)+'</b>'+(aux?'<br><span style="font-size:11px;color:var(--muted)">'+esc(aux)+'</span>':'<br><span style="font-size:11px;color:#b3261e">sin auxiliar</span>'):'<span style="color:var(--muted)">sin asignar</span>')+'</td>'
-      +'<td>'+esc(p.destino_txt||p.destino_cod||'')+'</td><td>'+esc(p.solicitante||'')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+(herrVencida(p)?'<span style="color:#b3261e;font-weight:700">'+fmtDate(p.hasta)+'</span>':fmtDate(p.hasta))+'</td><td>'+herrBadge(p)+'</td><td>'+esc(p.entregado_a||'')+'</td>'
+    return '<tr><td>'+p.id+'</td><td>'+esc(p.nro_ot||p.nro_om||'')+'</td><td>'+esc(herrArtTxt(p.cod_articulo))+'</td><td>'+(p.serie?'<b>'+esc(p.serie)+'</b>'+(aux?'<br><span style="font-size:11px;color:var(--muted)">'+esc(aux)+'</span>':'<br><span style="font-size:11px;color:#b3261e">sin auxiliar</span>'):'<span style="color:var(--muted)">sin asignar</span>')+'</td>'
+      +'<td>'+esc(p.destino_txt||p.destino_cod||'')+'</td><td>'+esc(p.solicitante||'')+'</td><td>'+fmtDate(p.desde)+'</td><td>'+(herrVencida(p)?'<span style="color:#b3261e;font-weight:700">'+fmtDate(p.hasta)+'</span>':herrFHasta(p))+'</td><td>'+herrBadge(p)+'</td><td>'+esc(p.entregado_a||'')+'</td>'
       +'<td class="tx-largo" style="color:var(--muted);font-size:11.5px" title="'+esc(p.comentario||'')+'">'+esc(p.comentario||'')+'</td><td style="white-space:nowrap">'+acc.join(' ')+'</td></tr>';
   }).join('');
   return '<div style="display:flex;gap:10px;align-items:flex-end;padding:0 16px 8px;flex-wrap:wrap">'+(canPanol()?solMiosSel('los que pedí yo'):'')+'<input value="'+esc(PANOL_HERR_Q)+'" placeholder="Buscar…" onchange="PANOL_HERR_Q=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:220px"><span class="meta">'+lista.length+' de '+rows.length+'</span>'
@@ -4094,31 +4098,190 @@ function herrMantForm(serie,idPrestamo){
   if(!canPanol()) return; const us=herrUnidades().slice().sort((a,b)=>String(a.serie).localeCompare(String(b.serie))), hoy=herrHoy();
   if(!us.length){ toast('No hay herramientas GCHRR en Series activas.'); return; }
   openModal('Enviar herramienta a mantenimiento',
-    '<div class="field"><label>Serie</label><select id="hm_serie">'+us.map(u=>'<option value="'+esc(u.serie)+'"'+(u.serie===serie?' selected':'')+'>'+esc(u.serie+' · '+herrArtTxt(u.cod_articulo))+'</option>').join('')+'</select></div>'
-    +'<div class="frow c2"><div class="field"><label>Se envía el</label><input id="hm_d1" type="date" value="'+hoy+'"></div><div class="field"><label>Regreso estimado</label><input id="hm_d2" type="date" value="'+herrSuma(hoy,15)+'"></div></div>'
-    +'<div class="field"><label>Motivo / taller</label><input id="hm_com" type="text" placeholder="Ej.: no enciende — service BOSCH"></div>'
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Al enviarla se genera una <b>Orden de Mantenimiento (OM)</b> con su número. Después Abastecimiento la abre para definir el servicio, pedir cotizaciones y cerrarla con la fecha de regreso y el costo.</div>'
+    +'<div class="field"><label>Serie</label><select id="hm_serie">'+us.map(u=>'<option value="'+esc(u.serie)+'"'+(u.serie===serie?' selected':'')+'>'+esc(u.serie+' · '+herrArtTxt(u.cod_articulo))+'</option>').join('')+'</select></div>'
+    +'<div class="frow c2"><div class="field"><label>Se envía el</label><input id="hm_d1" type="date" value="'+hoy+'"></div><div class="field"><label>¿Hay fecha en que se necesite volver a contar con la herramienta? (opcional)</label><input id="hm_dn" type="date"></div></div>'
+    +'<div class="field"><label>Motivo del envío</label><select id="hm_mot">'+omMotivosOpts().map(m=>'<option>'+esc(m)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Observaciones generales</label><textarea id="hm_obs" rows="3" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:8px;font-size:13px" placeholder="Ej.: no enciende, hace ruido, se recalienta…"></textarea></div>'
     +(idPrestamo?'<div style="font-size:12px;color:var(--muted)">Estaba prestada: al enviarla a mantenimiento, el préstamo #'+idPrestamo+' se marca como devuelto.</div>':''),
-    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hmBtn" onclick="herrMantOk('+(idPrestamo||'null')+')">Enviar a mantenimiento</button>','xwide');
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="hmBtn" onclick="herrMantOk('+(idPrestamo||'null')+')">Enviar y generar la OM</button>','xwide');
 }
 window.herrMantForm=herrMantForm;
 async function herrMantOk(idPrestamo){
-  const g=i=>(document.getElementById(i)||{}).value||'', serie=g('hm_serie'), d1=g('hm_d1'), d2=g('hm_d2'), u=herrUnidades().find(x=>x.serie===serie);
-  if(!u){ toast('Elegí la serie'); return; } if(!d1||!d2||d2<d1){ toast('Revisá las fechas'); return; }
+  const g=i=>(document.getElementById(i)||{}).value||'', serie=g('hm_serie'), d1=g('hm_d1'), dn=g('hm_dn'), motivo=g('hm_mot'), obs=g('hm_obs').trim(), u=herrUnidades().find(x=>x.serie===serie);
+  if(!u){ toast('Elegí la serie'); return; } if(!d1){ toast('Poné la fecha de envío'); return; } if(dn&&dn<d1){ toast('La fecha de necesidad no puede ser anterior al envío'); return; } if(!motivo){ toast('Elegí el motivo del envío'); return; }
   const btn=document.getElementById('hmBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
+  let om=null;
   try{
-    const prest=idPrestamo?herrFila(idPrestamo):null; if(prest) await herrPatch(prest,{estado:'Devuelta',devuelto_en:new Date().toISOString()},'Devuelta','Se envió a mantenimiento');
-    await herrCrear([{cod_articulo:u.cod_articulo, serie, destino_txt:'MANTENIMIENTO', solicitante:null, desde:d1, hasta:d2, estado:'Mantenimiento', comentario:g('hm_com').trim()||null, creado_por:panolUsuario(), historial:[{accion:'Enviada a mantenimiento',detalle:'Del '+fmtDate(d1)+' · regreso estimado '+fmtDate(d2),por:panolUsuario(),fecha:new Date().toISOString()}]}]);
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar a mantenimiento'; } toast('No se pudo registrar: '+(e.message||e)); return; }
-  closeModal(); toast('Enviada a mantenimiento'); PANOL_TAB='herr'; PANOL_HERR_VISTA='ped'; renderPanol();
+    const ahora=new Date().toISOString(), prest=idPrestamo?herrFila(idPrestamo):null;
+    if(prest) await herrPatch(prest,{estado:'Devuelta',devuelto_en:ahora},'Devuelta','Se envió a mantenimiento');
+    const row={cod_articulo:u.cod_articulo, serie, fecha_envio:d1, fecha_necesidad:dn||null, motivo, observaciones:obs||null, estado:'Abierta', creado_por:panolUsuario(), historial:[{accion:'Creada',detalle:'Motivo: '+motivo+(dn?' · se necesita desde el '+fmtDate(dn):''),por:panolUsuario(),fecha:ahora}]};
+    if(DEMO_MODE){ DIC.panol_om=DIC.panol_om||[]; const id=Math.max(0,...DIC.panol_om.map(x=>+x.id||0))+1; om={id,nro_om:'OM-'+String(id).padStart(4,'0'),creado_en:ahora,...row}; DIC.panol_om.unshift(om); }
+    else{ const r=await sbFetch('/compras_panol_om',{method:'POST',body:JSON.stringify({...row,nro_om:''}),prefer:'return=representation'}); om=Array.isArray(r)?r[0]:r; }
+    try{ await herrCrear([{cod_articulo:u.cod_articulo, serie, destino_txt:'MANTENIMIENTO', solicitante:null, desde:d1, hasta:OM_SIN_FECHA, estado:'Mantenimiento', comentario:motivo, om_id:om.id, nro_om:om.nro_om, creado_por:panolUsuario(), historial:[{accion:'Enviada a mantenimiento',detalle:om.nro_om+' · '+motivo,por:panolUsuario(),fecha:ahora}]}]); }
+    catch(e){ if(!DEMO_MODE){ try{ await sbFetch('/compras_panol_om?id=eq.'+om.id,{method:'DELETE',prefer:'return=minimal'}); }catch(_){} } else DIC.panol_om=DIC.panol_om.filter(x=>x!==om); throw e; }
+    const h=(DIC.panol_herr||[]).find(x=>String(x.om_id)===String(om.id)); if(h){ om.herr_id=h.id; if(!DEMO_MODE) await sbFetch('/compras_panol_om?id=eq.'+om.id,{method:'PATCH',body:JSON.stringify({herr_id:h.id}),prefer:'return=minimal'}); }
+    if(!DEMO_MODE) await panolOmCargar();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Enviar y generar la OM'; } toast('No se pudo registrar: '+(e.message||e)+' (¿ya se corrió sql/2026-10_panol_om.sql?)'); return; }
+  closeModal(); toast('Se generó la '+om.nro_om); PANOL_TAB='herr'; PANOL_HERR_VISTA='om'; renderPanol(); herrOmAbrir(om.id);
 }
 window.herrMantOk=herrMantOk;
+
+/* ---- Órdenes de Mantenimiento (OM): envío a reparación, cotizaciones, cierre y costo ----
+   Cada envío genera una OM (OM-0001…). Abastecimiento (es_panol o administrador) la abre, define el servicio, pide cotizaciones, elige una, y al volver
+   la herramienta la cierra con la fecha de regreso, el costo final y el N° de OC/OG. Mientras está abierta, la herramienta no está disponible. */
+let PANOL_OM={art:'',serie:'',est:'abiertas'}, PANOL_OM_ERR='';
+const OM_SIN_FECHA='2099-12-31';
+const omFila=id=>(DIC.panol_om||[]).find(x=>String(x.id)===String(id));
+const omCots=id=>(DIC.panol_om_cot||[]).filter(c=>String(c.om_id)===String(id));
+const omAbierta=o=>['Abierta','En cotización','En reparación'].includes(o.estado);
+const omBadge=o=>'<span class="badge '+({'Abierta':'b-ambar','En cotización':'b-ambar','En reparación':'b-gris','Cerrada':'b-verde','Anulada':'b-rojo'}[o.estado]||'b-gris')+'">'+esc(o.estado)+'</span>';
+const omMotivosOpts=()=>{ const l=(DIC.panol_om_motivos||[]).filter(m=>m.activo!==false).map(m=>m.nombre); return l.length?l:['Mantenimiento preventivo','Mantenimiento correctivo','Falla técnica','Otros']; };
+const herrFHasta=p=>herrF(p.hasta)>='2099'?'—':fmtDate(p.hasta);
+const omMon=(n,m)=>n==null||n===''?'—':(m==='USD'?'US$ ':'$ ')+fmtNum(n,2);
+async function panolOmCargar(){
+  if(DEMO_MODE) return;
+  try{ DIC.panol_om_motivos=await sbFetchAll('/compras_panol_om_motivos?select=*&order=id.asc'); DIC.panol_om=await sbFetchAll('/compras_panol_om?select=*&order=id.desc'); DIC.panol_om_cot=await sbFetchAll('/compras_panol_om_cotizaciones?select=*&order=id.asc'); PANOL_OM_ERR=''; }
+  catch(e){ PANOL_OM_ERR=String(e.message||e); }
+}
+async function omPatch(o,campos,accion,detalle){
+  const cambios={...campos, historial:solHist(o,accion,detalle), actualizado_en:new Date().toISOString(), actualizado_por:panolUsuario()};
+  if(!DEMO_MODE) await sbFetch('/compras_panol_om?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(cambios),prefer:'return=minimal'});
+  Object.assign(o,cambios);
+}
+const omHerr=o=>(DIC.panol_herr||[]).find(p=>String(p.om_id)===String(o.id))||(o.herr_id?herrFila(o.herr_id):null);
+function herrHtmlOM(){
+  const F=PANOL_OM, todas=DIC.panol_om||[], arts=herrArticulos(), a=arts.find(x=>x.cod===F.art), gest=canPanol();
+  xlfRegister('pherrom',{rows:()=>todas, onChange:renderPanol, dateVal:o=>herrF(o.fecha_envio), val:(o,c)=>c==='art'?herrArtTxt(o.cod_articulo):c==='serie'?(o.serie||'(sin serie)'):c==='motivo'?(o.motivo||'(sin motivo)'):c==='est'?o.estado:c==='prov'?(o.proveedor||'(sin proveedor)'):''});
+  if(!SP_SORT.pherrom) SP_SORT.pherrom={k:'nro',dir:-1};
+  const okEst=o=>F.est==='todas'||(F.est==='abiertas'?omAbierta(o):o.estado===F.est);
+  const lista=_spOrdenar('pherrom',todas.filter(o=>(!F.art||o.cod_articulo===F.art)&&(!F.serie||o.serie===F.serie)&&okEst(o)&&xlfPass('pherrom',o)),
+    {nro:o=>+o.id,art:o=>o.cod_articulo,serie:o=>o.serie,motivo:o=>o.motivo,env:o=>herrF(o.fecha_envio),nec:o=>herrF(o.fecha_necesidad)||'9999',est:o=>o.estado,prov:o=>o.proveedor,reg:o=>herrF(o.fecha_regreso||o.fecha_regreso_estimada)||'9999',costo:o=>+o.costo_ars||0});
+  // resumen del historial: cuántas veces se envió y cuánto costó (sin contar las anuladas)
+  const vig=lista.filter(o=>o.estado!=='Anulada'), tArs=vig.reduce((x,o)=>x+(+o.costo_ars||0),0), tUsd=vig.reduce((x,o)=>x+(+o.costo_usd||0),0);
+  const G=new Map(); vig.forEach(o=>{ const k=F.art?(o.serie||'(sin serie)'):o.cod_articulo, g=G.get(k)||{k,n:0,ars:0,usd:0,ult:''}; g.n++; g.ars+=+o.costo_ars||0; g.usd+=+o.costo_usd||0; if(herrF(o.fecha_envio)>g.ult) g.ult=herrF(o.fecha_envio); G.set(k,g); });
+  const grupos=[...G.values()].sort((x,y)=>y.n-x.n||y.ars-x.ars);
+  const filas=lista.map(o=>{ const ax=o.serie?herrAuxTxt(o.serie):'';
+    return '<tr style="cursor:pointer" ondblclick="herrOmAbrir('+o.id+')"><td><b>'+esc(o.nro_om)+'</b></td><td>'+esc(herrArtTxt(o.cod_articulo))+'</td><td>'+(o.serie?'<b>'+esc(o.serie)+'</b>'+(ax?'<br><span style="font-size:11px;color:var(--muted)">'+esc(ax)+'</span>':''):'—')+'</td><td>'+esc(o.motivo||'')+'</td><td>'+fmtDate(o.fecha_envio)+'</td>'
+      +'<td>'+(o.fecha_necesidad?(omAbierta(o)&&(!o.fecha_regreso_estimada||herrF(o.fecha_regreso_estimada)>herrF(o.fecha_necesidad))?'<span style="color:#b3261e;font-weight:700">'+fmtDate(o.fecha_necesidad)+'</span>':fmtDate(o.fecha_necesidad)):'—')+'</td><td>'+omBadge(o)+'</td><td>'+esc(o.proveedor||'')+'</td>'
+      +'<td>'+(o.fecha_regreso?fmtDate(o.fecha_regreso):(o.fecha_regreso_estimada?'<span style="color:var(--muted)" title="Estimada">~'+fmtDate(o.fecha_regreso_estimada)+'</span>':'—'))+'</td><td style="text-align:right">'+omMon(o.costo_ars,'ARS')+(o.costo_usd?'<br><span style="font-size:11px;color:var(--muted)">'+omMon(o.costo_usd,'USD')+'</span>':'')+'</td><td>'+esc(o.nro_oc||'')+'</td>'
+      +'<td><button class="btn ghost sm" onclick="herrOmAbrir('+o.id+')">Abrir</button></td></tr>'; }).join('');
+  const sel=(v,l,cur)=>'<option value="'+esc(v)+'"'+(String(cur)===String(v)?' selected':'')+'>'+esc(l)+'</option>';
+  return (PANOL_OM_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudieron leer las OM: '+esc(PANOL_OM_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_om.sql</b> en Supabase?</div>':'')
+    +'<div style="display:flex;gap:12px;align-items:flex-end;padding:0 16px 8px;flex-wrap:wrap">'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Herramienta<select onchange="PANOL_OM.art=this.value;PANOL_OM.serie=\'\';renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px;max-width:300px">'+sel('','Todas',F.art)+arts.map(x=>sel(x.cod,x.cod+' · '+x.desc,F.art)).join('')+'</select></label>'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Serie<select onchange="PANOL_OM.serie=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px"'+(a?'':' disabled')+'>'+sel('','Todas',F.serie)+(a?a.unid.map(u=>sel(u.serie,u.serie,F.serie)).join(''):'')+'</select></label>'
+      +'<label style="font-size:11.5px;color:var(--muted);display:flex;flex-direction:column;gap:2px">Estado<select onchange="PANOL_OM.est=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 6px;font-size:12.5px">'+sel('abiertas','Abiertas',F.est)+sel('todas','Todas',F.est)+['Abierta','En cotización','En reparación','Cerrada','Anulada'].map(e=>sel(e,e,F.est)).join('')+'</select></label>'
+      +'<span style="margin-left:auto;display:flex;gap:8px">'+xlfClearAllBtn('pherrom').replace('margin-left:auto','')+'<button class="btn ghost sm" onclick="tblAutofit(\'#tblHerrOm\')">Auto-ajustar columnas</button></span></div>'
+    +'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#f1f5f2;border:1px solid #d9e4dc;font-size:12.5px"><b>'+vig.length+'</b> OM'+(F.art?' de '+esc(a?a.desc:F.art)+(F.serie?' · '+esc(F.serie):''):'')+' (sin contar anuladas) · se envió <b>'+vig.length+'</b> vez/veces · costo total <b>$ '+fmtNum(tArs,2)+'</b>'+(tUsd?' · <b>US$ '+fmtNum(tUsd,2)+'</b>':'')
+      +(grupos.length>1?'<details style="margin-top:6px"><summary style="cursor:pointer">Detalle por '+(F.art?'serie':'herramienta')+'</summary><table class="grid" style="font-size:11.5px;margin-top:4px"><thead><tr><th>'+(F.art?'Serie':'Herramienta')+'</th><th>Veces enviada</th><th>Última OM</th><th>Costo ARS</th><th>Costo USD</th></tr></thead><tbody>'+grupos.map(g=>'<tr><td>'+esc(F.art?g.k:herrArtTxt(g.k))+'</td><td style="text-align:center">'+g.n+'</td><td>'+fmtDate(g.ult)+'</td><td style="text-align:right">'+omMon(g.ars,'ARS')+'</td><td style="text-align:right">'+(g.usd?omMon(g.usd,'USD'):'—')+'</td></tr>').join('')+'</tbody></table></details>':'')+'</div>'
+    +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid tbl-ajustada" id="tblHerrOm"><thead><tr>'+_pnTh('OM',null,'nro','pherrom')+_pnTh('Herramienta','art','art','pherrom')+_pnTh('Serie / Auxiliar','serie','serie','pherrom')+_pnTh('Motivo','motivo','motivo','pherrom')+_pnTh('Envío','__fecha__','env','pherrom')+_pnTh('Se necesita',null,'nec','pherrom')+_pnTh('Estado','est','est','pherrom')+_pnTh('Proveedor','prov','prov','pherrom')+_pnTh('Regreso',null,'reg','pherrom')+_pnTh('Costo',null,'costo','pherrom')+'<th>OC / OG</th><th></th></tr></thead><tbody>'
+    +(filas||'<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--muted)">'+(todas.length?'No hay OM con ese filtro.':'Todavía no hay órdenes de mantenimiento'+(gest?': se generan con "Enviar a mantenimiento".':'.'))+'</td></tr>')+'</tbody></table></div>';
+}
+function herrOmAbrir(id){
+  const o=omFila(id); if(!o) return; const ed=canPanol()&&omAbierta(o), cots=omCots(id), ax=o.serie?herrAuxTxt(o.serie):'', inp='border:1px solid var(--line-strong);border-radius:6px;padding:5px 7px;font-size:12.5px';
+  const hist=(Array.isArray(o.historial)?o.historial:[]).slice().reverse().map(h=>'<div style="padding:3px 0;border-bottom:1px solid var(--line)"><b>'+esc(h.accion)+'</b>'+(h.detalle?' · '+esc(h.detalle):'')+' <span style="color:var(--muted)">— '+_spCuando({autor:h.por,fecha:h.fecha})+'</span></div>').join('');
+  const cotRows=cots.map(c=>'<tr'+(c.elegida?' style="background:#eef6f0"':'')+'><td>'+esc(c.proveedor)+(c.elegida?' <span class="badge b-verde">Elegida</span>':'')+'</td><td style="text-align:right">'+omMon(c.importe,c.moneda)+'</td><td>'+esc(c.moneda||'')+'</td><td>'+(c.fecha?fmtDate(c.fecha):'')+'</td><td style="text-align:right">'+(c.plazo_dias!=null?c.plazo_dias:'')+'</td><td>'+esc(c.comentario||'')+'</td>'
+    +'<td style="white-space:nowrap">'+(ed&&!c.elegida?'<button class="btn sm" onclick="omCotElegir('+o.id+','+c.id+')">Elegir</button> <button class="iconbtn del" title="Quitar" onclick="omCotQuitar('+o.id+','+c.id+')">'+ICO.del+'</button>':'')+'</td></tr>').join('');
+  const campo=(l,v)=>'<div><span style="color:var(--muted);font-size:11.5px">'+l+'</span><br><b>'+v+'</b></div>';
+  openModal(o.nro_om+' · '+herrArtTxt(o.cod_articulo),
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;font-size:13px">'
+      +campo('Estado',omBadge(o))+campo('Serie',esc(o.serie||'—')+(ax?'<br><span style="font-weight:400;font-size:11.5px;color:var(--muted)">'+esc(ax)+'</span>':''))+campo('Motivo del envío',esc(o.motivo||'—'))+campo('Fecha de envío',fmtDate(o.fecha_envio))
+      +campo('Se necesita volver a contar con ella',o.fecha_necesidad?fmtDate(o.fecha_necesidad):'—')+campo('Proveedor elegido',esc(o.proveedor||'—'))+(o.fecha_regreso?campo('Regresó el',fmtDate(o.fecha_regreso)):'')+'</div>'
+    +'<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px">Servicio</div>'
+    +(ed?'<div class="frow c2"><div class="field"><label>Tipo de servicio que requiere</label><input id="om_tipo" type="text" value="'+esc(o.tipo_servicio||'')+'" placeholder="Ej.: cambio de carbones y rodamientos"></div><div class="field"><label>Fecha de regreso estimada (la informa quien hace el servicio)</label><input id="om_est" type="date" value="'+esc(herrF(o.fecha_regreso_estimada))+'"></div></div>'
+        +'<div class="field"><label>Observaciones generales</label><textarea id="om_obs" rows="3" style="width:100%;box-sizing:border-box;'+inp+'">'+esc(o.observaciones||'')+'</textarea></div><button class="btn ghost sm" onclick="omGuardarDatos('+o.id+')">Guardar datos</button>'
+      :'<div style="font-size:13px;line-height:1.7"><b>Tipo de servicio:</b> '+esc(o.tipo_servicio||'—')+(o.fecha_regreso_estimada&&!o.fecha_regreso?' · <b>Regreso estimado:</b> '+fmtDate(o.fecha_regreso_estimada):'')+'<br><b>Observaciones:</b> '+esc(o.observaciones||'—')+'</div>')+'</div>'
+    +'<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px">Cotizaciones ('+cots.length+')</div>'
+    +(cots.length?'<div class="tbl-hscroll tbl-compact" style="max-height:24vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>Proveedor</th><th>Importe</th><th>Moneda</th><th>Fecha</th><th>Plazo (días)</th><th>Comentario</th><th></th></tr></thead><tbody>'+cotRows+'</tbody></table></div>':'<div style="font-size:12.5px;color:var(--muted)">Todavía no se cargó ninguna cotización.</div>')
+    +(ed?'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;margin-top:8px"><input id="cq_prov" placeholder="Proveedor" style="width:170px;'+inp+'"><input id="cq_imp" type="number" step="any" min="0" placeholder="Importe" style="width:110px;text-align:right;'+inp+'"><select id="cq_mon" style="'+inp+'"><option>ARS</option><option>USD</option></select><input id="cq_fec" type="date" value="'+herrHoy()+'" style="'+inp+'"><input id="cq_plazo" type="number" min="0" placeholder="Plazo (días)" style="width:100px;'+inp+'"><input id="cq_com" placeholder="Comentario" style="width:170px;'+inp+'"><button class="btn ghost sm" onclick="omCotAgregar('+o.id+')">'+ICO.plus+'Agregar cotización</button></div>':'')+'</div>'
+    +(o.estado==='Cerrada'?'<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px;line-height:1.7"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px">Cierre</div><b>Costo final:</b> '+omMon(o.costo_ars,'ARS')+(o.costo_usd?' · '+omMon(o.costo_usd,'USD'):'')+' · <b>OC / OG:</b> '+esc(o.nro_oc||'—')+(o.observaciones_cierre?'<br><b>Observaciones del cierre:</b> '+esc(o.observaciones_cierre):'')+'</div>':'')
+    +'<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Historial ('+(Array.isArray(o.historial)?o.historial.length:0)+')</summary><div style="font-size:12px;max-height:18vh;overflow:auto;margin-top:4px">'+(hist||'<span style="color:var(--muted)">Sin movimientos.</span>')+'</div></details>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+(ed&&o.estado==='Abierta'?'<button class="btn ghost" onclick="omPedirCot('+o.id+')">Marcar "Pedí cotizaciones"</button>':'')+(ed?'<button class="btn ghost" style="color:#b3261e" onclick="omAnular('+o.id+')">Anular la OM</button><button class="btn" onclick="omCerrarForm('+o.id+')">Cerrar la OM (volvió)</button>':''),'xwide');
+}
+window.herrOmAbrir=herrOmAbrir;
+async function omGuardarDatos(id){
+  const o=omFila(id); if(!o||!canPanol()) return; const g=i=>(document.getElementById(i)||{}).value||'', tipo=g('om_tipo').trim(), est=g('om_est'), obs=g('om_obs').trim(), cam=[];
+  if(tipo!==(o.tipo_servicio||'')) cam.push('tipo de servicio: '+(tipo||'—')); if(est!==herrF(o.fecha_regreso_estimada)) cam.push('regreso estimado: '+(est?fmtDate(est):'—')); if(obs!==(o.observaciones||'')) cam.push('observaciones');
+  if(!cam.length){ toast('No hay cambios para guardar'); return; }
+  try{
+    await omPatch(o,{tipo_servicio:tipo||null, fecha_regreso_estimada:est||null, observaciones:obs||null},'Datos actualizados',cam.join(' · '));
+    const p=omHerr(o); if(p&&p.estado==='Mantenimiento'&&herrF(p.hasta)!==(est||OM_SIN_FECHA)) await herrPatch(p,{hasta:est||OM_SIN_FECHA},'Regreso estimado',o.nro_om+(est?' · '+fmtDate(est):' · sin fecha'));
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)); return; }
+  toast('Datos guardados'); renderPanol(); herrOmAbrir(id);
+}
+window.omGuardarDatos=omGuardarDatos;
+async function omPedirCot(id){ const o=omFila(id); if(!o||!canPanol()) return; try{ await omPatch(o,{estado:'En cotización'},'Cambio de estado','Se pidieron cotizaciones'); }catch(e){ toast('No se pudo cambiar: '+(e.message||e)); return; } renderPanol(); herrOmAbrir(id); }
+window.omPedirCot=omPedirCot;
+async function omCotAgregar(id){
+  const o=omFila(id); if(!o||!canPanol()) return; const g=i=>(document.getElementById(i)||{}).value||'', prov=g('cq_prov').trim(), imp=g('cq_imp'), mon=g('cq_mon')||'ARS';
+  if(!prov){ toast('Poné el proveedor'); return; } if(imp!==''&&!(+imp>=0)){ toast('El importe no es válido'); return; }
+  const row={om_id:o.id, proveedor:prov, importe:imp===''?null:+imp, moneda:mon, fecha:g('cq_fec')||null, plazo_dias:g('cq_plazo')===''?null:Math.floor(+g('cq_plazo')), comentario:g('cq_com').trim()||null, elegida:false, creado_por:panolUsuario()};
+  try{
+    if(DEMO_MODE){ DIC.panol_om_cot=DIC.panol_om_cot||[]; DIC.panol_om_cot.push({id:Math.max(0,...DIC.panol_om_cot.map(c=>+c.id||0))+1,...row}); }
+    else{ await sbFetch('/compras_panol_om_cotizaciones',{method:'POST',body:JSON.stringify(row),prefer:'return=minimal'}); DIC.panol_om_cot=await sbFetchAll('/compras_panol_om_cotizaciones?select=*&order=id.asc'); }
+    await omPatch(o,o.estado==='Abierta'?{estado:'En cotización'}:{},'Cotización cargada',prov+' · '+omMon(row.importe,mon));
+  }catch(e){ toast('No se pudo cargar la cotización: '+(e.message||e)); return; }
+  renderPanol(); herrOmAbrir(id);
+}
+window.omCotAgregar=omCotAgregar;
+async function omCotQuitar(id,cid){
+  const o=omFila(id), c=(DIC.panol_om_cot||[]).find(x=>String(x.id)===String(cid)); if(!o||!c||!canPanol()||c.elegida) return;
+  try{ if(!DEMO_MODE) await sbFetch('/compras_panol_om_cotizaciones?id=eq.'+cid,{method:'DELETE',prefer:'return=minimal'}); DIC.panol_om_cot=(DIC.panol_om_cot||[]).filter(x=>x!==c); await omPatch(o,{},'Cotización quitada',c.proveedor); }
+  catch(e){ toast('No se pudo quitar: '+(e.message||e)); return; } herrOmAbrir(id);
+}
+window.omCotQuitar=omCotQuitar;
+async function omCotElegir(id,cid){
+  const o=omFila(id), c=(DIC.panol_om_cot||[]).find(x=>String(x.id)===String(cid)); if(!o||!c||!canPanol()) return;
+  try{
+    for(const x of omCots(id)){ const val=String(x.id)===String(cid); if(x.elegida!==val){ if(!DEMO_MODE) await sbFetch('/compras_panol_om_cotizaciones?id=eq.'+x.id,{method:'PATCH',body:JSON.stringify({elegida:val}),prefer:'return=minimal'}); x.elegida=val; } }
+    await omPatch(o,{proveedor:c.proveedor, estado:'En reparación'},'Cotización elegida',c.proveedor+' · '+omMon(c.importe,c.moneda)+(c.plazo_dias!=null?' · plazo '+c.plazo_dias+' días':''));
+  }catch(e){ toast('No se pudo elegir: '+(e.message||e)); return; }
+  toast('Cotización elegida: '+c.proveedor+'. Cargá la fecha de regreso estimada cuando la informe el proveedor.'); renderPanol(); herrOmAbrir(id);
+}
+window.omCotElegir=omCotElegir;
+function omCerrarForm(id){
+  const o=omFila(id); if(!o||!canPanol()) return; const ch=omCots(id).find(c=>c.elegida);
+  openModal('Cerrar '+o.nro_om+' · la herramienta volvió',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Al cerrar, la herramienta vuelve a estar disponible. Cargá el costo final de la reparación (si no tuvo costo, poné 0).</div>'
+    +'<div class="frow c2"><div class="field"><label>Fecha de regreso</label><input id="oc_fec" type="date" value="'+herrHoy()+'"></div><div class="field"><label>N° de OC / OG de la reparación</label><input id="oc_oc" type="text" value="'+esc(o.nro_oc||'')+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Costo final en pesos</label><input id="oc_ars" type="number" step="any" min="0" value="'+(ch&&ch.moneda==='ARS'&&ch.importe!=null?ch.importe:'')+'"></div><div class="field"><label>Costo en dólares (si corresponde)</label><input id="oc_usd" type="number" step="any" min="0" value="'+(ch&&ch.moneda==='USD'&&ch.importe!=null?ch.importe:'')+'"></div></div>'
+    +'<div class="field"><label>Observaciones del cierre</label><textarea id="oc_obs" rows="3" style="width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:8px;font-size:13px"></textarea></div>',
+    '<button class="btn ghost" onclick="herrOmAbrir('+id+')">Volver</button><button class="btn" id="ocBtn" onclick="omCerrarOk('+id+')">Cerrar la OM</button>','xwide');
+}
+window.omCerrarForm=omCerrarForm;
+async function omCerrarOk(id){
+  const o=omFila(id); if(!o||!canPanol()) return; const g=i=>(document.getElementById(i)||{}).value||'', fec=g('oc_fec'), ars=g('oc_ars'), usd=g('oc_usd');
+  if(!fec){ toast('Poné la fecha de regreso'); return; } if(fec<herrF(o.fecha_envio)){ toast('La fecha de regreso no puede ser anterior al envío'); return; }
+  if(ars===''&&usd===''){ toast('Cargá el costo de la reparación (0 si no tuvo costo)'); return; } if((ars!==''&&!(+ars>=0))||(usd!==''&&!(+usd>=0))){ toast('El costo no es válido'); return; }
+  const btn=document.getElementById('ocBtn'); if(btn){ btn.disabled=true; btn.textContent='Cerrando…'; }
+  try{
+    await omPatch(o,{estado:'Cerrada', fecha_regreso:fec, costo_ars:ars===''?null:+ars, costo_usd:usd===''?null:+usd, nro_oc:g('oc_oc').trim()||null, observaciones_cierre:g('oc_obs').trim()||null, cerrado_en:new Date().toISOString()},'Cerrada','Regresó el '+fmtDate(fec)+' · costo '+(ars!==''?'$ '+fmtNum(+ars,2):'')+(usd!==''?(ars!==''?' / ':'')+'US$ '+fmtNum(+usd,2):''));
+    const p=omHerr(o); if(p&&p.estado==='Mantenimiento') await herrPatch(p,{estado:'Devuelta',devuelto_en:new Date().toISOString(),hasta:fec},'Volvió de mantenimiento',o.nro_om);
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Cerrar la OM'; } toast('No se pudo cerrar: '+(e.message||e)); return; }
+  toast(o.nro_om+' cerrada'); renderPanol(); herrOmAbrir(id);
+}
+window.omCerrarOk=omCerrarOk;
+function omAnular(id){
+  const o=omFila(id); if(!o||!canPanol()) return;
+  openModal('Anular '+o.nro_om,'<div style="font-size:14px;line-height:1.7">¿Anular la <b>'+esc(o.nro_om)+'</b>? La herramienta vuelve a figurar disponible. Usalo si el envío se cargó por error o se canceló.</div><div class="field" style="margin-top:8px"><label>Motivo (opcional)</label><input id="oa_mot" type="text"></div>',
+    '<button class="btn ghost" onclick="herrOmAbrir('+id+')">Volver</button><button class="btn" style="background:#b3261e" onclick="omAnularOk('+id+')">Anular la OM</button>');
+}
+window.omAnular=omAnular;
+async function omAnularOk(id){
+  const o=omFila(id); if(!o||!canPanol()) return; const mot=((document.getElementById('oa_mot')||{}).value||'').trim();
+  try{ await omPatch(o,{estado:'Anulada'},'Anulada',mot||'Se anuló la OM'); const p=omHerr(o); if(p&&p.estado==='Mantenimiento') await herrPatch(p,{estado:'Anulada'},'Anulada',o.nro_om+' anulada'); }
+  catch(e){ toast('No se pudo anular: '+(e.message||e)); return; }
+  toast(o.nro_om+' anulada'); renderPanol(); herrOmAbrir(id);
+}
+window.omAnularOk=omAnularOk;
 
 /* ---- Unidades de una herramienta ---- */
 function herrUnidadesModal(cod){
   const a=herrArticulos().find(x=>x.cod===cod); if(!a) return; const hoy=herrHoy(), ix=_serieAuxIndex(['07']);
   const filas=a.unid.map(u=>{
     const p=(DIC.panol_herr||[]).find(x=>x.serie===u.serie&&(x.estado==='Prestada'||x.estado==='Mantenimiento')&&herrSolapa(x,hoy,hoy)), ax=_serieAuxTexto(ix,u.serie);
-    return '<tr><td><b>'+esc(u.serie)+'</b></td><td>'+(ax?esc(ax):'<span style="color:#b3261e">sin auxiliar</span>')+'</td><td>'+esc((u.cod_deposito||'')+' · '+(u.desc_deposito||''))+'</td><td>'+(p?herrBadge(p):'<span class="badge b-verde">Disponible</span>')+'</td><td>'+(p?esc((p.estado==='Mantenimiento'?(p.comentario||'Mantenimiento'):(p.entregado_a||p.solicitante||''))+' · hasta '+fmtDate(p.hasta)):'')+'</td></tr>';
+    return '<tr><td><b>'+esc(u.serie)+'</b></td><td>'+(ax?esc(ax):'<span style="color:#b3261e">sin auxiliar</span>')+'</td><td>'+esc((u.cod_deposito||'')+' · '+(u.desc_deposito||''))+'</td><td>'+(p?herrBadge(p):'<span class="badge b-verde">Disponible</span>')+'</td><td>'+(p?esc((p.estado==='Mantenimiento'?((p.nro_om?p.nro_om+' · ':'')+(p.comentario||'Mantenimiento')):(p.entregado_a||p.solicitante||''))+' · hasta '+herrFHasta(p)):'')+'</td></tr>';
   }).join('');
   const sinAux=a.unid.filter(u=>!_serieAuxTexto(ix,u.serie)).length;
   openModal('Unidades · '+herrArtTxt(cod),
@@ -4163,7 +4326,7 @@ function renderPanolRenglones(sec){
 
 function panolTabs(){
   const tab=(id,lbl,act)=>'<button class="mtab'+((act!=null?act:PANOL_TAB===id)?' active':'')+'" onclick="setPanolTab(\''+id+'\')">'+lbl+'</button>';
-  let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length; }catch(e){}
+  let nHerr=0; try{ const h=herrAlertas(); nHerr=h.falta.length+h.venc.length+h.om.length; }catch(e){}
   const nSol=solVisibles().filter(x=>['Pendiente','En preparación','Parcial'].includes(x.estado)).length;
   const nRen=sec=>{ try{ return solRenglonesSector(sec).filter(x=>['Pendiente','Parcial'].includes(solEstRen(x))).length; }catch(e){ return 0; } };
   const enPan=PANOL_TAB==='pren'||PANOL_TAB==='erog', enDep=PANOL_TAB==='dren'||PANOL_TAB==='dep', sub=enPan||enDep;
@@ -4889,11 +5052,13 @@ const PANOL_DIC_CFG={
   gal:{tabla:'compras_panol_galpones', dic:'panol_galpones', uso:'galpon', etq:'galpón', campos:[['nombre','Nombre']]},
   ope:{tabla:'compras_panol_operarios', dic:'panol_operarios', uso:'operario', etq:'operario', campos:[['nombre','Nombre (el que figura en las erogaciones)'],['nombre_pila','Nombre de pila'],['puesto','Puesto']]},
   sol:{tabla:'compras_panol_solicitantes', dic:'panol_solicitantes', usoLista:true, etq:'solicitante', campos:[['nombre','Nombre (Apellido, Nombre)'],['email','Email del usuario (opcional)']]},
+  omm:{tabla:'compras_panol_om_motivos', dic:'panol_om_motivos', usoOM:true, etq:'motivo de envío a mantenimiento', campos:[['nombre','Motivo']]},
   um:{tabla:'compras_unidades_medida', dic:'unidades_medida', uso:'um', key:'codigo', mayus:true, num:['decimales'], etq:'unidad de medida', campos:[['codigo','Código'],['descripcion','Descripción'],['sigla','Sigla'],['decimales','Cantidad de decimales'],['tipo','Tipo de unidad']]}
 };
 function panolDicUsos(k,row){
   const cfg=PANOL_DIC_CFG[k];
   if(cfg.usoLista) return (DIC.panol_solicitudes||[]).filter(x=>String(x.solicitante||'').trim().toUpperCase()===String(row.nombre||'').trim().toUpperCase()).length;   // solicitantes: se cuentan las solicitudes de OT
+  if(cfg.usoOM) return (DIC.panol_om||[]).filter(o=>String(o.motivo||'').trim().toUpperCase()===String(row.nombre||'').trim().toUpperCase()).length;   // motivos: se cuentan las OM
   const f=cfg.uso, n=String(row[cfg.key||'nombre']||'').trim().toUpperCase();
   return (DIC.panol_egresos||[]).filter(r=>String(r[f]||'').trim().toUpperCase()===n).length;
 }
@@ -4933,6 +5098,16 @@ function renderPanolDic(){
       +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Es la lista que sale desplegable en el Excel de solicitud de materiales.</div>'
       +'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolSolic" placeholder="Buscar solicitante…" oninput="spFiltrar(this,\'tblPanolSolic\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
       +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" id="tblPanolSolic"><thead><tr>'+_pnTh('Nombre',null,'nombre','psolic')+_pnTh('Email',null,'email','psolic')+_pnTh('Estado','estado','estado','psolic')+_pnTh('Usos',null,'usos','psolic')+'<th style="width:230px"></th></tr></thead><tbody>'+solRows+'</tbody></table></div></div>';
+  const omms=DIC.panol_om_motivos||[];
+  xlfRegister('pomm',{rows:()=>omms, onChange:renderPanol, val:(r,col)=>col==='estado'?estado(r):''});
+  if(!SP_SORT.pomm) SP_SORT.pomm={k:'nombre',dir:1};
+  const ommS=_spOrdenar('pomm', omms.filter(r=>xlfPass('pomm',r)), {nombre:r=>r.nombre, estado:estado, usos:r=>panolDicUsos('omm',r)});
+  const ommRows=ommS.length?ommS.map(r=>{ const u=panolDicUsos('omm',r); return '<tr><td>'+esc(r.nombre)+'</td><td>'+badge(r)+'</td><td style="text-align:right">'+u+'</td>'+acc('omm',r,u)+'</tr>'; }).join('')
+    :'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">Sin motivos cargados todavía (mientras tanto el desplegable ofrece los cuatro de siempre).</td></tr>';
+  const ommCard='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Motivos de envío a mantenimiento</h3><span class="meta">'+ommS.length+' de '+omms.length+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pomm')+'<button class="btn sm" onclick="openPanolDicForm(\'omm\')">'+ICO.plus+'Nuevo motivo</button></span></div>'
+      +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Es la lista desplegable de "Enviar a mantenimiento" (Herramientas). Podés agregar los que necesites.</div>'
+      +'<div class="tbl-hscroll tbl-compact" style="max-height:40vh"><table class="grid" id="tblPanolOmm"><thead><tr>'+_pnTh('Motivo',null,'nombre','pomm')+_pnTh('Estado','estado','estado','pomm')+_pnTh('Usos',null,'usos','pomm')+'<th style="width:230px"></th></tr></thead><tbody>'+ommRows+'</tbody></table></div></div>';
   const umCard='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Unidades de medida</h3><span class="meta">'+umS.length+' de '+ums.length+'</span>'
       +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+xlfClearAllBtn('pum')
       +'<button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolUm\')">Auto-ajustar columnas</button>'
@@ -4954,7 +5129,7 @@ function renderPanolDic(){
       +'<button class="btn sm" onclick="openPanolDicForm(\'ope\')">'+ICO.plus+'Nuevo operario</button></span></div>'
 +'<div style="padding:0 16px 10px"><input type="search" data-sptbl="tblPanolOpe" placeholder="Buscar por nombre, nombre de pila o puesto…" oninput="spFiltrar(this,\'tblPanolOpe\')" style="width:100%;max-width:420px;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px"></div>'
       +'<div class="tbl-hscroll tbl-compact" style="max-height:60vh"><table class="grid" id="tblPanolOpe"><thead><tr>'+_pnTh('Puesto','puesto','puesto','pope')+_pnTh('Nombre',null,'nombre','pope')+_pnTh('Nombre de pila',null,'pila','pope')+_pnTh('Estado','estado','estado','pope')+_pnTh('Usos',null,'usos','pope')+'<th style="width:230px"></th></tr></thead><tbody>'+opeRows+'</tbody></table></div></div>'
-    +solCard+umCard;
+    +solCard+ommCard+umCard;
   ['tblPanolGal','tblPanolOpe','tblPanolSolic','tblPanolUm'].forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp&&SP_Q[t]){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
 }
 window.renderPanolDic=renderPanolDic;
@@ -4964,7 +5139,7 @@ function openPanolDicForm(k,id){
   const body=cfg.campos.map(([c,l])=>{
     const bloq=(c===(cfg.key||'nombre')&&usos>0);
     return '<div class="field"><label>'+l+'</label><input id="pd_'+c+'" type="text" value="'+esc(cur?(cur[c]||''):'')+'"'+(bloq?' disabled':'')+'></div>';
-  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+' erogación(es): el nombre o código no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
+  }).join('')+(usos>0?'<div style="font-size:12px;color:var(--muted)">Ya se usó en '+usos+(cfg.usoOM?' OM':' erogación(es)')+': el nombre o código no se puede cambiar ni eliminar; si no se usa más, inhabilitalo.</div>':'');
   openModal((cur?'Editar ':'Nuevo ')+cfg.etq, body, '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarPanolDic(\''+k+'\','+(cur?cur.id:'null')+')">Guardar</button>');
 }
 window.openPanolDicForm=openPanolDicForm;
@@ -16069,6 +16244,7 @@ async function reloadDicts(background){
       (async()=>{ await panolSolCargar(); })(),
       (async()=>{ await panolKitsCargar(); })(),
       (async()=>{ await panolHerrCargar(); })(),
+      (async()=>{ await panolOmCargar(); })(),
       (async()=>{ if(DEMO_MODE) return; try{ DIC.panol_responsables=await sbFetchAll('/compras_panol_responsables?select=*&order=id.asc'); }catch(e){ /* si la tabla no existe todavía, no hay responsables */ } })(),
       (async()=>{ try{ const ps = await sbFetchAll('/compras_panol_solicitantes?select=*&order=nombre.asc'); if(ps) DIC.panol_solicitantes = ps; }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       (async()=>{ try{
