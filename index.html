@@ -753,7 +753,7 @@ const SCHEMAS = {
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10h19"/><circle cx="12" cy="14.5" r="1.6"/></svg>',
   },
   solicitudes: {
-    title:'Solicitudes de pago', sub:'Pedidos de Compras a Finanzas para cargar y pagar una factura — reemplaza el mail', custom:true,
+    title:'Compras ↔ Finanzas', sub:'Pedidos de pago, facturas sin OC e informes de Tango, compartidos con Administración y Finanzas — reemplaza el mail', custom:true,
     icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2.5h9l3 3v16h-12z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>',
   },
   seguimiento: {
@@ -8926,15 +8926,16 @@ function ocInformeSugerirOCs(proveedorCod){
 let SOLPAGO_FILTRO='todas', SOLPAGO_SUGERIDAS=[];
 function setSolPagoFiltro(v){ SOLPAGO_FILTRO=v; renderSolicitudesPago(); }
 window.setSolPagoFiltro=setSolPagoFiltro;
-// Pestañas del apartado: Pendientes de facturar (cargar la FAC de cada OC) → Pagos solicitados
+// Pestañas del apartado (Compras ↔ Finanzas): Pendientes de facturar (cargar la FAC de cada OC) → Pagos solicitados
 // (el circuito de siempre) → Pagos a realizar (reporte de Tango cruzado con el Informe OC).
 let SOLPAGO_TAB='solicitudes';
 function setSolPagoTab(t){ SOLPAGO_TAB=t; renderSolicitudesPago(); }
 window.setSolPagoTab=setSolPagoTab;
 function renderSolicitudesPago(){
   const tab=(id,lbl)=>'<button class="mtab'+(SOLPAGO_TAB===id?' active':'')+'" onclick="setSolPagoTab(\''+id+'\')">'+lbl+'</button>';
-  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+tab('pendfac','Pendientes de facturar')+tab('solicitudes','Pagos solicitados')+tab('pagos','Pagos a realizar')+'</div>';
-  const inner = SOLPAGO_TAB==='pendfac' ? pendFacturarView() : SOLPAGO_TAB==='pagos' ? pagosRealizarView() : solicitudesPagoView();
+  const fsAb=(mem.facturas_sin_oc||[]).filter(f=>f.estado!=='Cerrada').length;
+  const tabs='<div class="mtabs" style="margin:4px 0 14px">'+tab('pendfac','Pendientes de facturar')+tab('solicitudes','Pagos solicitados')+tab('pagos','Pagos a realizar')+tab('sinoc','Facturas sin OC'+(fsAb?' ('+fsAb+')':''))+'</div>';
+  const inner = SOLPAGO_TAB==='pendfac' ? pendFacturarView() : SOLPAGO_TAB==='pagos' ? pagosRealizarView() : SOLPAGO_TAB==='sinoc' ? facturasSinOCView() : solicitudesPagoView();
   C().innerHTML=tabs+_spMetaBar()+inner;
   Object.keys(SP_Q).forEach(t=>{ const inp=document.querySelector('input[data-sptbl="'+t+'"]'); if(inp){ inp.value=SP_Q[t]; spFiltrar(inp,t); } });
 }
@@ -9212,6 +9213,195 @@ async function confirmDelSolicitud(id){
   closeModal(); toast('Solicitud eliminada'); renderSolicitudesPago();
 }
 window.confirmDelSolicitud=confirmDelSolicitud;
+
+/* ===== Compras ↔ Finanzas · Facturas sin OC =====
+   Administración y Finanzas carga desde su app una factura que llegó sin OC (con el PDF, carpeta sin-oc/ del bucket
+   facturas) y la asigna a un comprador o la deja "Sin asignar" (bandeja común). Compras la toma o la reasigna, informa la
+   OC que generó (opcional: tildar "incluir en solicitar pago", que arma el pedido de pago) o responde "No corresponde".
+   Finanzas la cierra. Tabla compras_facturas_sin_oc (sql/2026-10_facturas_sin_oc.sql). */
+const FSOC_ESTADOS=['Sin asignar','Asignada','OC informada','No corresponde','Cerrada'];
+const FSOC_CLR={'Sin asignar':'b-ambar','Asignada':'b-azul','OC informada':'b-verde','No corresponde':'b-rojo','Cerrada':'b-gris'};
+let FSOC_FILTRO='abiertas', FSOC_MIAS=false;
+function setFsocFiltro(v){ FSOC_FILTRO=v; renderSolicitudesPago(); }
+window.setFsocFiltro=setFsocFiltro;
+function setFsocMias(v){ FSOC_MIAS=!!v; renderSolicitudesPago(); }
+window.setFsocMias=setFsocMias;
+// La OC informada contra el Informe OC importado: existe / es de otro proveedor / todavía no figura
+function _fsocOcAviso(prov, oc){
+  const n=nroOCTango(oc); if(!n) return '';
+  const rows=(DIC.oc_informe||[]).filter(r=>nroOCTango(r.oc_numero)===n);
+  if(!rows.length) return '<div style="font-size:10.5px;color:var(--muted)" title="Puede ser una OC nueva que todavía no está en el Informe OC importado">no está en el Informe OC</div>';
+  const provs=[...new Set(rows.map(r=>String(r.proveedor_cod||'').trim().toUpperCase()))];
+  if(prov && !provs.includes(String(prov).trim().toUpperCase())) return '<div style="font-size:10.5px;color:#b3853a">⚠ OC de otro proveedor ('+esc(provs.join(', '))+')</div>';
+  return '<div style="font-size:10.5px;color:var(--muted)">✓ en el Informe OC</div>';
+}
+function facturasSinOCView(){
+  const all=mem.facturas_sin_oc||[];
+  const mias=f=>!!MI_NOMBRE && f.comprador===MI_NOMBRE;
+  const vis=FSOC_MIAS?all.filter(mias):all;
+  const porEstado=FSOC_FILTRO==='todas'?vis:(FSOC_FILTRO==='abiertas'?vis.filter(f=>f.estado!=='Cerrada'):vis.filter(f=>f.estado===FSOC_FILTRO));
+  xlfRegister('fsoc', { rows:()=>porEstado, onChange:renderSolicitudesPago, dateVal:f=>f.fecha_factura||'',
+    val:(f,col)=>{
+      if(col==='prov') return f.proveedor_cod||'(sin proveedor)';
+      if(col==='comp') return f.comprador||'Sin asignar';
+      if(col==='estado') return f.estado;
+      if(col==='mon') return f.moneda==='USD'?'Dólares':'Pesos';
+      if(col==='oc') return f.oc_numero?nroOCTango(f.oc_numero):'(sin OC)';
+      return '';
+    } });
+  const ult=f=>{ const h=f.historial||[]; return h.length?h[h.length-1]:null; };
+  const shown=_spOrdenar('fsoc', porEstado.filter(f=>xlfPass('fsoc',f)), {
+    fac:f=>f.nro_factura, prov:f=>f.proveedor_cod, ff:f=>f.fecha_factura||'', mon:f=>+f.monto||0, comp:f=>f.comprador||'', estado:f=>f.estado,
+    oc:f=>nroOCTango(f.oc_numero), ult:f=>{ const u=ult(f); return u?String(u.fecha||''):''; }, alta:f=>String(f.creado_en||'') });
+  const cnt=e=>vis.filter(f=>f.estado===e).length;
+  const chip=(v,label)=>'<button class="mtab'+(FSOC_FILTRO===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setFsocFiltro(\''+v+'\')">'+label+'</button>';
+  const filtros='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center">'
+    +chip('abiertas','Sin cerrar ('+vis.filter(f=>f.estado!=='Cerrada').length+')')+FSOC_ESTADOS.map(e=>chip(e,e+' ('+cnt(e)+')')).join('')+chip('todas','Todas ('+vis.length+')')
+    +'<span style="margin-left:auto;font-size:12px;color:var(--muted)">Ver:</span>'
+    +'<button class="mtab'+(!FSOC_MIAS?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setFsocMias(false)">Todas</button>'
+    +'<button class="mtab'+(FSOC_MIAS?' active':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="setFsocMias(true)"'+(MI_NOMBRE?'':' disabled title="Tu usuario no tiene nombre de comprador cargado"')+'>Solo mías</button></div>';
+  const header='<div class="card-h"><h3>Facturas sin OC</h3><span class="meta">Facturas que llegaron a Finanzas sin orden de compra. Las carga Administración y Finanzas (asignadas a un comprador o «Sin asignar» para que alguien las tome). Compras informa la OC que generó, o «No corresponde»; Finanzas la cierra.</span></div>';
+  if(!shown.length) return '<div class="card">'+header+filtros+(xlfHasAny('fsoc')?_spTools('fsocTabla','fsoc','Buscar factura, proveedor, comprador u OC…'):'')+'<div class="empty" style="padding:20px">No hay facturas sin OC'+(xlfHasAny('fsoc')?' que coincidan con los filtros':(FSOC_FILTRO!=='todas'||FSOC_MIAS?' con este filtro':''))+'.</div></div>';
+  const rows=shown.map(f=>{
+    const u=ult(f);
+    return '<tr data-q="'+esc(_syncFold([f.nro_factura,f.proveedor_cod,f.proveedor,f.comprador,nroOCTango(f.oc_numero)].join(' ')))+'">'
+      +'<td><strong>'+esc(f.nro_factura||'—')+'</strong>'+(f.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoFsoc('+f.id+')">'+ICO.pdf+'</button>':'')+'</td>'
+      +'<td style="font-size:11px">'+esc(f.proveedor_cod||'')+' '+esc(f.proveedor||_spProvNombre(f.proveedor_cod))+'</td>'
+      +'<td style="white-space:nowrap">'+(f.fecha_factura?fmtDate(f.fecha_factura):'—')+'</td>'
+      +'<td style="text-align:right">'+(f.monto!=null&&f.monto!==''?_spMoney(f.monto,f.moneda):'—')+'</td>'
+      +'<td style="font-size:11px">'+(f.comprador?esc(f.comprador):'<span style="color:var(--muted)">Sin asignar</span>')+'</td>'
+      +'<td><span class="badge '+(FSOC_CLR[f.estado]||'b-gris')+'">'+esc(f.estado)+'</span></td>'
+      +'<td>'+(f.oc_numero?'<strong>'+esc(nroOCTango(f.oc_numero))+'</strong>'+_fsocOcAviso(f.proveedor_cod,f.oc_numero):'—')+'</td>'
+      +'<td style="font-size:11px;color:var(--muted);max-width:220px">'+(u?esc(u.texto||'')+'<div style="font-size:10px">'+_spCuando(u)+'</div>':'—')+'</td>'
+      +'<td><button class="btn ghost sm" onclick="openFsocDetalle('+f.id+')">Abrir</button></td></tr>';
+  }).join('');
+  const tot={ARS:0,USD:0}; shown.forEach(f=>{ tot[f.moneda==='USD'?'USD':'ARS']+=(+f.monto||0); });
+  const pie='<tfoot><tr><td colspan="3" style="text-align:right"><strong>Total ('+shown.length+(shown.length!==porEstado.length?' de '+porEstado.length:'')+')</strong></td>'
+    +'<td style="text-align:right;white-space:nowrap"><strong>'+_spMoney(tot.ARS,'ARS')+'</strong>'+(tot.USD?'<div><strong>'+_spMoney(tot.USD,'USD')+'</strong></div>':'')+'</td><td colspan="5"></td></tr></tfoot>';
+  return '<div class="card">'+header+filtros
+    +_spTools('fsocTabla','fsoc','Buscar factura, proveedor, comprador u OC…')
+    +'<table class="grid" id="fsocTabla" style="font-size:12.5px"><thead><tr>'+_spTh('fsoc','Factura',null,'fac')+_spTh('fsoc','Proveedor','prov','prov')+_spTh('fsoc','Fecha factura','__fecha__','ff')
+    +_spTh('fsoc','Monto','mon','mon')+_spTh('fsoc','Asignada a','comp','comp')+_spTh('fsoc','Estado','estado','estado')+_spTh('fsoc','OC','oc','oc')+_spTh('fsoc','Último comentario',null,'ult')+'<th></th></tr></thead><tbody>'+rows+'</tbody>'+pie+'</table></div>';
+}
+window.facturasSinOCView=facturasSinOCView;
+async function verAdjuntoFsoc(id){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); if(!f||!f.adjunto_path) return;
+  try{
+    if(DEMO_MODE){ toast('En modo demo no hay archivos reales guardados.'); return; }
+    window.open(await sbStorageSignedUrl('facturas', f.adjunto_path, 3600), '_blank');
+  }catch(e){ toast('No pude abrir el adjunto: '+(e.message||e)); }
+}
+window.verAdjuntoFsoc=verAdjuntoFsoc;
+function openFsocDetalle(id){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); if(!f) return;
+  const hist=(f.historial||[]).slice().reverse().map(h=>'<div style="border-bottom:1px solid var(--line);padding:8px 0"><div style="font-size:12.5px">'+esc(h.texto||'')+'</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+_spCuando(h)+(h.estado_nuevo?' · pasó a "'+esc(h.estado_nuevo)+'"':'')+'</div></div>').join('')||'<div style="font-size:12px;color:var(--muted)">Sin comentarios todavía.</div>';
+  const puede=puedeCrearSolicitudPago(), abierta=f.estado!=='Cerrada';
+  const compOpts=nombresComp().map(n=>'<option value="'+esc(n)+'"'+(n===(f.comprador||MI_NOMBRE)?' selected':'')+'>'+esc(n)+'</option>').join('');
+  const box=(t,html)=>'<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px"><div style="font-weight:700;font-size:12.5px;margin-bottom:6px">'+t+'</div>'+html+'</div>';
+  let acc='';
+  if(puede && abierta){
+    acc+=box(f.oc_numero?'Corregir la OC informada':'Informar la OC',
+      '<div class="frow c2"><div class="field"><label>N° de OC (Tango) *</label><input id="fsoc_oc" value="'+esc(nroOCTango(f.oc_numero)||'')+'" placeholder="Ej. 31587" oninput="fsocOcCheck('+f.id+')"></div>'
+      +'<div class="field"><label>Comentario (opcional)</label><input id="fsoc_oc_msg" type="text"></div></div><div id="fsoc_oc_ck" style="font-size:11.5px;min-height:14px"></div>'
+      +(f.pedir_pago?'<div style="font-size:12px;color:var(--muted);margin-top:6px">Ya se pidió el pago de esta factura.</div>'
+        :'<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-top:6px;cursor:pointer"><input type="checkbox" id="fsoc_pago"> Incluir en solicitar pago <span style="color:var(--muted);font-size:11.5px">(opcional: arma el pedido de pago con esta factura y su PDF)</span></label>')
+      +'<div style="margin-top:8px"><button class="btn sm" onclick="fsocInformarOC('+f.id+')">'+(f.oc_numero?'Corregir OC':'Informar OC')+'</button></div>');
+    acc+=box('Asignar','<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap"><div class="field" style="flex:1;min-width:200px;margin:0"><label>Comprador</label><select id="fsoc_comp"><option value="">Sin asignar (bandeja común)</option>'+compOpts+'</select></div>'
+      +'<button class="btn ghost sm" onclick="fsocAsignar('+f.id+')">Asignar</button>'+(MI_NOMBRE && f.comprador!==MI_NOMBRE?'<button class="btn ghost sm" onclick="fsocAsignar('+f.id+',true)">Tomarla yo</button>':'')+'</div>');
+    if(f.estado!=='No corresponde') acc+=box('No corresponde a Compras','<div class="field"><label>Motivo *</label><input id="fsoc_nc" type="text" placeholder="Ej. es un servicio que contrata Administración"></div><button class="btn ghost sm" style="color:#b3261e" onclick="fsocNoCorresponde('+f.id+')">No corresponde</button>');
+  }
+  if(puede) acc+='<div class="field" style="margin-top:10px"><label>Agregar comentario</label><textarea id="fsoc_com" rows="2" placeholder="Mensaje para Finanzas…"></textarea></div>';
+  const body='<div style="font-size:12.5px;line-height:1.7">'
+    +'<strong>Proveedor:</strong> '+esc(f.proveedor_cod||'')+' — '+esc(f.proveedor||_spProvNombre(f.proveedor_cod))+'<br>'
+    +'<strong>Factura:</strong> '+esc(f.nro_factura||'—')+(f.adjunto_path?' · <a href="#" onclick="verAdjuntoFsoc('+f.id+');return false">ver adjunto</a>':'')+(f.fecha_factura?' · del '+fmtDate(f.fecha_factura):'')+'<br>'
+    +'<strong>Monto:</strong> '+(f.monto!=null&&f.monto!==''?_spMoney(f.monto,f.moneda):'—')+'<br>'
+    +'<strong>Asignada a:</strong> '+(f.comprador?esc(f.comprador):'Sin asignar (bandeja común)')+'<br>'
+    +'<strong>Estado:</strong> <span class="badge '+(FSOC_CLR[f.estado]||'b-gris')+'">'+esc(f.estado)+'</span>'
+    +(f.oc_numero?'<br><strong>OC:</strong> '+esc(nroOCTango(f.oc_numero))+(f.oc_informada_por?' · informada por '+esc(f.oc_informada_por)+(f.oc_informada_en?' el '+fmtDate(String(f.oc_informada_en).slice(0,10)):''):'')+_fsocOcAviso(f.proveedor_cod,f.oc_numero):'')
+    +(f.pedir_pago?'<br><strong>Pedido de pago:</strong> sí'+(f.solicitud_pago_id?' · <a href="#" onclick="openSolicitudPagoDetalle('+f.solicitud_pago_id+');return false">ver pedido</a>':''):'')
+    +'<br><span style="color:var(--muted);font-size:11.5px">Cargada por '+esc(f.creado_por||'—')+' el '+fmtDate(String(f.creado_en||'').slice(0,10))+'</span>'
+    +'</div>'+acc
+    +'<div id="fsocMsg" style="font-size:12px;color:#b3261e;min-height:16px;margin-top:6px"></div>'
+    +'<div style="font-weight:700;font-size:12.5px;margin-top:10px;margin-bottom:4px">Historial</div><div style="max-height:220px;overflow:auto">'+hist+'</div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cerrar</button>'+(puede?'<button class="btn" onclick="fsocComentar('+f.id+')">Comentar</button>':'');
+  openModal('Factura sin OC · '+(f.nro_factura||''), body, foot, 'wide');
+  if(f.oc_numero) fsocOcCheck(f.id);
+}
+window.openFsocDetalle=openFsocDetalle;
+function fsocOcCheck(id){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); const el=document.getElementById('fsoc_oc_ck'); if(!f||!el) return;
+  el.innerHTML=_fsocOcAviso(f.proveedor_cod,(document.getElementById('fsoc_oc')||{}).value||'');
+}
+window.fsocOcCheck=fsocOcCheck;
+// Cambio + renglón de historial. Relee el historial justo antes, para no pisar lo que haya escrito Finanzas.
+async function _fsocGuardar(id, cambios, texto){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); if(!f) return false;
+  const msg=document.getElementById('fsocMsg'); if(msg) msg.textContent='';
+  const ahora=new Date().toISOString(), autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  const h={fecha:ahora, autor, texto}; if(cambios.estado) h.estado_nuevo=cambios.estado;
+  try{
+    if(DEMO_MODE){ Object.assign(f,cambios,{historial:(f.historial||[]).concat([h]),actualizado_en:ahora}); return true; }
+    const act=await sbFetch('/compras_facturas_sin_oc?id=eq.'+id+'&select=historial');
+    const hist=((act&&act[0]&&act[0].historial)||f.historial||[]).concat([h]);
+    await sbFetch('/compras_facturas_sin_oc?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify(Object.assign({},cambios,{historial:hist,actualizado_en:ahora}))});
+    await reloadDB(); return true;
+  }catch(e){ if(msg) msg.textContent='Error: '+(e.message||e); return false; }
+}
+async function fsocInformarOC(id){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); if(!f) return;
+  const oc=nroOCTango((document.getElementById('fsoc_oc')||{}).value||''), com=((document.getElementById('fsoc_oc_msg')||{}).value||'').trim();
+  const msg=document.getElementById('fsocMsg');
+  if(!oc){ msg.textContent='Poné el N° de OC.'; return; }
+  const pedir=!f.pedir_pago && !!(document.getElementById('fsoc_pago')||{}).checked;
+  const autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', ahora=new Date().toISOString();
+  const cambios={oc_numero:oc, estado:'OC informada', oc_informada_por:autor, oc_informada_en:ahora};
+  if(!f.comprador && MI_NOMBRE) cambios.comprador=MI_NOMBRE;
+  let txtPago='';
+  if(pedir){
+    // Pedido de pago con la misma factura (salvo que ya haya uno vigente para ese proveedor + N°)
+    const ya=(mem.solicitudes_pago||[]).find(s=>_spActiva(s) && _spClaveFac(s.proveedor_cod,s.nro_factura)===_spClaveFac(f.proveedor_cod,f.nro_factura));
+    let solId=ya?ya.id:null;
+    if(!ya){
+      const inf=(DIC.oc_informe||[]).find(r=>nroOCTango(r.oc_numero)===oc);
+      const row={ proveedor_cod:f.proveedor_cod, proveedor:f.proveedor||_spProvNombre(f.proveedor_cod), comprador:f.comprador||MI_NOMBRE||'', oc_numero:oc, remito_numero:'',
+        proyecto_cod:(inf&&inf.clasif_cod)||'', nro_factura:f.nro_factura, monto:+f.monto||0, moneda:f.moneda||'ARS', adjunto_path:f.adjunto_path||null, adjunto_nombre:f.adjunto_nombre||null,
+        estado:'Pendiente', historial:[{fecha:ahora, autor, texto:'Pedido de pago generado desde Facturas sin OC (OC '+oc+').'}], creado_en:ahora, creado_por:autor };
+      if(_spEnPagosRealizar(row.proveedor_cod, row.nro_factura)) row.pagos_realizar_visto_en=ahora;
+      try{
+        if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); solId=row.id; }
+        else{ const r=await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); solId=r&&r[0]?r[0].id:null; }
+      }catch(e){ msg.textContent='No pude armar el pedido de pago: '+(e.message||e); return; }
+    }
+    cambios.pedir_pago=true; cambios.solicitud_pago_id=solId;
+    txtPago=ya?' Ya había un pedido de pago de esta factura: quedó vinculado.':' Además pidió el pago (queda Pendiente en Pagos solicitados).';
+  }
+  const ok=await _fsocGuardar(id, cambios, (f.oc_numero&&f.oc_numero!==oc?'Corrigió la OC: '+oc+' (antes '+nroOCTango(f.oc_numero)+').':'Informó la OC '+oc+'.')+txtPago+(com?' '+com:''));
+  if(ok){ toast('OC informada'); openFsocDetalle(id); renderSolicitudesPago(); }
+}
+window.fsocInformarOC=fsocInformarOC;
+async function fsocAsignar(id, yo){
+  const f=(mem.facturas_sin_oc||[]).find(x=>String(x.id)===String(id)); if(!f) return;
+  const c=yo?MI_NOMBRE:((document.getElementById('fsoc_comp')||{}).value||'');
+  if(c===(f.comprador||'')){ document.getElementById('fsocMsg').textContent='Ya está asignada así.'; return; }
+  const est=f.estado==='OC informada'?'OC informada':(c?'Asignada':'Sin asignar');
+  const ok=await _fsocGuardar(id, {comprador:c||null, estado:est}, yo?'La tomó '+c+'.':(c?'La asignó a '+c+'.':'La dejó sin asignar (bandeja común).'));
+  if(ok){ toast('Asignada'); openFsocDetalle(id); renderSolicitudesPago(); }
+}
+window.fsocAsignar=fsocAsignar;
+async function fsocNoCorresponde(id){
+  const m=((document.getElementById('fsoc_nc')||{}).value||'').trim();
+  if(!m){ document.getElementById('fsocMsg').textContent='Contá el motivo.'; return; }
+  const ok=await _fsocGuardar(id, {estado:'No corresponde'}, 'No corresponde a Compras. Motivo: '+m);
+  if(ok){ toast('Marcada: no corresponde'); openFsocDetalle(id); renderSolicitudesPago(); }
+}
+window.fsocNoCorresponde=fsocNoCorresponde;
+async function fsocComentar(id){
+  const t=((document.getElementById('fsoc_com')||{}).value||'').trim();
+  if(!t){ toast('Escribí un comentario.'); return; }
+  const ok=await _fsocGuardar(id, {}, t);
+  if(ok){ toast('Comentario agregado'); openFsocDetalle(id); renderSolicitudesPago(); }
+}
+window.fsocComentar=fsocComentar;
 
 /* ===== Solicitudes de pago · Pendientes de facturar y Pagos a realizar =====
    Dos fotos de reportes de Tango (Mis Consultas → Reportes Diarios) que se importan a mano; cada
@@ -16309,6 +16499,9 @@ async function reloadDicts(background){
       // Solicitudes de pago: reemplaza el circuito por mail entre Compras y Finanzas
       (async()=>{ try{ mem.solicitudes_pago = await sbFetchAll('/compras_solicitudes_pago?select=*&order=id.desc'); }
       catch(e){ mem.solicitudes_pago = mem.solicitudes_pago||[]; } })(),
+      // Facturas sin OC: las carga Administración y Finanzas; Compras informa la OC (sql/2026-10_facturas_sin_oc.sql)
+      (async()=>{ try{ mem.facturas_sin_oc = await sbFetchAll('/compras_facturas_sin_oc?select=*&order=id.desc'); }
+      catch(e){ mem.facturas_sin_oc = mem.facturas_sin_oc||[]; } })(),
       // Constancia de cada informe de Tango (fecha del reporte, quién y cuándo lo subió) — los carga Administración
       (async()=>{ try{
         const im = await sbFetchAll('/compras_informes_meta?select=*');
