@@ -9776,7 +9776,10 @@ function proyectadoView(){
       : (d.fechaPago
         ? '<span'+(d.atrasado?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(d.fechaPago)+'</span>'
         : '<span style="color:var(--muted)">Sin fecha</span>');
-    return '<tr><td><strong>'+esc(o.numero||'')+'</strong></td>'
+    // OP armadas de la OG: ya descontadas de la caja, esperando liberación para marcarse Pagadas
+    const arm=armadasOf(o.id);
+    const armTxt=arm.map(p=>'<div><span class="badge b-ambar" style="font-size:10px" title="OP armada: ya descontada de la caja; se marca Pagada cuando la OG se libere ('+(mon==='USD'?'US$ ':'$ ')+fmtNum(pagoMontoOG(p),2)+')">OP '+esc(p.op_numero)+' armada</span></div>').join('');
+    return '<tr><td><strong>'+esc(o.numero||'')+'</strong>'+armTxt+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
       +'<td>'+esc(o.clasif_og||'')+'</td>'
