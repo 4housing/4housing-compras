@@ -11275,6 +11275,9 @@ function openOG(id){
   const soloLectura = !!o && !puedeEditarOG(o);
   const bloqCabecera = ogCabeceraBloqueada(o);
   OG_ITEMS = (cur.items||[]).map((it,idx)=>({...it, _locked: o ? (itemAcumPct(o, idx)>0 || itemCerradoPct(it)>0) : false}));
+  // Renglón bloqueado (certificado/pagado) que quedó sin artículo: se deja completar el artículo UNA vez
+  // (el resto del renglón sigue bloqueado). Cuando se guarda con artículo, vuelve a quedar bloqueado entero.
+  OG_ITEMS.forEach(it=>{ if(it._locked && !String(it.cod_art||'').trim() && !String(it.articulo||'').trim()) it._artFaltaba=true; });
   const nextNum = String(Math.max(1999,...(mem.ogs||[]).map(x=>+x.numero||0))+1);
   const optSel=(arr,val)=>'<option value="">— elegí —</option>'+arr.map(x=>'<option'+(x===val?' selected':'')+'>'+esc(x)+'</option>').join('');
   // Igual que optSel, pero para listas de nombres "Apellido, Nombre": muestra "Apellido, N" (más
@@ -11368,9 +11371,15 @@ function renderOGItems(){
     +OG_ITEMS.map((it,i)=>{
       if(it._locked){
         const mds=(it.modulos||[]).map(m=>esc(String(m).split(' - ')[0])).join(', ');
+        const prevArt=(i>0&&OG_ITEMS[i-1]&&String(OG_ITEMS[i-1].cod_art||'').trim())?OG_ITEMS[i-1].cod_art:'';
+        const celArt = it._artFaltaba
+          ? '<td style="background:#fdecea"><input id="ogart_'+i+'" value="'+esc(it.cod_art||'')+'" placeholder="falta el artículo…" autocomplete="off" onfocus="comboArt('+i+')" oninput="comboArt('+i+')" onblur="comboHideDelayed()" title="Este renglón quedó sin artículo: completalo (el resto del renglón sigue bloqueado)" style="width:100%;border-color:#b3261e;'+inp+'">'
+            +(prevArt?'<button type="button" class="btn ghost sm" style="margin-top:3px;padding:2px 6px;min-height:0;font-size:10.5px;width:100%" onclick="ogSetCodDirect('+i+',\''+esc(prevArt)+'\')" title="Usar el mismo artículo que el renglón de arriba ('+esc(prevArt)+')">= renglón de arriba</button>':'')+'</td>'
+            +'<td><input type="text" value="'+esc(it.articulo||'')+'" readonly placeholder="se completa al elegir el código" style="width:100%;background:#f3f1e8;color:var(--muted);'+inp+'"></td>'
+          : '<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.cod_art||'')+'</td>'
+            +'<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.articulo||it.descripcion||'')+'</td>';
         return '<tr style="background:#f3f1e8">'
-        +'<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.cod_art||'')+'</td>'
-        +'<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.articulo||it.descripcion||'')+'</td>'
+        +celArt
         +'<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.hito||'')+'</td>'
         +'<td style="overflow:hidden;text-overflow:ellipsis">'+esc(it.centro_costos||'')+'</td>'
         +'<td style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis">'+(mds||'—')+'</td>'
@@ -11648,18 +11657,22 @@ async function saveOG(id){
   }
   const faltantes=[];
   OG_ITEMS.forEach((it,i)=>{
-    if(it._locked) return; // ya certificado: no se revalida retroactivamente
+    if(it._locked && !it._artFaltaba) return; // ya certificado: no se revalida retroactivamente (salvo completar un artículo que faltaba)
     const codRaw=(it.cod_art||'').trim(), artRaw=(it.articulo||'').trim();
-    if(!codRaw && !artRaw) return; // renglón vacío, no cuenta
+    if(!codRaw && !artRaw){
+      // Antes se tomaba como "renglón vacío" aunque tuviera detalle/precio/cantidad, y se guardaba sin artículo.
+      if(it._locked || String(it.hito||'').trim() || +it.precio_unit || +it.cant>1) faltantes.push('Renglón '+(i+1)+': falta el artículo'+(it.hito?' ("'+String(it.hito).slice(0,40)+'")':''));
+      return;
+    }
     const art=(typeof DIC!=='undefined'?DIC.articulos:[]).find(x=>x.codigo===codRaw);
     if(!art){ faltantes.push('Renglón '+(i+1)+': "'+(codRaw||artRaw)+'"'); }
     else { it.cod_art=art.codigo; it.articulo=art.descripcion; } // la descripción SIEMPRE sale del Diccionario
   });
   if(faltantes.length){
-    alert('Estos renglones no tienen un artículo del Diccionario:\n\n'+faltantes.join('\n')+'\n\nAgregalos en Diccionario → Artículos, o sincronizalos desde Tango, y elegilos de la lista antes de guardar.');
+    alert('No se puede guardar: hay renglones sin un artículo del Diccionario:\n\n'+faltantes.join('\n')+'\n\nElegí el artículo de la lista (si no existe, agregalo en Diccionario → Artículos o sincronizalo desde Tango). Un renglón que no se usa, borralo.');
     return;
   }
-  const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if(!it._locked && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
+  const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if((!it._locked || it._artFaltaba) && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
   if(estMod.length){ alert('No se puede guardar: estos renglones son de ESTRUCTURA pero el artículo imputa a una cuenta de PROYECTOS (lo accesorio sigue a lo principal):\n\n'+estMod.join('\n')+'\n\nCambiá el artículo por uno que corresponda a estructura, por ejemplo:\n'+_estrucAlternativas()+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU).'); return; }
   const items=OG_ITEMS.filter(it=>(it.cod_art||'').trim()||(it.articulo||'').trim()||it.precio_unit)
     .map(it=>({cod_art:it.cod_art||'',articulo:it.articulo||'',hito:it.hito||'',cert_modo:(it.cert_modo==='unid'?'unid':'pct'),centro_costos:it.centro_costos||'',modulos:(it.modulos||[]).slice(0,5),cant:+it.cant||0,um:it.um||'UNI',precio_unit:+it.precio_unit||0,fecha_entrega:it.fecha_entrega||'',deposito:it.deposito||'',bonif_pct:+it.bonif_pct||0,imp:it.imp||{}}));
@@ -11764,6 +11777,16 @@ window.confirmDelOG=confirmDelOG;
 function openCert(ogId, id){
   const o=ogById(ogId);
   if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
+  // No se certifica una OG con renglones sin artículo (sin artículo no hay cuenta para imputar ni asiento)
+  const sinArt=(o&&o.items||[]).map((it,i)=>({it,i})).filter(x=>!String(x.it.cod_art||'').trim() && !String(x.it.articulo||'').trim() && (String(x.it.hito||'').trim()||+x.it.precio_unit));
+  if(sinArt.length){
+    openModal('Falta completar la OG',
+      '<div style="padding:12px 14px;border:1px solid #b3261e;border-radius:10px;background:#fdecea;color:#7a1c14;font-size:13.5px;line-height:1.55"><strong>No se puede certificar la OG '+esc(o.numero)+'</strong>: '
+      +(sinArt.length===1?'hay un renglón':'hay '+sinArt.length+' renglones')+' sin artículo.<br>'+sinArt.map(x=>'Renglón '+(x.i+1)+(x.it.hito?': '+esc(String(x.it.hito).slice(0,60)):'')).join('<br>')+'</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:10px">Abrí la OG (lápiz), completá el artículo de '+(sinArt.length===1?'ese renglón':'esos renglones')+' y guardá. Aunque el renglón esté bloqueado, el artículo faltante se puede cargar.</div>',
+      '<button class="btn" onclick="closeModal()">Entendido</button>');
+    return;
+  }
   const c = id!=null ? certsOf(ogId).find(x=>String(x.id)===String(id)) : null; const cur=c||{};
   const num = cur.numero || nextCertNum(o);
   const hoy=new Date().toISOString().slice(0,10);
