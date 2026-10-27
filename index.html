@@ -6250,7 +6250,7 @@ window.panolHistImportar=panolHistImportar;
    Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
    Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
    ================================================================ */
-const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], charts:{}, filtroSeccion:'' };
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], ogSeccion:{}, charts:{}, filtroSeccion:'' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
 function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
@@ -6281,22 +6281,24 @@ async function gpLoadLista(){
 }
 async function gpLoadProyecto(id){
   GP.proyecto=(GP.proyectos||[]).find(p=>String(p.id)===String(id))||null;
-  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; GP.traslados=[]; GP.solp=[]; return; }
+  if(!GP.proyecto){ GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.imports=[]; GP.reparto=[]; GP.traslados=[]; GP.solp=[]; GP.ogSeccion={}; return; }
   const codq = GP.proyecto.codigo ? ('/compras_gp_traslados_mo?select=*&codigo=eq.'+encodeURIComponent(GP.proyecto.codigo)+'&order=creado_en.desc') : null;
   // SOLP de la obra de este proyecto (match por N° de obra, como las OGs): canal aparte, read-only.
   const onums = _obraNums(GP.proyecto.codigo).concat(_obraNums(GP.proyecto.nombre));
   const onset = new Set(onums);
   const solpq = onums.length ? ('/compras_solp_items?select=*&or=('+onums.map(n=>'obra_cod.ilike.*'+n+'*').join(',')+')&order=solp.desc') : null;
-  const [pres, oc, map, imp, rep, tras, solp] = await Promise.all([
+  const [pres, oc, map, imp, rep, tras, solp, ogsec] = await Promise.all([
     sbFetch('/compras_gp_presupuesto?select=*&proyecto_id=eq.'+id+'&order=orden.asc'),
     sbFetchAll('/compras_gp_oc?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_mapeo?select=*&proyecto_id=eq.'+id),
     sbFetch('/compras_gp_importaciones?select=*&proyecto_id=eq.'+id+'&order=importado_en.desc'),
     sbFetch('/compras_gp_reparto?select=*&proyecto_id=eq.'+id),
     codq ? sbFetch(codq).catch(()=>[]) : Promise.resolve([]),
-    solpq ? sbFetchAll(solpq).catch(()=>[]) : Promise.resolve([])
+    solpq ? sbFetchAll(solpq).catch(()=>[]) : Promise.resolve([]),
+    sbFetch('/compras_gp_og_seccion?select=og_id,seccion&proyecto_id=eq.'+id).catch(()=>[])   // clasificación manual de OGs
   ]);
   GP.presupuesto=pres||[]; GP.oc=oc||[]; GP.mapeo=map||[]; GP.imports=imp||[]; GP.reparto=rep||[]; GP.traslados=tras||[];
+  GP.ogSeccion={}; (ogsec||[]).forEach(r=>{ GP.ogSeccion[r.og_id]=r.seccion; });
   // precisión: el ilike puede traer de más (ej. 4317 vs 14317) → filtrar por N° exacto del obra_cod
   GP.solp=(solp||[]).filter(s=> _obraNums(s.obra_cod).some(n=>onset.has(n)));
 }
@@ -6644,6 +6646,63 @@ async function gpSetAmbito(id, val){
   }catch(e){ toast('No se pudo cambiar el ámbito: '+(e.message||e)); }
 }
 window.gpSetAmbito=gpSetAmbito;
+
+// Cerrar / reabrir un rubro (compra terminada). Cerrado → su ahorro cuenta como CONFIRMADO. Dirección o compradores.
+async function gpToggleRubroCerrado(id, cerrar){
+  if(!(esDireccion()||puedeCrearOG())){ toast('Solo dirección o compradores pueden cerrar un rubro.'); return; }
+  cerrar=!!cerrar;
+  try{
+    const body = cerrar ? {cerrada:true, cerrada_por:cmpUser(), cerrada_en:new Date().toISOString()} : {cerrada:false, cerrada_por:null, cerrada_en:null};
+    await sbFetch('/compras_gp_presupuesto?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify(body)});
+    const s=(GP.presupuesto||[]).find(x=>String(x.id)===String(id)); if(s){ s.cerrada=cerrar; s.cerrada_por=body.cerrada_por; s.cerrada_en=body.cerrada_en; }
+    gpRenderTablero();
+  }catch(e){ toast('No se pudo actualizar el rubro: '+(e.message||e)); }
+}
+window.gpToggleRubroCerrado=gpToggleRubroCerrado;
+
+// Clasificar OGs a mano (las que vienen en "No Aplica"/"Otros" y no imputan a un rubro).
+function gpClasificarOGs(){
+  if(!(esDireccion()||puedeCrearOG())){ toast('Sin permiso.'); return; }
+  const p=GP.proyecto; if(!p) return;
+  const ogs=gpOGsDelProyecto(p).filter(o=>!o.anulada);
+  if(!ogs.length){ toast('No hay OGs para clasificar.'); return; }
+  const secs=(GP.presupuesto||[]).filter(s=>s.ambito==='compras').map(s=>s.seccion);
+  const ovr=GP.ogSeccion||{};
+  const secOpts=sel=>'<option value="">(automático)</option>'+secs.map(s=>'<option'+(s===sel?' selected':'')+'>'+esc(s)+'</option>').join('');
+  const rows=ogs.map(o=>{
+    const se=gpOGSeccion(o); const warn=se.seccion==='Sin clasificar';
+    return '<tr'+(warn?' style="background:rgba(176,88,79,0.06)"':'')+'><td style="font-size:11.5px">'+esc(o.numero||'')+'</td>'
+      +'<td style="font-size:11.5px">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+esc(o.costeo_new||o.costeo||'—')+'</td>'
+      +'<td style="text-align:right;font-size:11.5px">'+fmtNum(gpOGArs(o),0)+'</td>'
+      +'<td><select id="ogsec_'+o.id+'" style="width:100%;padding:3px;font-size:11px;border:1px solid var(--line-strong);border-radius:5px">'+secOpts(ovr[o.id]||'')+'</select></td></tr>';
+  }).join('');
+  const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Asigná a mano la sección del presupuesto para cada OG. <b>(automático)</b> deja que la app la impute por el costeo. Las resaltadas no tienen sección y no suman al Comprado hasta asignarlas.</div>'
+    +'<div class="tbl-hscroll" style="max-height:55vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>OG</th><th>Prov.</th><th>Costeo (OG)</th><th style="text-align:right">Total ($)</th><th>Sección del presupuesto</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  const foot='<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="gpGuardarOGSeccion()">Guardar</button>';
+  openModal('Clasificar OGs · '+esc(p.nombre), body, foot, 'wide');
+  GP._ogClasifIds=ogs.map(o=>o.id);
+}
+async function gpGuardarOGSeccion(){
+  const p=GP.proyecto; if(!p) return;
+  const ids=GP._ogClasifIds||[]; const ovr=GP.ogSeccion||{};
+  const ups=[], dels=[];
+  ids.forEach(id=>{
+    const el=document.getElementById('ogsec_'+id); if(!el) return;
+    const val=el.value;
+    if(val){ if(ovr[id]!==val) ups.push({proyecto_id:p.id, og_id:id, seccion:val, asignado_por:cmpUser(), asignado_en:new Date().toISOString()}); }
+    else if(ovr[id]!=null) dels.push(id);
+  });
+  if(!ups.length && !dels.length){ closeModal(); return; }
+  try{
+    if(ups.length) await sbFetch('/compras_gp_og_seccion',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(ups)});
+    for(const id of dels){ await sbFetch('/compras_gp_og_seccion?proyecto_id=eq.'+p.id+'&og_id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); }
+    ups.forEach(u=>{ GP.ogSeccion[u.og_id]=u.seccion; });
+    dels.forEach(id=>{ delete GP.ogSeccion[id]; });
+    closeModal(); toast('Clasificación de OGs guardada.'); gpRenderTablero();
+  }catch(e){ toast('No se pudo guardar: '+(e.message||e)); }
+}
+window.gpClasificarOGs=gpClasificarOGs; window.gpGuardarOGSeccion=gpGuardarOGSeccion;
 
 /* ===== Fase 5 · Traslados de MO (overlay; libro mayor compartido con Planificación) =====
    mod_a_compras = MO propia (MOD→Nico) que se terceriza → pasa a Compras.
@@ -7218,12 +7277,14 @@ function gpAgregado(){
   // 3) OGs de la app: canal de compra complementario al de Tango (no se solapan). Suman en el comprado.
   const _ogMap={}; (GP.mapeo||[]).forEach(m=>{ _ogMap[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
   const _secComp=new Set((GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion));
+  const _ogOvr=GP.ogSeccion||{};   // clasificación manual de OGs {og_id: seccion}
   let ogComp=0, ogSinClasArs=0, ogSinClasN=0;
   gpOGsDelProyecto(p).forEach(o=>{
     if(o.anulada) return;
     const ars=gpOGArs(o); if(!ars) return;
-    const imp=gpOGImputar(o, _ogMap);
-    if(imp.seccion && imp.seccion!=='Sin clasificar' && _secComp.has(imp.seccion)){ compBySec[imp.seccion]=(compBySec[imp.seccion]||0)+ars; ogComp+=ars; }
+    const ovr=_ogOvr[o.id];
+    const sec=(ovr && _secComp.has(ovr)) ? ovr : gpOGImputar(o, _ogMap).seccion;
+    if(sec && sec!=='Sin clasificar' && _secComp.has(sec)){ compBySec[sec]=(compBySec[sec]||0)+ars; ogComp+=ars; }
     else { ogSinClasArs+=ars; ogSinClasN++; }
   });
   const filas=(GP.presupuesto||[]).map(s=>{
@@ -7233,7 +7294,15 @@ function gpAgregado(){
     const pend=Math.max(presAr-comp,0);
     const desv=comp-presAr;
     const avance=presAr>0?comp/presAr:(comp>0?1:0);
-    return {id:s.id, origen:s.origen||'costeo', ambito:s.ambito||'compras', desglose_de:s.desglose_de||null, seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, est:gpEstadoSeccion(comp,presAr,tol)};
+    return {id:s.id, origen:s.origen||'costeo', ambito:s.ambito||'compras', desglose_de:s.desglose_de||null, seccion:s.seccion, presAr, presUs, comp, compUs, pend, desv, avance, cerrada:!!s.cerrada, est:gpEstadoSeccion(comp,presAr,tol)};
+  });
+  // Ahorro / extracosto (solo ámbito Compras). Extracosto = ya gastado por encima del presupuesto
+  // (confiable siempre). Ahorro = no gastado por debajo: CONFIRMADO si el rubro está cerrado
+  // (compra terminada), POTENCIAL si sigue abierto (tentativo, "si no se compra más").
+  let extracosto=0, ahorroConf=0, ahorroPot=0;
+  filas.filter(f=>f.ambito==='compras').forEach(f=>{
+    if(f.comp>f.presAr) extracosto+=(f.comp-f.presAr);
+    else { const dif=f.presAr-f.comp; if(dif>0){ if(f.cerrada) ahorroConf+=dif; else ahorroPot+=dif; } }
   });
   // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD/externo se netean; 'desglosada' la representan sus hijos)
   const tot=filas.filter(f=>f.ambito==='compras').reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
@@ -7244,7 +7313,7 @@ function gpAgregado(){
   const filasOrd=[];
   filas.forEach(f=>{ if(f.desglose_de) return; filasOrd.push(f); const ks=_kids[gpNorm(f.seccion)]; if(ks){ ks.forEach(x=>filasOrd.push(x)); delete _kids[gpNorm(f.seccion)]; } });
   Object.keys(_kids).forEach(k=>_kids[k].forEach(x=>filasOrd.push(x)));   // huérfanos (madre no encontrada) al final
-  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol, ogComp, ogSinClasArs, ogSinClasN};
+  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol, ogComp, ogSinClasArs, ogSinClasN, extracosto, ahorroConf, ahorroPot};
 }
 
 // Orden por columna para las tablas de Gestión de Proyectos (reusa SP_SORT/_spTh/_spOrdenar,
@@ -7293,23 +7362,39 @@ function gpOGArs(o){
   if(ogMonedaCode(o)==='USD'){ const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:(+((GP.proyecto||{}).tc_presupuesto)||0); return t*(tc||0); }
   return t;
 }
+// Sección EFECTIVA de una OG en este proyecto: override manual (si apunta a una sección válida),
+// si no la imputación automática por costeo_new/costeo; si nada matchea → "Sin clasificar".
+function gpOGSeccion(o){
+  const _secComp=new Set((GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion));
+  const ovr=(GP.ogSeccion||{})[o.id];
+  if(ovr && _secComp.has(ovr)) return {seccion:ovr, manual:true};
+  const _ogMap={}; (GP.mapeo||[]).forEach(m=>{ _ogMap[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
+  const s=gpOGImputar(o,_ogMap).seccion;
+  return {seccion:(s && _secComp.has(s))?s:'Sin clasificar', manual:false};
+}
 function gpRenderOGsCard(p){
-  const ogs=gpOGsDelProyecto(p);
+  const ogs=gpOGsDelProyecto(p).filter(o=>!o.anulada);
+  const puedeClasif = esDireccion() || puedeCrearOG();
+  const sinClas=ogs.filter(o=>gpOGSeccion(o).seccion==='Sin clasificar');
   const head='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Órdenes de gasto del proyecto</h3>'
     +'<span class="meta">OGs cargadas en Compras para la obra de este proyecto · canal de compra complementario · incluidas en el Comprado del proyecto</span>'
-    +(ogs.length?'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpOGTbl\')">Auto-ajustar columnas</button>':'')+'</div>';
+    +'<span style="margin-left:auto;display:flex;gap:8px">'
+    +((sinClas.length && puedeClasif)?'<button class="btn ghost sm" onclick="gpClasificarOGs()" style="color:#b0584f;border-color:#e3c3bf">Clasificar OGs ('+sinClas.length+' sin imputar)</button>':'')
+    +(ogs.length?'<button class="btn ghost sm" onclick="tblAutofit(\'#gpOGTbl\')">Auto-ajustar columnas</button>':'')+'</span></div>';
   if(!ogs.length) return head+'<div style="padding:14px;color:var(--muted);font-size:12.5px">No hay OGs de la app para la obra de este proyecto (se vinculan por el N° de obra de la Clasificación de la OG).</div></div>';
-  const mapIdx={}; (GP.mapeo||[]).forEach(m=>{ mapIdx[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
   let total=0; const porSec={};
   const rows=ogs.map(o=>{
     const t=gpOGArs(o); total+=t;
-    const imp=gpOGImputar(o, mapIdx);
-    porSec[imp.seccion]=(porSec[imp.seccion]||0)+t;
+    const se=gpOGSeccion(o);
+    porSec[se.seccion]=(porSec[se.seccion]||0)+t;
+    const secTxt = se.seccion==='Sin clasificar'
+      ? '<span style="color:#b0584f">Sin clasificar</span>'
+      : esc(se.seccion)+(se.manual?' <span class="badge b-azul" style="font-size:9px">manual</span>':'');
     return '<tr style="cursor:pointer" onclick="openOG('+o.id+')">'
       +'<td>'+esc(o.numero||'')+'</td><td>'+fmtDate(o.fecha)+'</td>'
       +'<td>'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td>'+esc(o.clasif_og||'')+'</td>'
-      +'<td>'+esc(imp.seccion)+'</td>'
+      +'<td>'+secTxt+'</td>'
       +'<td style="text-align:right">'+fmtNum(t,0)+'</td>'
       +'<td>'+esc(ogEstado(o))+'</td></tr>';
   }).join('');
@@ -7320,7 +7405,8 @@ function gpRenderOGsCard(p){
       +'<th>OG</th><th>Fecha</th><th>Prov.</th><th>Clasificación</th><th>Sección (imputada)</th><th style="text-align:right">Total ($)</th><th>Estado</th></tr></thead><tbody>'
       +rows+'<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td colspan="5">TOTAL OGs (incluido en el Comprado)</td><td style="text-align:right">'+fmtNum(total,0)+'</td><td></td></tr>'
       +'</tbody></table></div>'
-    +(resumen?'<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Por sección: '+resumen+'</div>':'')+'</div>';
+    +(resumen?'<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Por sección: '+resumen+'</div>':'')
+    +(sinClas.length?'<div style="font-size:11.5px;color:#b0584f;padding:0 14px 8px">'+sinClas.length+' OG'+(sinClas.length===1?'':'s')+' sin imputar a un rubro (no suman al Comprado hasta clasificarlas).</div>':'')+'</div>';
 }
 
 // Abrir una SOLP desde GP (asegura que el catálogo de SOLP esté cargado antes del form).
@@ -7380,9 +7466,13 @@ function gpRenderTablero(){
   const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Del cual, OGs (app)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">incluido en Comprado · ver abajo</div></div>'):'';
   const solpAb=(GP.solp||[]).filter(s=>!SOLP_CLOSED.has(s.estado)).length;
   const solpKpi=((GP.solp||[]).length)?('<div class="kpi"><div class="kpi-label">SOLP del proyecto</div><div class="kpi-value">'+GP.solp.length+'</div><div class="kpi-sub">'+solpAb+' abiertas · ver abajo</div></div>'):'';
+  // Ahorro / extracosto (ver gpAgregado). Extracosto = confiable siempre; ahorro confirmado = solo rubros cerrados.
+  const extracostoKpi=(ag.extracosto>1)?('<div class="kpi"><div class="kpi-label">Extracosto (ya incurrido)</div><div class="kpi-value bad">+'+gpMoney(ag.extracosto)+'</div><div class="kpi-sub">comprado por encima del presupuesto</div></div>'):'';
+  const ahorroConfKpi=(ag.ahorroConf>1)?('<div class="kpi"><div class="kpi-label">Ahorro confirmado</div><div class="kpi-value ok">'+gpMoney(ag.ahorroConf)+'</div><div class="kpi-sub">rubros cerrados · comprado por debajo</div></div>'):'';
+  const ahorroPotKpi=(ag.ahorroPot>1)?('<div class="kpi"><div class="kpi-label">Ahorro potencial</div><div class="kpi-value">'+gpMoney(ag.ahorroPot)+'</div><div class="kpi-sub">rubros abiertos · tentativo (si no se compra más)</div></div>'):'';
 
   // Tabla por sección
-  const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th>';
+  const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th><th>Compra</th>';
   const ambLbl={compras:'Compras', mod:'MOD', externo:'Externo', desglosada:'Desglosada'};
   const ambCell=f=>{
     if(f.ambito==='desglosada') return '<span class="badge b-gris" style="font-size:9.5px">Desglosada</span>';
@@ -7400,6 +7490,13 @@ function gpRenderTablero(){
     else if(dir) s+=' <a href="#" title="Desglosar en sub-rubros" onclick="event.stopPropagation();gpDesglosar('+f.id+');return false" style="font-size:10.5px">desglosar</a>';
     return s;
   };
+  // "Cerrar rubro" (compra terminada) → habilita contar su ahorro como confirmado. Dirección o compradores.
+  const puedeCerrar = dir || puede;
+  const cerrCell=f=>{
+    if(f.ambito!=='compras') return '';
+    if(puedeCerrar) return '<button class="btn ghost sm" onclick="event.stopPropagation();gpToggleRubroCerrado('+f.id+','+(f.cerrada?'false':'true')+')" title="'+(f.cerrada?'Reabrir el rubro':'Marcar la compra de este rubro como terminada')+'" style="font-size:10px;padding:3px 8px;min-height:0'+(f.cerrada?';color:#2f8f63;border-color:#bcdcc6':'')+'">'+(f.cerrada?'✔ Cerrada':'Cerrar')+'</button>';
+    return f.cerrada?'<span class="badge b-verde" style="font-size:9.5px">Cerrada</span>':'';
+  };
   const tr=ag.filas.map((f,i)=>'<tr style="cursor:pointer'+(f.ambito!=='compras'?';opacity:.6':'')+'" onclick="gpFiltroSeccion('+i+')"><td>'+nombreCell(f)+'</td>'
     +'<td>'+ambCell(f)+'</td>'
     +'<td style="text-align:right">'+fmtNum(f.presAr,0)+'</td>'
@@ -7407,11 +7504,12 @@ function gpRenderTablero(){
     +'<td style="text-align:right">'+fmtNum(f.pend,0)+'</td>'
     +'<td style="text-align:right">'+gpPct(f.avance)+'</td>'
     +'<td style="text-align:right;color:'+(f.desv>0?'#b0584f':(f.desv<0?'#4f8a53':'inherit'))+'">'+(f.desv>0?'+':'')+fmtNum(f.desv,0)+'</td>'
-    +'<td><span class="badge '+f.est.cls+'">'+f.est.txt+'</span></td></tr>').join('');
+    +'<td><span class="badge '+f.est.cls+'">'+f.est.txt+'</span></td>'
+    +'<td onclick="event.stopPropagation()">'+cerrCell(f)+'</td></tr>').join('');
   const trTot='<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td>TOTAL Compras</td><td></td>'
     +'<td style="text-align:right">'+fmtNum(ag.tot.presAr,0)+'</td><td style="text-align:right">'+fmtNum(ag.tot.comp,0)+'</td>'
     +'<td style="text-align:right">'+fmtNum(ag.tot.pend,0)+'</td><td style="text-align:right">'+gpPct(avanceTot)+'</td>'
-    +'<td style="text-align:right;color:'+(ag.tot.desv>0?'#b0584f':(ag.tot.desv<0?'#4f8a53':'inherit'))+'">'+(ag.tot.desv>0?'+':'')+fmtNum(ag.tot.desv,0)+'</td><td></td></tr>';
+    +'<td style="text-align:right;color:'+(ag.tot.desv>0?'#b0584f':(ag.tot.desv<0?'#4f8a53':'inherit'))+'">'+(ag.tot.desv>0?'+':'')+fmtNum(ag.tot.desv,0)+'</td><td></td><td></td></tr>';
 
   // Detalle de OC (filtrable por sección)
   const filtro=GP.filtroSeccion;
@@ -7490,7 +7588,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+sinClasKpi+pendRepKpi+trasKpi+ogKpi+solpKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+ahorroPotKpi+sinClasKpi+pendRepKpi+trasKpi+ogKpi+solpKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
