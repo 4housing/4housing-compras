@@ -7277,14 +7277,15 @@ function gpAgregado(){
   // 3) OGs de la app: canal de compra complementario al de Tango (no se solapan). Suman en el comprado.
   const _ogMap={}; (GP.mapeo||[]).forEach(m=>{ _ogMap[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
   const _secComp=new Set((GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion));
+  const _secAmb={}; (GP.presupuesto||[]).forEach(s=>{ if(s.ambito!=='desglosada') _secAmb[s.seccion]=s.ambito||'compras'; });
   const _ogOvr=GP.ogSeccion||{};   // clasificación manual de OGs {og_id: seccion}
-  let ogComp=0, ogSinClasArs=0, ogSinClasN=0;
+  let ogComp=0, ogSinClasArs=0, ogSinClasN=0;   // ogComp = OGs imputadas a secciones de ámbito Compras (para cuadrar con el Comprado)
   gpOGsDelProyecto(p).forEach(o=>{
     if(o.anulada) return;
     const ars=gpOGArs(o); if(!ars) return;
     const ovr=_ogOvr[o.id];
     const sec=(ovr && _secComp.has(ovr)) ? ovr : gpOGImputar(o, _ogMap).seccion;
-    if(sec && sec!=='Sin clasificar' && _secComp.has(sec)){ compBySec[sec]=(compBySec[sec]||0)+ars; ogComp+=ars; }
+    if(sec && sec!=='Sin clasificar' && _secComp.has(sec)){ compBySec[sec]=(compBySec[sec]||0)+ars; if(_secAmb[sec]==='compras') ogComp+=ars; }
     else { ogSinClasArs+=ars; ogSinClasN++; }
   });
   const filas=(GP.presupuesto||[]).map(s=>{
@@ -7463,7 +7464,10 @@ function gpRenderTablero(){
   const trasNeto=gpTrasNetoCompras();
   const trasKpi=(Math.abs(trasNeto)>0.5)?('<div class="kpi"><div class="kpi-label">Presupuesto vigente (c/ traslados)</div><div class="kpi-value">'+gpMoney(ag.tot.presAr+trasNeto)+'</div><div class="kpi-sub">'+(trasNeto>0?'+':'')+gpMoney(trasNeto)+' trasladado neto</div></div>'):'';
   const ogComprometido=ag.ogComp||0;
-  const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprado vía OGs (app)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">parte del Comprado que entró por OGs · ver abajo</div></div>'):'';
+  const _ocComp=Math.max((ag.tot.comp||0)-ogComprometido,0);
+  const _pctC=v=>(ag.tot.comp>0)?gpPct(v/ag.tot.comp):'—';   // % sobre el total comprado (OC + OG)
+  const ocKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprado vía OC (Tango)</div><div class="kpi-value">'+gpMoney(_ocComp)+'</div><div class="kpi-sub"><b>'+_pctC(_ocComp)+'</b> del comprado</div></div>'):'';
+  const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprado vía OGs (app)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub"><b>'+_pctC(ogComprometido)+'</b> del comprado · ver abajo</div></div>'):'';
   const solpAb=(GP.solp||[]).filter(s=>!SOLP_CLOSED.has(s.estado)).length;
   const solpKpi=((GP.solp||[]).length)?('<div class="kpi"><div class="kpi-label">SOLP del proyecto</div><div class="kpi-value">'+GP.solp.length+'</div><div class="kpi-sub">'+solpAb+' abiertas · ver abajo</div></div>'):'';
   // Ahorro / extracosto (ver gpAgregado). Extracosto = confiable siempre; ahorro confirmado = solo rubros cerrados.
@@ -7589,7 +7593,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+ahorroPotKpi+sinClasKpi+pendRepKpi+trasKpi+ogKpi+solpKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+ahorroPotKpi+sinClasKpi+pendRepKpi+trasKpi+ocKpi+ogKpi+solpKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
