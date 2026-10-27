@@ -11993,7 +11993,7 @@ async function saveOG(id){
     const og0=isNew?null:ogById(id);
     const certOGsinRenglones = !!og0 && !(og0.items&&og0.items.length) && (certsOf(og0.id).length>0 || (og0.cierres||[]).length>0);
     if(!certOGsinRenglones){
-      alert('No se puede guardar: la OG tiene que tener al menos 1 renglón con su artículo.\n\nAgregá un renglón (botón "+ Renglón"), elegí el artículo del Diccionario y, en "Hito / detalle", poné la descripción (medidas, calidad, etc.).');
+      alert('No se puede guardar: la OG tiene que tener al menos 1 renglón con su artículo.\n\nAgregá un renglón (botón "Agregar renglón"), elegí el artículo del Diccionario y, en "Hito / detalle", poné la descripción (medidas, calidad, etc.).');
       return;
     }
   }
