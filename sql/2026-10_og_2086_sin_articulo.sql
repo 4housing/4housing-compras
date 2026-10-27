@@ -28,12 +28,12 @@ select o.id, o.numero, o.proveedor, i.ord as renglon, i.it->>'hito' as detalle, 
    and coalesce(btrim(i.it->>'articulo'), '') = ''
  order by o.numero::int, i.ord;
 
--- 1c) El artículo para la 2086 (el código arranca con GCCHA0700; tiene que dar 1 sola fila).
-select codigo, descripcion from compras_articulos where codigo like 'GCCHA0700%';
+-- 1c) El artículo para la 2086: GCCHA07000 "CHAPA NEGRA" (genérico; la medida va en el detalle). Tiene que dar 1 sola fila.
+select codigo, descripcion from compras_articulos where codigo = 'GCCHA07000';
 
 -- ---------------------------------------------------------------------
 -- PASO 2 — CORRECCIÓN DE LA OG 2086 (EXCEPCIÓN, una sola vez).
--- Aborta sin cambiar nada si: la 2086 ya tiene renglones, no hay exactamente 1 artículo GCCHA0700%,
+-- Aborta sin cambiar nada si: la 2086 ya tiene renglones, no ,
 -- o la OG no tiene exactamente 1 certificado.
 -- ---------------------------------------------------------------------
 begin;
@@ -48,9 +48,9 @@ begin
   if not found then raise exception 'No existe la OG 2086'; end if;
   if coalesce(jsonb_array_length(v_og.items), 0) > 0 then raise exception 'La OG 2086 ya tiene renglones: no se toca'; end if;
 
-  select count(*) into v_n from compras_articulos where codigo like 'GCCHA0700%';
-  if v_n <> 1 then raise exception 'Se esperaba 1 artículo GCCHA0700%%, hay %. Completá el código exacto a mano.', v_n; end if;
-  select codigo, descripcion into v_cod, v_desc from compras_articulos where codigo like 'GCCHA0700%';
+  select count(*) into v_n from compras_articulos where codigo = 'GCCHA07000';
+  if v_n <> 1 then raise exception 'Se esperaba 1 artículo GCCHA07000 (CHAPA NEGRA), hay %', v_n; end if;
+  select codigo, descripcion into v_cod, v_desc from compras_articulos where codigo = 'GCCHA07000';
 
   select count(*) into v_n from compras_og_certificados where og_id = v_og.id;
   if v_n <> 1 then raise exception 'Se esperaba 1 certificado en la OG 2086, hay %', v_n; end if;
