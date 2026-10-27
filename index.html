@@ -11188,6 +11188,7 @@ function armadoView(){
 
 function openPago(ogId, modo){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
+  if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
   const monPagoDef=ogMonedaPagoCode(o)||monOG;   // de qué caja sale la plata (Condición de compra + tilde USD), no la moneda pactada
   const pendPct=ogPendPagoPct(o); const pendMonto=_pgPendMonto(o, modo); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
   window._pgModo=modo||'';
@@ -11256,6 +11257,7 @@ window.pgCalc=pgCalc;
 async function savePago(ogId, modo){
   if(!canPago()){ toast('Solo el tesorero puede registrar pagos.'); return; }
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
+  if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
   let montoOG=+document.getElementById('pg_imp').value||0;    // importe en moneda de la OG
   const pendMonto=_pgPendMonto(o, modo);
   if(montoOG<=0){ toast('Ingresá un importe mayor a 0'); return; }
@@ -11975,8 +11977,8 @@ async function saveOG(id){
     if(it._locked && !it._artFaltaba) return; // ya certificado: no se revalida retroactivamente (salvo completar un artículo que faltaba)
     const codRaw=(it.cod_art||'').trim(), artRaw=(it.articulo||'').trim();
     if(!codRaw && !artRaw){
-      // Antes se tomaba como "renglón vacío" aunque tuviera detalle/precio/cantidad, y se guardaba sin artículo.
-      if(it._locked || String(it.hito||'').trim() || +it.precio_unit || +it.cant>1) faltantes.push('Renglón '+(i+1)+': falta el artículo'+(it.hito?' ("'+String(it.hito).slice(0,40)+'")':''));
+      // Todo renglón tiene que tener artículo, aunque esté vacío: se rechaza en vez de descartarlo en silencio.
+      faltantes.push('Renglón '+(i+1)+': falta el artículo'+(it.hito?' ("'+String(it.hito).slice(0,40)+'")':''));
       return;
     }
     const art=(typeof DIC!=='undefined'?DIC.articulos:[]).find(x=>x.codigo===codRaw);
@@ -11986,6 +11988,23 @@ async function saveOG(id){
   if(faltantes.length){
     alert('No se puede guardar: hay renglones sin un artículo del Diccionario:\n\n'+faltantes.join('\n')+'\n\nElegí el artículo de la lista (si no existe, agregalo en Diccionario → Artículos o sincronizalo desde Tango). Un renglón que no se usa, borralo.');
     return;
+  }
+  // Una OG necesita al menos 1 renglón con artículo. Excepción: OGs viejas ya certificadas/cerradas SIN renglones
+  // (agregarles renglones ahora rompería el cálculo de sus certificados, que están a nivel OG).
+  if(!isNew && OG_ITEMS.some(it=>(it.cod_art||'').trim()||(it.articulo||'').trim())){
+    const og1=ogById(id);
+    if(og1 && !(og1.items&&og1.items.length) && (certsOf(og1.id).length>0 || (og1.cierres||[]).length>0)){
+      alert('No se pueden agregar renglones a esta OG: ya tiene certificados/cierres cargados a nivel OG (sin artículo) y al pasar a renglones el monto certificado quedaría en $0.\n\nAvisá a Sistemas para que la corrijan.');
+      return;
+    }
+  }
+  if(!OG_ITEMS.some(it=>(it.cod_art||'').trim()||(it.articulo||'').trim())){
+    const og0=isNew?null:ogById(id);
+    const certOGsinRenglones = !!og0 && !(og0.items&&og0.items.length) && (certsOf(og0.id).length>0 || (og0.cierres||[]).length>0);
+    if(!certOGsinRenglones){
+      alert('No se puede guardar: la OG tiene que tener al menos 1 renglón con su artículo.\n\nAgregá un renglón (botón "Agregar renglón"), elegí el artículo del Diccionario y, en "Hito / detalle", poné la descripción (medidas, calidad, etc.).');
+      return;
+    }
   }
   const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if((!it._locked || it._artFaltaba) && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
   if(estMod.length){ alert('No se puede guardar: estos renglones son de ESTRUCTURA pero el artículo imputa a una cuenta de PROYECTOS (lo accesorio sigue a lo principal):\n\n'+estMod.join('\n')+'\n\nCambiá el artículo por uno que corresponda a estructura, por ejemplo:\n'+_estrucAlternativas()+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU).'); return; }
@@ -12092,6 +12111,14 @@ window.confirmDelOG=confirmDelOG;
 function openCert(ogId, id){
   const o=ogById(ogId);
   if(!puedeCertificarOG(o)){ toast('Esta OG no tiene tu usuario como certificador.'); return; }
+  // No se certifica una OG sin renglones: todo importe tiene que estar asociado a un artículo.
+  if(o && !(o.items&&o.items.length)){
+    openModal('Falta completar la OG',
+      '<div style="padding:12px 14px;border:1px solid #b3261e;border-radius:10px;background:#fdecea;color:#7a1c14;font-size:13.5px;line-height:1.55"><strong>No se puede certificar la OG '+esc(o.numero)+'</strong>: no tiene ningún renglón con artículo.</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:10px">Abrí la OG (lápiz), agregá el renglón con su artículo y guardá. Si la OG ya tiene certificados cargados, avisá a Sistemas: no se corrige desde la pantalla.</div>',
+      '<button class="btn" onclick="closeModal()">Entendido</button>');
+    return;
+  }
   // No se certifica una OG con renglones sin artículo (sin artículo no hay cuenta para imputar ni asiento)
   const sinArt=(o&&o.items||[]).map((it,i)=>({it,i})).filter(x=>!String(x.it.cod_art||'').trim() && !String(x.it.articulo||'').trim() && (String(x.it.hito||'').trim()||+x.it.precio_unit));
   if(sinArt.length){
@@ -12153,6 +12180,7 @@ async function saveCert(ogId, id){
   const editando=(id!=null&&id!=='null');
   if(editando && pagosOf(ogId).length>0){ toast('La OG tiene pagos: no se puede editar el certificado. El tesorero debe eliminar el pago primero.'); return; }
   const hasItems = o && o.items && o.items.length;
+  if(!hasItems){ toast('No se puede certificar una OG sin renglones con artículo.'); return; }
   const obj={ og_id:ogId, numero:document.getElementById('ct_num').value, fecha:document.getElementById('ct_fecha').value,
     observaciones:document.getElementById('ct_obs').value };
   if(id==null||id==='null') obj.numero = nextCertNum(o);   // recalcula al guardar (evita colisiones)
