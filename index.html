@@ -7215,6 +7215,17 @@ function gpAgregado(){
     const rem=total-Math.min(sum,total);
     if(rem>1){ pendRepArs+=rem; }   // lo que falta repartir
   });
+  // 3) OGs de la app: canal de compra complementario al de Tango (no se solapan). Suman en el comprado.
+  const _ogMap={}; (GP.mapeo||[]).forEach(m=>{ _ogMap[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
+  const _secComp=new Set((GP.presupuesto||[]).filter(s=>s.ambito!=='desglosada').map(s=>s.seccion));
+  let ogComp=0, ogSinClasArs=0, ogSinClasN=0;
+  gpOGsDelProyecto(p).forEach(o=>{
+    if(o.anulada) return;
+    const ars=gpOGArs(o); if(!ars) return;
+    const imp=gpOGImputar(o, _ogMap);
+    if(imp.seccion && imp.seccion!=='Sin clasificar' && _secComp.has(imp.seccion)){ compBySec[imp.seccion]=(compBySec[imp.seccion]||0)+ars; ogComp+=ars; }
+    else { ogSinClasArs+=ars; ogSinClasN++; }
+  });
   const filas=(GP.presupuesto||[]).map(s=>{
     const comp=compBySec[s.seccion]||0;
     const presAr=+s.presupuesto_ars||0, presUs=+s.presupuesto_usd||0;
@@ -7233,7 +7244,7 @@ function gpAgregado(){
   const filasOrd=[];
   filas.forEach(f=>{ if(f.desglose_de) return; filasOrd.push(f); const ks=_kids[gpNorm(f.seccion)]; if(ks){ ks.forEach(x=>filasOrd.push(x)); delete _kids[gpNorm(f.seccion)]; } });
   Object.keys(_kids).forEach(k=>_kids[k].forEach(x=>filasOrd.push(x)));   // huérfanos (madre no encontrada) al final
-  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol};
+  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol, ogComp, ogSinClasArs, ogSinClasN};
 }
 
 // Orden por columna para las tablas de Gestión de Proyectos (reusa SP_SORT/_spTh/_spOrdenar,
@@ -7270,17 +7281,29 @@ function gpOGsDelProyecto(p){
   match.forEach(o=>{ const k=(o.numero!=null&&o.numero!=='')?('n'+o.numero):('id'+o.id); const prev=byNum[k]; if(!prev || (+o.id||0)>(+prev.id||0)) byNum[k]=o; });
   return Object.values(byNum);
 }
+// Imputación de una OG a una sección del presupuesto (la sección vive en costeo_new / costeo;
+// clasif_og y centro_costos son el N° de obra, NO la sección).
+function gpOGImputar(o, mapIdx){
+  return gpImputar({ subrubro:'', rubro:o.costeo_new||'', costeo_tag:o.costeo||o.costeo_new||'', grupo:'',
+                     cod_articulo:((o.items&&o.items[0]&&o.items[0].cod_art)||'') }, mapIdx);
+}
+// Total de una OG expresado en ARS (si se pactó en USD, con su TC; si falta, el TC del presupuesto).
+function gpOGArs(o){
+  const t=ogTotal(o);
+  if(ogMonedaCode(o)==='USD'){ const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:(+((GP.proyecto||{}).tc_presupuesto)||0); return t*(tc||0); }
+  return t;
+}
 function gpRenderOGsCard(p){
   const ogs=gpOGsDelProyecto(p);
   const head='<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Órdenes de gasto del proyecto</h3>'
-    +'<span class="meta">OGs cargadas en Compras para la obra de este proyecto · canal aparte del informe de Tango</span>'
+    +'<span class="meta">OGs cargadas en Compras para la obra de este proyecto · canal de compra complementario · incluidas en el Comprado del proyecto</span>'
     +(ogs.length?'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpOGTbl\')">Auto-ajustar columnas</button>':'')+'</div>';
   if(!ogs.length) return head+'<div style="padding:14px;color:var(--muted);font-size:12.5px">No hay OGs de la app para la obra de este proyecto (se vinculan por el N° de obra de la Clasificación de la OG).</div></div>';
   const mapIdx={}; (GP.mapeo||[]).forEach(m=>{ mapIdx[m.tipo+'|'+gpNorm(m.clave)]=m.seccion; });
   let total=0; const porSec={};
   const rows=ogs.map(o=>{
-    const t=ogTotal(o); total+=t;
-    const imp=gpImputar({subrubro:'', rubro:o.clasif_og||'', costeo_tag:o.costeo||o.costeo_new||'', grupo:'', cod_articulo:''}, mapIdx);
+    const t=gpOGArs(o); total+=t;
+    const imp=gpOGImputar(o, mapIdx);
     porSec[imp.seccion]=(porSec[imp.seccion]||0)+t;
     return '<tr style="cursor:pointer" onclick="openOG('+o.id+')">'
       +'<td>'+esc(o.numero||'')+'</td><td>'+fmtDate(o.fecha)+'</td>'
@@ -7295,7 +7318,7 @@ function gpRenderOGsCard(p){
   return head
     +'<div class="tbl-hscroll tbl-compact"><table id="gpOGTbl" class="grid" style="font-size:11.5px"><thead><tr>'
       +'<th>OG</th><th>Fecha</th><th>Prov.</th><th>Clasificación</th><th>Sección (imputada)</th><th style="text-align:right">Total ($)</th><th>Estado</th></tr></thead><tbody>'
-      +rows+'<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td colspan="5">TOTAL comprometido (OGs)</td><td style="text-align:right">'+fmtNum(total,0)+'</td><td></td></tr>'
+      +rows+'<tr style="font-weight:700;border-top:2px solid var(--line-strong)"><td colspan="5">TOTAL OGs (incluido en el Comprado)</td><td style="text-align:right">'+fmtNum(total,0)+'</td><td></td></tr>'
       +'</tbody></table></div>'
     +(resumen?'<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Por sección: '+resumen+'</div>':'')+'</div>';
 }
@@ -7346,15 +7369,15 @@ function gpRenderTablero(){
   const ultImp=(GP.imports||[])[0];
   const kpis=''
     +'<div class="kpi"><div class="kpi-label">Presupuesto total</div><div class="kpi-value">'+gpMoney(ag.tot.presAr)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.presUs)+'</div></div>'
-    +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+' · OC + OGs</div></div>'
     +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
     +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">'+(ag.tot.desv>0?'sobrecosto':(ag.tot.desv<0?'ahorro':'—'))+'</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
   const trasNeto=gpTrasNetoCompras();
   const trasKpi=(Math.abs(trasNeto)>0.5)?('<div class="kpi"><div class="kpi-label">Presupuesto vigente (c/ traslados)</div><div class="kpi-value">'+gpMoney(ag.tot.presAr+trasNeto)+'</div><div class="kpi-sub">'+(trasNeto>0?'+':'')+gpMoney(trasNeto)+' trasladado neto</div></div>'):'';
-  const ogComprometido=gpOGsDelProyecto(p).reduce((a,o)=>a+ogTotal(o),0);
-  const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Comprometido (OGs)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">órdenes de gasto de la app · ver abajo</div></div>'):'';
+  const ogComprometido=ag.ogComp||0;
+  const ogKpi=(ogComprometido>0.5)?('<div class="kpi"><div class="kpi-label">Del cual, OGs (app)</div><div class="kpi-value">'+gpMoney(ogComprometido)+'</div><div class="kpi-sub">incluido en Comprado · ver abajo</div></div>'):'';
   const solpAb=(GP.solp||[]).filter(s=>!SOLP_CLOSED.has(s.estado)).length;
   const solpKpi=((GP.solp||[]).length)?('<div class="kpi"><div class="kpi-label">SOLP del proyecto</div><div class="kpi-value">'+GP.solp.length+'</div><div class="kpi-sub">'+solpAb+' abiertas · ver abajo</div></div>'):'';
 
@@ -7472,7 +7495,7 @@ function gpRenderTablero(){
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
     +'</div>'
-    +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar · el TOTAL y los indicadores cuentan solo el ámbito Compras</span>'
+    +'<div class="card" style="margin-top:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Avance por sección</h3><span class="meta">Tocá una fila para filtrar · el TOTAL y los indicadores cuentan solo el ámbito Compras · Comprado = OC (Tango) + OGs (app)</span>'
       +'<button class="btn ghost sm" style="margin-left:auto" onclick="tblAutofit(\'#gpSecTbl\')">Auto-ajustar columnas</button></div>'
       +'<div class="tbl-hscroll tbl-compact"><table id="gpSecTbl" class="grid" style="font-size:12px"><thead><tr>'+th+'</tr></thead><tbody>'+tr+trTot+'</tbody></table></div>'
       +(((ag.totFuera.mod+ag.totFuera.ext)>1)?('<div style="font-size:11.5px;color:var(--muted);padding:8px 14px">Fuera del alcance de Compras (referencia, neteado): MOD $'+fmtNum(ag.totFuera.mod,0)+' · Externo $'+fmtNum(ag.totFuera.ext,0)+'</div>'):'')+'</div>'
