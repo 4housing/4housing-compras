@@ -11977,8 +11977,8 @@ async function saveOG(id){
     if(it._locked && !it._artFaltaba) return; // ya certificado: no se revalida retroactivamente (salvo completar un artículo que faltaba)
     const codRaw=(it.cod_art||'').trim(), artRaw=(it.articulo||'').trim();
     if(!codRaw && !artRaw){
-      // Antes se tomaba como "renglón vacío" aunque tuviera detalle/precio/cantidad, y se guardaba sin artículo.
-      if(it._locked || String(it.hito||'').trim() || +it.precio_unit || +it.cant>1) faltantes.push('Renglón '+(i+1)+': falta el artículo'+(it.hito?' ("'+String(it.hito).slice(0,40)+'")':''));
+      // Todo renglón tiene que tener artículo, aunque esté vacío: se rechaza en vez de descartarlo en silencio.
+      faltantes.push('Renglón '+(i+1)+': falta el artículo'+(it.hito?' ("'+String(it.hito).slice(0,40)+'")':''));
       return;
     }
     const art=(typeof DIC!=='undefined'?DIC.articulos:[]).find(x=>x.codigo===codRaw);
