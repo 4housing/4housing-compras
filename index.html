@@ -7473,8 +7473,7 @@ function gpRenderTablero(){
   // Ahorro / extracosto (ver gpAgregado). Extracosto = confiable siempre; ahorro confirmado = solo rubros cerrados.
   const _presT=ag.tot.presAr||0; const _pct=v=>_presT>0?gpPct(v/_presT):'—';   // % sobre el presupuesto total del proyecto
   const extracostoKpi=(ag.extracosto>1)?('<div class="kpi"><div class="kpi-label">Extracosto (ya incurrido)</div><div class="kpi-value bad">+'+gpMoney(ag.extracosto)+'</div><div class="kpi-sub"><b>'+_pct(ag.extracosto)+'</b> del presupuesto · '+ag.extracostoN+' rubro'+(ag.extracostoN===1?'':'s')+' por encima</div></div>'):'';
-  const ahorroConfKpi=(ag.ahorroConf>1)?('<div class="kpi"><div class="kpi-label">Ahorro confirmado</div><div class="kpi-value ok">'+gpMoney(ag.ahorroConf)+'</div><div class="kpi-sub"><b>'+_pct(ag.ahorroConf)+'</b> del presupuesto · '+ag.ahorroConfN+' rubro'+(ag.ahorroConfN===1?'':'s')+' cerrado'+(ag.ahorroConfN===1?'':'s')+'</div></div>'):'';
-  const ahorroPotKpi=(ag.ahorroPot>1)?('<div class="kpi"><div class="kpi-label">Ahorro potencial</div><div class="kpi-value">'+gpMoney(ag.ahorroPot)+'</div><div class="kpi-sub"><b>'+_pct(ag.ahorroPot)+'</b> del presupuesto · '+ag.ahorroPotN+' rubro'+(ag.ahorroPotN===1?'':'s')+' abierto'+(ag.ahorroPotN===1?'':'s')+' · tentativo</div></div>'):'';
+  const ahorroConfKpi=(ag.ahorroConf>1)?('<div class="kpi"><div class="kpi-label">Ahorros</div><div class="kpi-value ok">'+gpMoney(ag.ahorroConf)+'</div><div class="kpi-sub"><b>'+_pct(ag.ahorroConf)+'</b> del presupuesto · '+ag.ahorroConfN+' rubro'+(ag.ahorroConfN===1?'':'s')+' cerrado'+(ag.ahorroConfN===1?'':'s')+' (comprado OC + OGs)</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th><th>Compra</th>';
@@ -7593,7 +7592,7 @@ function gpRenderTablero(){
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
-    +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+ahorroPotKpi+sinClasKpi+pendRepKpi+trasKpi+ocKpi+ogKpi+solpKpi+'</div>'
+    +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+sinClasKpi+pendRepKpi+trasKpi+ocKpi+ogKpi+solpKpi+'</div>'
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
