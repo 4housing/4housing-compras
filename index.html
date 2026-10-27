@@ -7299,10 +7299,10 @@ function gpAgregado(){
   // Ahorro / extracosto (solo ámbito Compras). Extracosto = ya gastado por encima del presupuesto
   // (confiable siempre). Ahorro = no gastado por debajo: CONFIRMADO si el rubro está cerrado
   // (compra terminada), POTENCIAL si sigue abierto (tentativo, "si no se compra más").
-  let extracosto=0, ahorroConf=0, ahorroPot=0;
+  let extracosto=0, ahorroConf=0, ahorroPot=0, extracostoN=0, ahorroConfN=0, ahorroPotN=0;
   filas.filter(f=>f.ambito==='compras').forEach(f=>{
-    if(f.comp>f.presAr) extracosto+=(f.comp-f.presAr);
-    else { const dif=f.presAr-f.comp; if(dif>0){ if(f.cerrada) ahorroConf+=dif; else ahorroPot+=dif; } }
+    if(f.comp>f.presAr){ extracosto+=(f.comp-f.presAr); extracostoN++; }
+    else { const dif=f.presAr-f.comp; if(dif>0){ if(f.cerrada){ ahorroConf+=dif; ahorroConfN++; } else { ahorroPot+=dif; ahorroPotN++; } } }
   });
   // Los KPIs/total de Compras cuentan SOLO el ámbito 'compras' (MOD/externo se netean; 'desglosada' la representan sus hijos)
   const tot=filas.filter(f=>f.ambito==='compras').reduce((a,f)=>({presAr:a.presAr+f.presAr, presUs:a.presUs+f.presUs, comp:a.comp+f.comp, compUs:a.compUs+f.compUs, pend:a.pend+f.pend, desv:a.desv+f.desv}),{presAr:0,presUs:0,comp:0,compUs:0,pend:0,desv:0});
@@ -7313,7 +7313,7 @@ function gpAgregado(){
   const filasOrd=[];
   filas.forEach(f=>{ if(f.desglose_de) return; filasOrd.push(f); const ks=_kids[gpNorm(f.seccion)]; if(ks){ ks.forEach(x=>filasOrd.push(x)); delete _kids[gpNorm(f.seccion)]; } });
   Object.keys(_kids).forEach(k=>_kids[k].forEach(x=>filasOrd.push(x)));   // huérfanos (madre no encontrada) al final
-  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol, ogComp, ogSinClasArs, ogSinClasN, extracosto, ahorroConf, ahorroPot};
+  return {filas:filasOrd, tot, totFuera, sinClasArs, sinClasN, pendRepArs, repOver, tc, tol, ogComp, ogSinClasArs, ogSinClasN, extracosto, ahorroConf, ahorroPot, extracostoN, ahorroConfN, ahorroPotN};
 }
 
 // Orden por columna para las tablas de Gestión de Proyectos (reusa SP_SORT/_spTh/_spOrdenar,
@@ -7457,7 +7457,7 @@ function gpRenderTablero(){
     +'<div class="kpi"><div class="kpi-label">Presupuesto total</div><div class="kpi-value">'+gpMoney(ag.tot.presAr)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.presUs)+'</div></div>'
     +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+' · OC + OGs</div></div>'
     +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
-    +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">'+(ag.tot.desv>0?'sobrecosto':(ag.tot.desv<0?'ahorro':'—'))+'</div></div>';
+    +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">+ '+gpMoney(ag.extracosto)+' extracosto − '+gpMoney(ag.ahorroConf+ag.ahorroPot)+' bajo presup.</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
   const trasNeto=gpTrasNetoCompras();
@@ -7467,9 +7467,9 @@ function gpRenderTablero(){
   const solpAb=(GP.solp||[]).filter(s=>!SOLP_CLOSED.has(s.estado)).length;
   const solpKpi=((GP.solp||[]).length)?('<div class="kpi"><div class="kpi-label">SOLP del proyecto</div><div class="kpi-value">'+GP.solp.length+'</div><div class="kpi-sub">'+solpAb+' abiertas · ver abajo</div></div>'):'';
   // Ahorro / extracosto (ver gpAgregado). Extracosto = confiable siempre; ahorro confirmado = solo rubros cerrados.
-  const extracostoKpi=(ag.extracosto>1)?('<div class="kpi"><div class="kpi-label">Extracosto (ya incurrido)</div><div class="kpi-value bad">+'+gpMoney(ag.extracosto)+'</div><div class="kpi-sub">comprado por encima del presupuesto</div></div>'):'';
-  const ahorroConfKpi=(ag.ahorroConf>1)?('<div class="kpi"><div class="kpi-label">Ahorro confirmado</div><div class="kpi-value ok">'+gpMoney(ag.ahorroConf)+'</div><div class="kpi-sub">rubros cerrados · comprado por debajo</div></div>'):'';
-  const ahorroPotKpi=(ag.ahorroPot>1)?('<div class="kpi"><div class="kpi-label">Ahorro potencial</div><div class="kpi-value">'+gpMoney(ag.ahorroPot)+'</div><div class="kpi-sub">rubros abiertos · tentativo (si no se compra más)</div></div>'):'';
+  const extracostoKpi=(ag.extracosto>1)?('<div class="kpi"><div class="kpi-label">Extracosto (ya incurrido)</div><div class="kpi-value bad">+'+gpMoney(ag.extracosto)+'</div><div class="kpi-sub">'+ag.extracostoN+' rubro'+(ag.extracostoN===1?'':'s')+' por encima del presupuesto</div></div>'):'';
+  const ahorroConfKpi=(ag.ahorroConf>1)?('<div class="kpi"><div class="kpi-label">Ahorro confirmado</div><div class="kpi-value ok">'+gpMoney(ag.ahorroConf)+'</div><div class="kpi-sub">'+ag.ahorroConfN+' rubro'+(ag.ahorroConfN===1?'':'s')+' cerrado'+(ag.ahorroConfN===1?'':'s')+' bajo presupuesto</div></div>'):'';
+  const ahorroPotKpi=(ag.ahorroPot>1)?('<div class="kpi"><div class="kpi-label">Ahorro potencial</div><div class="kpi-value">'+gpMoney(ag.ahorroPot)+'</div><div class="kpi-sub">'+ag.ahorroPotN+' rubro'+(ag.ahorroPotN===1?'':'s')+' abierto'+(ag.ahorroPotN===1?'':'s')+' bajo presup. · tentativo</div></div>'):'';
 
   // Tabla por sección
   const th='<th>Sección</th><th>Ámbito</th><th style="text-align:right">Presup. ($)</th><th style="text-align:right">Comprado ($)</th><th style="text-align:right">Pendiente ($)</th><th style="text-align:right">Avance</th><th style="text-align:right">Desvío ($)</th><th>Estado</th><th>Compra</th>';
