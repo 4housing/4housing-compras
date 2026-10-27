@@ -7457,7 +7457,7 @@ function gpRenderTablero(){
     +'<div class="kpi"><div class="kpi-label">Presupuesto total</div><div class="kpi-value">'+gpMoney(ag.tot.presAr)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.presUs)+'</div></div>'
     +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+' · OC + OGs</div></div>'
     +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
-    +'<div class="kpi"><div class="kpi-label">Desvío neto</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">+ '+gpMoney(ag.extracosto)+' extracosto − '+gpMoney(ag.ahorroConf+ag.ahorroPot)+' bajo presup.</div></div>';
+    +'<div class="kpi"><div class="kpi-label">Saldo</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">+ '+gpMoney(ag.extracosto)+' extracosto − '+gpMoney(ag.ahorroConf+ag.ahorroPot)+' bajo presup.</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
   const pendRepKpi=(ag.pendRepArs>1)?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(ag.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'';
   const trasNeto=gpTrasNetoCompras();
