@@ -11987,6 +11987,16 @@ async function saveOG(id){
     alert('No se puede guardar: hay renglones sin un artículo del Diccionario:\n\n'+faltantes.join('\n')+'\n\nElegí el artículo de la lista (si no existe, agregalo en Diccionario → Artículos o sincronizalo desde Tango). Un renglón que no se usa, borralo.');
     return;
   }
+  // Una OG necesita al menos 1 renglón con artículo. Excepción: OGs viejas ya certificadas/cerradas SIN renglones
+  // (agregarles renglones ahora rompería el cálculo de sus certificados, que están a nivel OG).
+  if(!OG_ITEMS.some(it=>(it.cod_art||'').trim()||(it.articulo||'').trim())){
+    const og0=isNew?null:ogById(id);
+    const certOGsinRenglones = !!og0 && !(og0.items&&og0.items.length) && (certsOf(og0.id).length>0 || (og0.cierres||[]).length>0);
+    if(!certOGsinRenglones){
+      alert('No se puede guardar: la OG tiene que tener al menos 1 renglón con su artículo.\n\nAgregá un renglón (botón "+ Renglón"), elegí el artículo del Diccionario y, en "Hito / detalle", poné la descripción (medidas, calidad, etc.).');
+      return;
+    }
+  }
   const estMod=[]; OG_ITEMS.forEach((it,i)=>{ if((!it._locked || it._artFaltaba) && _ogEstrucModulo(it)){ const im=imputacion(it); estMod.push('Renglón '+(i+1)+': '+(it.articulo||it.cod_art)+' → '+im.cuenta_cod+' '+(im.cuenta||'')); } });
   if(estMod.length){ alert('No se puede guardar: estos renglones son de ESTRUCTURA pero el artículo imputa a una cuenta de PROYECTOS (lo accesorio sigue a lo principal):\n\n'+estMod.join('\n')+'\n\nCambiá el artículo por uno que corresponda a estructura, por ejemplo:\n'+_estrucAlternativas()+'\n\nSi es un mantenimiento, cambiá la clasificación (MANBSU, MANMOD, MANTRF, DTM, MANROD, MANHRR, MANMYU).'); return; }
   const items=OG_ITEMS.filter(it=>(it.cod_art||'').trim()||(it.articulo||'').trim()||it.precio_unit)
