@@ -10041,19 +10041,25 @@ function _proySituacion(items){
 // Botones; cada situación muestra cuánto hay en el período elegido (para ver de un vistazo qué falta y qué está autorizado)
 function _proyChipsHtml(itemsPeriodo){
   const vie=_viernesSemana();
-  const chip=(on,onclick,l,t)=>'<button class="mtab'+(on?' active':'')+'" style="font-size:11.5px;padding:5px 10px" title="'+esc(t)+'" onclick="'+onclick+'">'+l+'</button>';
+  // Cada grupo en su propio recuadro (título arriba, opciones adentro como control segmentado) para que el
+  // título no se confunda con una opción. La opción elegida va resaltada (fondo oliva).
+  const opt=(on,onclick,l,t)=>'<button type="button" title="'+esc(t)+'" onclick="'+onclick+'" style="border:none;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'
+    +(on?'background:var(--olive-deep);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.15)':'background:transparent;color:var(--ink)')+'">'+l+'</button>';
+  const grupo=(titulo,opciones)=>'<div style="display:inline-flex;flex-direction:column;gap:4px">'
+    +'<div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;padding-left:2px">'+titulo+'</div>'
+    +'<div style="display:inline-flex;flex-wrap:wrap;gap:3px;padding:3px;border:1px solid var(--line-strong);border-radius:10px;background:#f6f4ec">'+opciones+'</div></div>';
   const suma=k=>{ const t={ARS:0,USD:0}; itemsPeriodo.forEach(x=>{ t[x.mon==='USD'?'USD':'ARS']+=(+x[k]||0); });
     return [t.ARS>0.005?'$ '+fmtNum(t.ARS,0):'', t.USD>0.005?'US$ '+fmtNum(t.USD,0):''].filter(Boolean).join(' + ')||'—'; };
-  const lbl=(n,k)=>n+' <span style="font-weight:400;color:var(--muted)">· '+suma(k)+'</span>';
-  return '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:10px 14px 2px">'
-    +'<span style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-right:2px">Período</span>'
-    +chip(!PROY_SEMANA,'setProySemana(false)','Todas las fechas','Sin filtro de fecha')
-    +chip(PROY_SEMANA,'setProySemana(true)','Pagar esta semana (hasta '+fmtDate(vie).slice(0,5)+')','Liberado (pagar ya), atrasado o con fecha estimada de pago hasta el viernes '+fmtDate(vie))
-    +'<span style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 2px 0 14px">Situación</span>'
-    +chip(!PROY_SIT,"setProySit('')",'Todas','Todas las situaciones')
-    +chip(PROY_SIT==='cert',"setProySit('cert')",lbl('Pendiente de certificar','sc'),'Falta certificar')
-    +chip(PROY_SIT==='lib',"setProySit('lib')",lbl('Pendiente de liberar','cl'),'Certificado, falta que el comprador lo libere')
-    +chip(PROY_SIT==='ok',"setProySit('ok')",lbl('OK para pagar','lp'),'Certificado y liberado: se puede pagar ya')
+  const lbl=(on,n,k)=>n+' <span style="font-weight:400;opacity:'+(on?'.85':'.6')+'">· '+suma(k)+'</span>';
+  return '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;padding:10px 14px 4px">'
+    +grupo('Período',
+      opt(!PROY_SEMANA,'setProySemana(false)','Todas las fechas','Sin filtro de fecha')
+      +opt(PROY_SEMANA,'setProySemana(true)','Pagar esta semana (hasta '+fmtDate(vie).slice(0,5)+')','Liberado (pagar ya), atrasado o con fecha estimada de pago hasta el viernes '+fmtDate(vie)))
+    +grupo('Situación',
+      opt(!PROY_SIT,"setProySit('')",'Todas','Todas las situaciones')
+      +opt(PROY_SIT==='cert',"setProySit('cert')",lbl(PROY_SIT==='cert','Pendiente de certificar','sc'),'Falta certificar')
+      +opt(PROY_SIT==='lib',"setProySit('lib')",lbl(PROY_SIT==='lib','Pendiente de liberar','cl'),'Certificado, falta que el comprador lo libere')
+      +opt(PROY_SIT==='ok',"setProySit('ok')",lbl(PROY_SIT==='ok','OK para pagar','lp'),'Certificado y liberado: se puede pagar ya'))
     +'</div>';
 }
 function proyectadoView(){
