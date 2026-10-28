@@ -10023,6 +10023,19 @@ function ogDetalleItems(o){
   if(lpOG>0.005) out.push({ o, mon, sc:0, cl:0, lp:lpOG, fechaEntrega:null, fechaPago:null, atrasado:true, liberadoYa:true });
   return out;
 }
+// Filtros rápidos del Detalle por OG (Proyectado): uno a la vez.
+//   semana = pagar esta semana: liberado (pagar ya), atrasado o con fecha est. de pago hasta el viernes de esta semana
+//   cert / lib / ok = solo lo pendiente de certificar / de liberar / liberado por pagar (las otras columnas en 0)
+let PROY_RAPIDO='';
+function setProyRapido(v){ PROY_RAPIDO=(PROY_RAPIDO===v?'':v); renderTesoreria(); }
+window.setProyRapido=setProyRapido;
+function _viernesSemana(){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+((5-d.getDay()+7)%7)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _proyRapidoAplica(items){
+  if(!PROY_RAPIDO) return items;
+  if(PROY_RAPIDO==='semana'){ const vie=_viernesSemana(); return items.filter(x=>x.liberadoYa || x.atrasado || (x.fechaPago && x.fechaPago<=vie)); }
+  const k={cert:'sc', lib:'cl', ok:'lp'}[PROY_RAPIDO]; if(!k) return items;
+  return items.filter(x=>(+x[k]||0)>0.005).map(x=>Object.assign({}, x, {sc:k==='sc'?x.sc:0, cl:k==='cl'?x.cl:0, lp:k==='lp'?x.lp:0}));
+}
 function proyectadoView(){
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const mfmt=(mon,v)=>(mon==='USD'?'US$ ':'$ ')+fmt2(v);
@@ -10039,7 +10052,7 @@ function proyectadoView(){
       if(col==='moneda') return ogMonedaCode(o)==='USD'?'USD':'Pesos';
       return '';
     } });
-  const items=allItems.filter(x=>xlfPass('proy',x) && _tesMia(x.o));
+  const items=_proyRapidoAplica(allItems.filter(x=>xlfPass('proy',x) && _tesMia(x.o)));
   // Agrupa por OG + semana de pago para no mostrar un renglón de la OG por fila: si varios renglones
   // de la misma OG caen en la misma fecha estimada, se muestran juntos.
   const grupos={};
@@ -10117,6 +10130,11 @@ function proyectadoView(){
       +'<td style="text-align:right">'+mfmt(mon,t)+'</td></tr>';
   }).join('');
   const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ (la fecha de pago se puede filtrar por rango) — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+_tesMiasBtn('margin-left:8px')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
+    +(()=>{ const vie=_viernesSemana(); const chip=(v,l,t)=>'<button class="mtab'+(PROY_RAPIDO===v?' active':'')+'" style="font-size:11.5px;padding:5px 10px" title="'+esc(t)+'" onclick="setProyRapido(\''+v+'\')">'+l+'</button>';
+      return '<div style="display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px 2px">'+chip('','Todo','Sin filtro rápido')
+        +chip('semana','Pagar esta semana (hasta '+fmtDate(vie).slice(0,5)+')','Liberado (pagar ya), atrasado o con fecha estimada de pago hasta el viernes '+fmtDate(vie))
+        +chip('cert','Pendiente de certificar','Solo lo que falta certificar')+chip('lib','Pendiente de liberar','Certificado, falta que el comprador lo libere')
+        +chip('ok','OK para pagar','Certificado y liberado: se puede pagar ya')+'</div>'; })()
     +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Comprador','comp')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+xlfTh('proy','Fecha est. pago','__fecha__')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
   return resumen+detalle+proyeccionSemanalHtml(items);
 }
