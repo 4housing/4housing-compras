@@ -8899,7 +8899,8 @@ function asientoRows(ogs, opByOg){
         const esOG=it===null;
         if(reparto && !esOG && Math.abs(reparto[itIdx])<0.005) return;   // renglón que esta OP no paga
         const im=esOG?{cuenta_cod:'',cuenta:'',eerr:'',aux03:'',aux04:'',aux07:'',aux08:''}:imputacion(it);
-        const imp=aMonPago(reparto&&!esOG?reparto[itIdx]:(esOG?ogTotal(o):itemTotal(it))*pctGasto/100);
+        // gasto NETO de la bonificación general de la OG (ogTotal ya la descuenta; itemTotal no): así Debe = Haber de caja
+        const imp=aMonPago(esOG ? ogTotal(o)*pctGasto/100 : (reparto?reparto[itIdx]:itemTotal(it)*pctGasto/100)*(1-(+o.bonif_pct||0)/100));
         const r=new Array(ASIENTO_COLS.length).fill('');
         r[0]=fecha; r[1]='EGRESO';
         r[2]=im.cuenta_cod||''; r[3]=im.cuenta||'';
@@ -10740,9 +10741,13 @@ function asientoTangoSheets(ogs, opByOg){
       cab.push([id, fecha, ASIENTO_CLASE, ASIENTO_TIPO_CN, ASIENTO_ESTADO_DEF, monCode, concepto, '', (o.solp!=null?o.solp:''), (o.numero||''), '', 'No', '']);
       // renglones de gasto (uno por renglón de la OG, prorrateado por el % efectivamente pagado en esta OP, sin contar el redondeo) → al DEBE
       let nro=0;
+      const bonifOG=1-(+o.bonif_pct||0)/100;   // bonificación general de la OG (ogTotal ya la descuenta; itemTotal no)
       const reparto=asientoRepartoRenglones(o, pago);   // a qué renglón va esta OP (lo liberado primero), o null = como antes
+      // OG sin renglones: no hay artículo ni cuenta para el gasto → el asiento saldría solo con la caja (sin Debe). No se exporta así.
+      if(!(o.items&&o.items.length)) faltan.push({og:o.numero||o.id, op:(pago&&pago.op_numero!=null)?pago.op_numero:'', nro:'—', item:'OG sin renglones: cargale el renglón con su artículo', clasif:o.clasif_og||'', imp:aMonPago(ogTotal(o)*pctGasto/100)});
       (o.items||[]).forEach((it,itIdx)=>{
-        const im=imputacion(it); const imp=aMonPago(reparto?reparto[itIdx]:itemTotal(it)*pctGasto/100);
+        // × bonifOG: el gasto va NETO de la bonificación general de la OG (si no, Debe > Haber de caja por el monto bonificado)
+        const im=imputacion(it); const imp=aMonPago((reparto?reparto[itIdx]:itemTotal(it)*pctGasto/100)*bonifOG);
         if(reparto && Math.abs(reparto[itIdx])<0.005) return;   // renglón que esta OP no paga: no va al asiento
         nro++;
         const leyenda=_leyRenglon(o,it,opByOgLey);
