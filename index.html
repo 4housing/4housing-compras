@@ -8894,10 +8894,12 @@ function asientoRows(ogs, opByOg){
       const aMonPago=m=>{ if(monAgree===monPago||!tcUsado) return m; return monAgree==='USD'? m*tcUsado : m/tcUsado; };
       const ajuste=aMonPago(ajusteAgree);
       const items=(o.items&&o.items.length)?o.items:[null];
-      items.forEach(it=>{
+      const reparto=asientoRepartoRenglones(o, pago);   // a qué renglón va esta OP (lo liberado primero), o null = como antes
+      items.forEach((it,itIdx)=>{
         const esOG=it===null;
+        if(reparto && !esOG && Math.abs(reparto[itIdx])<0.005) return;   // renglón que esta OP no paga
         const im=esOG?{cuenta_cod:'',cuenta:'',eerr:'',aux03:'',aux04:'',aux07:'',aux08:''}:imputacion(it);
-        const imp=aMonPago((esOG?ogTotal(o):itemTotal(it))*pctGasto/100);
+        const imp=aMonPago(reparto&&!esOG?reparto[itIdx]:(esOG?ogTotal(o):itemTotal(it))*pctGasto/100);
         const r=new Array(ASIENTO_COLS.length).fill('');
         r[0]=fecha; r[1]='EGRESO';
         r[2]=im.cuenta_cod||''; r[3]=im.cuenta||'';
@@ -10659,6 +10661,54 @@ function _asientoAvisoEstruc(s, seguir){
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th>OG</th><th>OP</th><th>Renglón</th><th>Ítem</th><th>Clasif.</th><th>Cuenta</th><th>Importe</th></tr></thead><tbody>'+filas+'</tbody></table>',
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="__asientoSeguir()">Exportar igual</button>', 'wide');
 }
+/* Reparto del monto de una OP entre los renglones de la OG, para el asiento.
+   Antes se prorrateaba el % pagado sobre TODOS los renglones según su peso, aunque lo certificado y liberado
+   fuera un solo renglón (ej. OG 2094: OP de la "Semana 1" salía repartida en 3 renglones).
+   Ahora: cada OP (en orden de pago) cubre primero lo LIBERADO de cada renglón que todavía no cubrió una OP
+   anterior; si sobra (anticipo, pago por encima de lo liberado), el sobrante va a lo no liberado según el
+   peso de cada renglón. El total del asiento no cambia: solo cambia a qué renglón va cada parte.
+   Devuelve un array (uno por renglón, en la misma escala que itemTotal(it)*pctGasto/100) o null si no
+   aplica (sin pago puntual, OG sin renglones, o pago que no está entre los pagos efectivos de la OG). */
+function _asiPctGasto(o, pago){
+  const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;
+  const aj = pago ? (+pago.ajuste_redondeo||0) : 0;
+  return aj ? pct-(aj/ogTotal(o)*100) : pct;
+}
+function asientoRepartoRenglones(o, pago){
+  if(!pago || !(o.items&&o.items.length)) return null;
+  const ord=(a,b,fa,fb)=>String(fa||'').localeCompare(String(fb||''));
+  const pagos=pagosOf(o.id).slice().sort((a,b)=>ord(a,b,a.fecha,b.fecha)||((+a.op_numero||0)-(+b.op_numero||0))||((+a.id||0)-(+b.id||0)));
+  if(!pagos.some(p=>String(p.id)===String(pago.id))) return null;
+  const tot=o.items.map(it=>itemTotal(it));
+  // Lo liberado, por certificado y en el orden en que se certificó: cada OP cubre primero el certificado más viejo pendiente.
+  const tramos=certsOf(o.id).filter(c=>c.aprobacion==='SI'&&c.estado==='Liberado')
+    .sort((a,b)=>ord(a,b,a.fecha,b.fecha)||String(a.numero||'').localeCompare(String(b.numero||''),'es',{numeric:true})||((+a.id||0)-(+b.id||0)))
+    .map(c=>tot.map((t,i)=>t*(+((c.avances||{})[i])||0)/100));
+  const sinAsig=tot.slice();   // total del renglón todavía no asignado a ninguna OP
+  let k=0;                     // tramo (certificado) en curso
+  for(const p of pagos){
+    let A=tot.reduce((a,t)=>a+t,0)*_asiPctGasto(o,p)/100;
+    const x=tot.map(()=>0);
+    while(A>1e-9 && k<tramos.length){
+      const tr=tramos[k];
+      const disp=tr.map((v,i)=>Math.max(0,Math.min(v, sinAsig[i]-x[i])));
+      const sumD=disp.reduce((a,v)=>a+v,0);
+      if(sumD<=1e-9){ k++; continue; }
+      const t=Math.min(A, sumD);
+      disp.forEach((v,i)=>{ const q=t*v/sumD; x[i]+=q; tr[i]-=q; });
+      A-=t;
+      if(t>=sumD-1e-9) k++;
+    }
+    if(A>1e-9){   // más que lo liberado (anticipo): a lo que queda sin asignar, según el peso de cada renglón
+      const U=sinAsig.map((u,i)=>Math.max(0,u-x[i])); const sumU=U.reduce((a,u)=>a+u,0);
+      const base=sumU>0?U:tot; const sumB=base.reduce((a,b)=>a+b,0)||1;
+      base.forEach((b,i)=>{ x[i]+=A*b/sumB; });
+    }
+    x.forEach((v,i)=>{ sinAsig[i]=Math.max(0,sinAsig[i]-v); });
+    if(String(p.id)===String(pago.id)) return x;
+  }
+  return null;
+}
 function asientoTangoSheets(ogs, opByOg){
   const cabH=['Identificador','Fecha de asiento','Clase de asiento','Código de tipo de asiento','Estado','Código de moneda','Concepto','Observaciones','SOLP','OG','BONOS','Eliminar','ROW_VERSION'];
   const renH=['Identificador','Nro.','Código de cuenta','Debe','Haber','Fecha de origen','Leyenda','Importe de la unidad adicional','Cantidad','Eliminar','ROW_VERSION'];
@@ -10690,8 +10740,10 @@ function asientoTangoSheets(ogs, opByOg){
       cab.push([id, fecha, ASIENTO_CLASE, ASIENTO_TIPO_CN, ASIENTO_ESTADO_DEF, monCode, concepto, '', (o.solp!=null?o.solp:''), (o.numero||''), '', 'No', '']);
       // renglones de gasto (uno por renglón de la OG, prorrateado por el % efectivamente pagado en esta OP, sin contar el redondeo) → al DEBE
       let nro=0;
-      (o.items||[]).forEach(it=>{
-        const im=imputacion(it); const imp=aMonPago(itemTotal(it)*pctGasto/100);
+      const reparto=asientoRepartoRenglones(o, pago);   // a qué renglón va esta OP (lo liberado primero), o null = como antes
+      (o.items||[]).forEach((it,itIdx)=>{
+        const im=imputacion(it); const imp=aMonPago(reparto?reparto[itIdx]:itemTotal(it)*pctGasto/100);
+        if(reparto && Math.abs(reparto[itIdx])<0.005) return;   // renglón que esta OP no paga: no va al asiento
         nro++;
         const leyenda=_leyRenglon(o,it,opByOgLey);
         if(_ogEstrucModulo(it)) estrucProy.push({og:o.numero||o.id, op:(pago&&pago.op_numero!=null)?pago.op_numero:'', nro, item:(it.articulo||it.descripcion||it.cod_art||''), clasif:it.centro_costos||'', cuenta:im.cuenta_cod, cuentaNom:im.cuenta||cuentaDescLookup(im.cuenta_cod)||'', imp});
