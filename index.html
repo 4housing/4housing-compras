@@ -12073,6 +12073,10 @@ async function saveOG(id){
     alert('El proveedor "'+provRaw+'" no existe en el Diccionario.\n\nAgregalo en Diccionario → Proveedores, o sincronizalo desde Tango, y después elegilo de la lista antes de guardar la OG.');
     return;
   }
+  // La clasificación de la OG es obligatoria y tiene que ser una de la lista.
+  const clasRaw=(document.getElementById('og_clasif').value||'').split(' — ')[0].trim();
+  if(!clasRaw){ alert('No se puede guardar: falta la Clasificación (OG).\n\nEscribí el código o nombre y elegila de la lista.'); return; }
+  if(!CLASIF_RENGLON.some(c=>c.codigo===clasRaw)){ alert('No se puede guardar: la Clasificación "'+clasRaw+'" no existe en la lista.\n\nElegila de la lista desplegable.'); return; }
   const faltantes=[];
   OG_ITEMS.forEach((it,i)=>{
     if(it._locked && !it._artFaltaba) return; // ya certificado: no se revalida retroactivamente (salvo completar un artículo que faltaba)
