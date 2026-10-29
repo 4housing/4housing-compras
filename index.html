@@ -2966,6 +2966,98 @@ function panolPreciosLista(per){
     return {...o, ov, pars:pu, pusd, multi:o.pu.size>1, tc:(pu>0&&pusd>0)?pu/pusd:null, fuente:o.fu.size>1?'varios':[...o.fu][0]||'', um:[...o.um].filter(Boolean).join('/'), alerta:[...o.al].join(', ')};
   });
 }
+/* ---- Precios: Excel para validar que los precios sean razonables y detectar diferencias de unidad de medida ----
+   Compara el precio del mes contra las compras de los últimos 12 meses (OC del historial), la última OC y el costo de Tango, siempre en USD para no
+   mezclar inflación. Marca (Alta / Media / Baja) los artículos a revisar y explica por qué. Ojo: el historial de OC no trae la U.M. de compra, así que la
+   diferencia de unidad se detecta (a) contra la U.M. del artículo en Tango y (b) por saltos de precio que parecen un factor de conversión (×10, ÷12, ×100…).
+   No hay precios de mercado en la app: la columna "Precio de mercado" es para completar a mano y calcula la diferencia. */
+const PR_FACTORES=[5,6,10,12,20,24,25,50,100,1000];   // tamaños de pack / conversiones típicas; ×2 o ×3 se tratan como diferencia de precio
+const prFactor=r=>{ if(!(r>0)) return null; for(const f of PR_FACTORES){ if(Math.abs(r/f-1)<=0.12) return '×'+f; if(Math.abs(r*f-1)<=0.12) return '÷'+f; } return null; };
+const prMediana=a=>{ if(!a.length) return 0; const t=a.slice().sort((x,y)=>x-y), m=Math.floor(t.length/2); return t.length%2?t[m]:(t[m-1]+t[m])/2; };
+const prFecha=f=>{ const m=String(f||'').slice(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?new Date(Date.UTC(+m[1],+m[2]-1,+m[3])):null; };
+function panolPreciosAnalisis(lista,per){
+  const fin=panolFinMes(per), ini=new Date(Date.parse(fin+'T12:00:00Z')-365*86400000).toISOString().slice(0,10), H=panolHistIdx(), n1=(v,d)=>fmtNum(v,d==null?1:d);
+  const norm=x=>String(panolUmResolver(x)||'').toUpperCase().trim();   // vacío = no se pudo resolver con el diccionario de U.M.: ahí no se compara
+  return lista.map(o=>{
+    const art=o.cod?(DIC.articulos||[]).find(a=>a.codigo===o.cod):null, hist=o.cod?(H.get(o.cod)||[]):[];
+    const oc=hist.filter(h=>h.fuente==='OC'&&h.fecha<=fin), oc12=oc.filter(h=>h.fecha>=ini), usd12=oc12.map(h=>h.usd).filter(x=>x>0);
+    const med=prMediana(usd12), mn=usd12.length?Math.min(...usd12):0, mx=usd12.length?Math.max(...usd12):0, ult=oc.length?oc[oc.length-1]:null, ct=art&&+art.costo_usd>0?+art.costo_usd:0;
+    const rMed=med>0&&o.pusd>0?o.pusd/med:null, rUlt=ult&&ult.usd>0&&o.pusd>0?o.pusd/ult.usd:null, rTan=ct>0&&o.pusd>0?o.pusd/ct:null;
+    const umT=art&&art.um?String(art.um):'', usadas=o.um?String(o.um).split('/'):[], umDist=!!umT&&!!norm(umT)&&usadas.some(u=>norm(u)&&norm(u)!==norm(umT)), umVarias=new Set(usadas.map(u=>norm(u)||u)).size>1;
+    const mot=[]; let sev=0; const sube=(n,t)=>{ if(n>sev) sev=n; mot.push(t); };
+    if(!o.cod) sube(2,'Artículo sin código (sin alta en el diccionario)');
+    if(!(o.pars>0)) sube(3,'Sin precio');
+    if(umDist) sube(3,'U.M. usada ('+o.um+') distinta de la U.M. del artículo en Tango ('+umT+')');
+    if(umVarias) sube(2,'Se usaron varias U.M. en el mes ('+o.um+')');
+    const ref=rMed!=null?{r:rMed,t:'la mediana de las compras de los últimos 12 meses'}:(rUlt!=null?{r:rUlt,t:'la última OC'}:(rTan!=null?{r:rTan,t:'el costo de Tango'}:null));
+    if(ref){
+      const fh=prFactor(ref.r);
+      if(fh) sube(3,'El precio es ~'+fh+' respecto de '+ref.t+': posible diferencia entre la unidad comprada y la usada (caja/pack vs unidad, metro vs rollo…)');
+      else if(ref.r>=3||ref.r<=1/3) sube(3,'Precio '+(ref.r>=1?n1(ref.r)+' veces mayor':n1(1/ref.r)+' veces menor')+' que '+ref.t);
+      else if(ref.r>=1.5||ref.r<=1/1.5) sube(2,'Precio '+Math.round(Math.abs(ref.r-1)*100)+'% '+(ref.r>=1?'mayor':'menor')+' que '+ref.t);
+      if(rMed!=null&&rUlt!=null&&(rUlt>=3||rUlt<=1/3)&&!prFactor(rMed)) sube(2,'Muy distinto de la última OC ('+n1(rUlt)+' veces)');
+      if(usd12.length>0&&usd12.length<3) sube(1,'Pocas compras en 12 meses ('+usd12.length+'): la comparación es poco confiable');
+    } else sube(1,'Sin compras ni costo de Tango para comparar');
+    if(o.fuente==='Tango'&&o.fecha){ const dias=Math.round((Date.parse(fin+'T12:00:00Z')-Date.parse(o.fecha+'T12:00:00Z'))/86400000); if(dias>180) sube(2,'Precio de Tango de hace '+dias+' días (posiblemente desactualizado)'); }
+    return {o,art,umT,med,mn,mx,ult,ct,n12:usd12.length,prov12:new Set(oc12.map(h=>h.prov).filter(Boolean)).size,rMed,rUlt,rTan,sev,rev:['OK','Baja','Media','Alta'][sev],mot:mot.join(' · ')};
+  });
+}
+async function panolPreciosExcel(){
+  const per=PANOL_PERIODO, lista=panolPreciosLista(per).sort((a,b)=>b.tot-a.tot);
+  if(!lista.length){ toast('No hay erogaciones en este período para exportar.'); return; }
+  let EJ; try{ EJ=await panolExcelJS(); }catch(e){ toast('No se pudo cargar el generador de Excel. Verificá tu conexión e intentá de nuevo.'); return; }
+  const A=panolPreciosAnalisis(lista,per), wb=new EJ.Workbook(); wb.creator='4housing'; wb.created=new Date();
+  const T='4housing · Precios de los materiales', sub='Período '+panolPerTxt(per)+' · emitido '+new Date().toLocaleString('es-AR')+' por '+panolUsuario(), cnt=Object.fromEntries(['Alta','Media','Baja','OK'].map(k=>[k,A.filter(x=>x.rev===k).length]));
+  const pct=r=>r==null?'':+((r-1)*100).toFixed(1), usd4=v=>v>0?+v.toFixed(4):'';
+  // Resumen
+  { const ws=wb.addWorksheet('Resumen',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}, pageSetup:{orientation:'portrait',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0}});
+    ws.getColumn(1).width=34; ws.getColumn(2).width=100;
+    ws.mergeCells('A1:B1'); ws.getCell('A1').value=T; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
+    ws.mergeCells('A2:B2'); ws.getCell('A2').value='Validación de precios · período '+panolPerTxt(per); ws.getCell('A2').font={size:12,bold:true,color:{argb:XL_GRIS}};
+    ws.mergeCells('A3:B3'); ws.getCell('A3').value=sub; ws.getCell('A3').font={size:9,italic:true,color:{argb:XL_GRIS}};
+    let r=5; const sec=t=>{ ws.mergeCells(r,1,r,2); const c=ws.getCell(r,1); c.value=t; c.font={size:11,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; r++; };
+    const lin=(a,b,col)=>{ const c1=ws.getCell(r,1), c2=ws.getCell(r,2); c1.value=a; c2.value=b; c1.font={size:10,bold:true}; c2.font={size:10}; c1.alignment={vertical:'top'}; c2.alignment={wrapText:true,vertical:'top'}; if(col) c1.fill={type:'pattern',pattern:'solid',fgColor:{argb:col}}; [c1,c2].forEach(c=>{ c.border={bottom:{style:'hair',color:{argb:XL_BORDE}}}; }); r++; };
+    sec('Resultado'); lin('Artículos analizados',A.length); lin('Revisión Alta',cnt.Alta+' artículos — conviene mirarlos primero','FFFBE3E0'); lin('Revisión Media',cnt.Media+' artículos','FFFFF4D6'); lin('Revisión Baja',cnt.Baja+' artículos (poca información para comparar)'); lin('Sin observaciones',cnt.OK+' artículos');
+    r++; sec('Cómo se valida (todo en USD para no mezclar inflación)');
+    lin('Contra el historial','Se compara el precio USD del mes con la mediana de las compras (OC) de los últimos 12 meses; si no hay, con la última OC; y si no, con el costo de Tango.');
+    lin('Alta','Sin precio · U.M. usada distinta de la del artículo en Tango · precio ~×5, ×6, ×10, ×12, ×24, ×100, ×1000 (o la inversa) respecto de lo habitual (parece diferencia de unidad: caja/pack vs unidad) · precio 3 o más veces mayor o menor.');
+    lin('Media','Precio 50% o más distinto de lo habitual · varias U.M. en el mes · muy distinto de la última OC · precio de Tango de más de 6 meses · artículo sin código.');
+    lin('Baja','Menos de 3 compras en 12 meses, o sin compras para comparar.');
+    r++; sec('Lo que este archivo NO puede saber');
+    lin('Unidad de compra','El historial de OC (Informe APP Costeos) no trae la U.M. de compra. La diferencia de unidad se detecta por la U.M. de Tango y por saltos de precio que parecen un factor de conversión: es una señal, no una certeza.');
+    lin('Precio de mercado','La app no tiene precios de mercado. En la hoja "Precios" hay una columna amarilla para cargar el precio de mercado (en pesos, por la misma unidad) y la diferencia se calcula sola.');
+    r++; sec('Hojas'); lin('Para revisar','Solo los artículos con revisión Alta o Media, con el motivo.'); lin('Precios','Todos los artículos del mes con las columnas de validación y la columna de mercado para completar.'); lin('Historial de compras','Las OC y el costo de Tango de cada artículo, para mirar el detalle.');
+  }
+  // Para revisar
+  const rev=A.filter(x=>x.sev>=2).sort((a,b)=>b.sev-a.sev||b.o.tot-a.o.tot);
+  xlHoja(wb,'Para revisar',{titulo:T+' · Para revisar',sub,head:['Revisión','Código','Descripción','Motivo','Precio USD del mes','Mediana USD 12m','Última OC USD','U.M. erogaciones','U.M. Tango','Total ARS del mes'],
+    rows:rev.map(x=>[x.rev,x.o.cod,x.o.nombre.replace(/^[^·]*·\s*/,''),x.mot,usd4(x.o.pusd),usd4(x.med),x.ult?usd4(x.ult.usd):'',x.o.um,x.umT,+x.o.tot.toFixed(2)]),
+    widths:[10,14,42,90,15,15,15,13,11,18],fmts:[,,,,'usdU','usdU','usdU',,,'ars'],wrap:[3],filtro:1,filaFn:r=>r[0]==='Alta'?'FFFBE3E0':'FFFFF4D6',congelaCol:3});
+  // Precios (todas las columnas)
+  const filas=A.map(x=>{ const o=x.o; return [o.cod,o.nombre.replace(/^[^·]*·\s*/,''),o.um,x.umT,+o.q.toFixed(4),+o.pars.toFixed(4),usd4(o.pusd),o.fuente,prFecha(o.fecha)||'',o.prov,+o.tot.toFixed(2),
+    x.rev,x.mot,o.alerta,x.n12,x.prov12||'',usd4(x.med),usd4(x.mn),usd4(x.mx),pct(x.rMed),x.ult?prFecha(x.ult.fecha):'',x.ult?usd4(x.ult.usd):'',pct(x.rUlt),usd4(x.ct),pct(x.rTan),'','','']; });
+  const hp=['Código','Descripción','U.M. erogaciones','U.M. Tango','Cant. del mes','Precio ARS','Precio USD','Fuente','Fecha ref.','Proveedor','Total ARS','Revisión','Motivo','Alarma de la app','Compras 12m','Proveedores 12m','Mediana USD 12m','Mín. USD 12m','Máx. USD 12m','Mes vs mediana %','Última OC','Última OC USD','Mes vs última OC %','Costo Tango USD','Mes vs Tango %','Precio de mercado ARS (completar)','Dif. vs mercado %','Observaciones'];
+  const ws=xlHoja(wb,'Precios',{titulo:T+' · Precios del mes y validación',sub,head:hp,rows:filas,widths:[13,42,11,10,12,16,14,10,12,14,18,10,70,24,10,11,14,14,14,12,12,14,12,14,12,18,13,32],
+    fmts:[,,,,'n2','ars','usdU',,'fecha',,'ars',,,,'n0','n0','usdU','usdU','usdU','pct','fecha','usdU','pct','usdU','pct','ars'],wrap:[12],filtro:1,congelaCol:2,
+    filaFn:r=>r[11]==='Alta'?'FFFBE3E0':r[11]==='Media'?'FFFFF4D6':null});
+  const h0=4, col=(n)=>{ let t='',k=n; while(k>0){ const m=(k-1)%26; t=String.fromCharCode(65+m)+t; k=Math.floor((k-1)/26); } return t; };
+  A.forEach((x,i)=>{ const r=h0+1+i, c=ws.getCell(r,12); c.font={name:'Calibri',size:10,bold:true,color:{argb:x.sev===3?XL_ROJO:x.sev===2?'FF9A6700':'FF1F2937'}}; c.alignment={horizontal:'center',vertical:'middle'};
+    const m=ws.getCell(r,26); m.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}; m.numFmt=XL_FMT.ars; m.border={top:{style:'thin',color:{argb:'FFD1B96B'}},left:{style:'thin',color:{argb:'FFD1B96B'}},bottom:{style:'thin',color:{argb:'FFD1B96B'}},right:{style:'thin',color:{argb:'FFD1B96B'}}};
+    const d=ws.getCell(r,27); d.value={formula:'IF(OR('+col(26)+r+'="",'+col(26)+r+'=0),"",'+col(6)+r+'/'+col(26)+r+'-1)',result:''}; d.numFmt='0.0%;[Red]-0.0%'; d.alignment={horizontal:'right',vertical:'middle'}; d.font={name:'Calibri',size:10,bold:true};
+    ws.getCell(r,28).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF6D6'}}; });
+  // Historial de compras
+  const cods=new Set(A.map(x=>x.o.cod).filter(Boolean)), desde=new Date(Date.parse(panolFinMes(per)+'T12:00:00Z')-730*86400000).toISOString().slice(0,10), fin=panolFinMes(per), hrows=[];
+  (DIC.hist_precios||[]).forEach(h=>{ if(cods.has(h.cod_articulo)&&h.fecha&&String(h.fecha).slice(0,10)>=desde&&String(h.fecha).slice(0,10)<=fin) hrows.push([h.cod_articulo,artDesc(h.cod_articulo)||'',prFecha(h.fecha),'OC',h.proveedor||'',panolOcCorto(h.nro_oc),+h.cantidad||'',+(+h.precio_ars).toFixed(4),usd4(+h.precio_usd),+h.tc||'']); });
+  A.forEach(x=>{ if(x.art&&+x.art.costo_ars>0&&x.art.costo_fecha) hrows.push([x.art.codigo,artDesc(x.art.codigo)||'',prFecha(x.art.costo_fecha),'Tango',x.art.costo_proveedor||'','','',+(+x.art.costo_ars).toFixed(4),usd4(+x.art.costo_usd),'']); });
+  hrows.sort((a,b)=>String(a[0]).localeCompare(String(b[0]))||(b[2]-a[2]));
+  xlHoja(wb,'Historial de compras',{titulo:T+' · Historial de compras (últimos 24 meses)',sub,head:['Código','Descripción','Fecha','Fuente','Proveedor','OC','Cantidad','Precio ARS','Precio USD','TC'],rows:hrows,widths:[13,44,12,9,16,12,12,16,14,11],fmts:[,,'fecha',,,,'n2','arsU','usdU','n2'],filtro:1,congelaCol:2});
+  try{
+    const buf=await wb.xlsx.writeBuffer(), blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='Precios_consumibles_'+per+'.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+    toast('Excel de precios exportado: '+cnt.Alta+' para revisar (Alta), '+cnt.Media+' (Media)');
+  }catch(e){ toast('No se pudo armar el Excel: '+(e.message||e)); }
+}
+window.panolPreciosExcel=panolPreciosExcel;
 function renderPanolPrecios(){
   if(PANOL_PERIODO==null) PANOL_PERIODO=panolPeriodoDefault();
   const per=PANOL_PERIODO, cerr=panolPeriodoCerrado(per), lista=panolPreciosLista(per), puede=canEditOG()&&!cerr;
@@ -2987,7 +3079,7 @@ function renderPanolPrecios(){
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Precios de referencia de los materiales</h3><span class="meta">Período '+periodoInput+' · '+(shown.length!==lista.length?shown.length+' de ':'')+lista.length+' artículos'+(cerr?' · <b>mes cerrado: precios congelados</b>':'')+'</span>'
     +'<input value="'+esc(PANOL_PRQ)+'" placeholder="Buscar artículo…" onchange="PANOL_PRQ=this.value;renderPanol()" style="border:1px solid var(--line-strong);border-radius:8px;padding:5px 8px;font-size:12.5px;width:200px">'
-    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('ppr').replace('margin-left:auto','')+(PANOL_PRQ?'<button class="btn ghost sm" onclick="PANOL_PRQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button><button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button><button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPrecios\')">Auto-ajustar columnas</button></span></div>'
+    +'<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+xlfClearAllBtn('ppr').replace('margin-left:auto','')+(PANOL_PRQ?'<button class="btn ghost sm" onclick="PANOL_PRQ=\'\';renderPanol()">Borrar búsqueda</button>':'')+'<button class="btn ghost sm" onclick="panolPreciosExcel()">Exportar Excel</button><button class="btn ghost sm" onclick="openPanolHistImport()">Importar historial de compras</button><button class="btn ghost sm" onclick="panolRecalcularPrecios()">Recalcular precios del mes</button><button class="btn ghost sm" onclick="tblAutofit(\'#tblPanolPrecios\')">Auto-ajustar columnas</button></span></div>'
     +'<div style="font-size:12px;color:var(--muted);padding:0 16px 8px">Precio con el que se valorizan hoy las erogaciones del mes. <b>Modificar</b> lo guarda para ese artículo y mes y lo aplica a sus erogaciones abiertas; las que se carguen después también lo toman. Al cerrar el mes queda congelado.</div>'
     +(PANOL_PRECIOS_ERR?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px">No se pudo leer la tabla de precios del mes: '+esc(PANOL_PRECIOS_ERR)+'. ¿Ya se corrió <b>sql/2026-10_panol_precios_mes.sql</b> en Supabase? Sin eso los cambios no se guardan.</div>':'')
     +'<div class="tbl-hscroll tbl-compact" style="max-height:66vh"><table class="grid tbl-ajustada" id="tblPanolPrecios"><thead><tr>'
