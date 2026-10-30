@@ -6645,7 +6645,14 @@ async function gpParseCosteo(file){
     for(const row of rr){
       for(let c=0;c<row.length;c++){
         const cell=gpNorm(row[c]);
-        if(tc==null){ const m=cell.match(/\bTC\s*([0-9][0-9.]*)/); if(m){ const v=_syncNum(m[1]); if(v>0) tc=v; } }
+        // TC: exige una etiqueta real (celda "TC"/"T.C." sola, o "TIPO DE CAMBIO") + gpNumNear como meta/tol,
+        // o "TC" con un separador explícito antes del número en la misma celda ("TC 1550", "TC: 1550").
+        // Antes matcheaba "TC" pegado a cualquier número (ej. una referencia de obra "TC4417" confundida
+        // con el tipo de cambio real) — bug real detectado en el proyecto IF4417 (ver tc_presupuesto=4417).
+        if(tc==null){
+          if(cell==='TC' || cell==='T.C.' || cell.indexOf('TIPO DE CAMBIO')>=0){ const v=gpNumNear(row,c); if(v!=null && v>0) tc=v; }
+          else{ const m=cell.match(/\bTC[\s:=]+([0-9][0-9.]*)\b/); if(m){ const v=_syncNum(m[1]); if(v>0) tc=v; } }
+        }
         if(meta==null && cell.indexOf('META DE AHORRO')>=0){ const v=gpNumNear(row,c); if(v!=null) meta=v; }
         if(tol==null && cell.indexOf('TOLERANCIA DE DESVIO')>=0){ const v=gpNumNear(row,c); if(v!=null) tol=v; }
       }
