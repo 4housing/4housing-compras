@@ -6470,10 +6470,7 @@ async function gpGuardarProyecto(id){
   let parsed=null;
   const fEl=g('gp_costeo'); const file=fEl?(fEl.files||[])[0]:null;
   if(file){ try{ parsed=await gpParseCosteo(file); }catch(e){ setErr('Costeo: '+(e.message||e)); return; } }
-  if(parsed && parsed.via_fallback){
-    const tot=parsed.secciones.reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
-    if(!confirm('Este costeo NO tiene la pestaña “Tablero Compras”: leí las secciones del detalle.\n\n'+parsed.secciones.length+' secciones · total $'+tot.toLocaleString('es-AR')+'\n\nVerificá que el total coincida con el costeo. ¿Continuar?')){ setErr('Cancelado.'); return; }
-  }
+  if(parsed){ if(!confirm(gpControlDialog(parsed))){ setErr('Cancelado.'); return; } }
   const tcManual=g('gp_tc').value!==''?(+g('gp_tc').value):null;
   const metaManual=g('gp_meta').value!==''?(+g('gp_meta').value/100):null;
   const tolManual=g('gp_tol').value!==''?(+g('gp_tol').value/100):null;
@@ -6608,6 +6605,65 @@ function gpParseDetalleAuto(wb){
   });
   return {secciones, detalle};
 }
+// Rubros/secciones conocidos de 4housing (para el parser por nombre de sección).
+const GP_SECCIONES_CONOCIDAS = ['Estructura Modular','Acero / Hierro','Aislación / Revestimiento','Piso','Aberturas','Instalacion Electrica','Pintura','Sanitario','Cocina','M.O.D.','Prorrateables','Equipamiento','Mobiliario','Obra Civil','Logística & Montaje','Climatización','Varios'];
+// Parser POR NOMBRE DE SECCIÓN: en estos costeos cada sección tiene su subtotal en la columna J (ARS)
+// e I (USD) de SU propia fila. Lee esos subtotales para los rubros conocidos; ignora las líneas de
+// detalle, las filas "SUBTOTAL…/TOTAL…" y los sub-grupos. Más robusto que la heurística: no duplica
+// M.O.D. en "Varios" ni promueve líneas sueltas a secciones. Elige la hoja con más rubros reconocidos.
+function gpParseSeccionesJ(wb){
+  const known=new Map(GP_SECCIONES_CONOCIDAS.map(n=>[gpNorm(n), n]));
+  let best=null;
+  for(const name of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, raw:true, defval:null});
+    const sec={}, desc=[]; let totProd=null;
+    for(const r of (rows||[])){
+      if(!r) continue;
+      const b=r[1]; const nb=gpNorm(b);
+      const I=(typeof r[8]==='number')?r[8]:null;
+      const J=(typeof r[9]==='number')?r[9]:null;
+      if(nb.indexOf('TOTAL PRODUCCION')===0){ if(J!=null) totProd={usd:I, ars:J}; continue; }
+      if(!nb || nb.indexOf('SUBTOTAL')===0 || nb.indexOf('TOTAL')===0) continue;
+      if(known.has(nb)){
+        if(J!=null){ const nom=known.get(nb); const prev=sec[nom]; if(!prev || J>prev.ars) sec[nom]={usd:(I!=null?I:0), ars:J}; }
+      } else if(r[2]==null && r[4]==null && r[7]==null && J!=null && J>0){
+        desc.push({nombre:String(b).trim(), ars:J});   // fila tipo "madre" con subtotal pero nombre no reconocido
+      }
+    }
+    const nsec=Object.keys(sec).length;
+    if(nsec>=3 && (!best || nsec>best.nsec)) best={sheet:name, sec, desc, totProd, nsec};
+  }
+  if(!best) return null;
+  const secciones=GP_SECCIONES_CONOCIDAS.filter(n=>best.sec[n]).map((n,i)=>({seccion:n, orden:i, presupuesto_ars:best.sec[n].ars, presupuesto_usd:best.sec[n].usd}));
+  return { secciones, totProd:best.totProd, desconocidas:best.desc, sheet:best.sheet };
+}
+// Busca la fila "TOTAL PRODUCCIÓN …" en cualquier hoja (para cotejar la suma).
+function gpBuscarTotalProd(wb){
+  for(const name of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, raw:true, defval:null});
+    for(const r of (rows||[])){ if(!r) continue; const nb=gpNorm(r[1]); if(nb.indexOf('TOTAL PRODUCCION')===0){ const I=(typeof r[8]==='number')?r[8]:null, J=(typeof r[9]==='number')?r[9]:null; if(J!=null) return {usd:I, ars:J}; } }
+  }
+  return null;
+}
+// Mensaje de control (se muestra SIEMPRE al cargar/actualizar costeo): coteja la suma contra el TOTAL PRODUCCIÓN.
+function gpControlDialog(parsed){
+  const L=[];
+  L.push(parsed.secciones.length+' secciones leídas'+(parsed.via_fallback?' (modo fallback)':(parsed.via_nombre?' (por nombre de sección)':' (tabla Avance por sección)'))+'.');
+  const c=parsed.control;
+  if(c){
+    L.push('');
+    L.push('Suma de secciones:  $'+fmtNum(c.sumAr,0)+(c.totUs!=null?('   ·   US$ '+fmtNum(c.sumUs,0)):''));
+    L.push('TOTAL PRODUCCIÓN:   $'+fmtNum(c.totAr,0)+(c.totUs!=null?('   ·   US$ '+fmtNum(c.totUs,0)):''));
+    L.push(c.ok ? '✓ COINCIDE.' : ('⚠️ DIFIERE por $'+fmtNum(c.difAr,0)+' — puede faltar o sobrar una sección.'));
+  } else {
+    L.push(''); L.push('No encontré la fila "TOTAL PRODUCCIÓN" para cotejar — verificá el total a mano.');
+  }
+  if(parsed.desconocidas && parsed.desconocidas.length){
+    L.push(''); L.push('Secciones NO reconocidas (no se cargan): '+parsed.desconocidas.map(d=>d.nombre+' $'+fmtNum(d.ars,0)).join(' · '));
+  }
+  L.push(''); L.push('¿Continuar y guardar?');
+  return L.join('\n');
+}
 async function gpParseCosteo(file){
   const wb=await _syncReadWb(file);
   let found=null;
@@ -6622,7 +6678,7 @@ async function gpParseCosteo(file){
     }
     if(found) break;
   }
-  let secciones=[], detalle={}, viaFallback=false;
+  let secciones=[], detalle={}, viaFallback=false, viaNombre=false, desconocidas=[], totProdInfo=null;
   if(found){
     const {rows,hdr,cSec,cArs,cUsd}=found;
     for(let r=hdr+1;r<rows.length;r++){
@@ -6634,9 +6690,18 @@ async function gpParseCosteo(file){
     if(!secciones.length) throw new Error('Encontré la tabla pero sin filas de sección.');
     detalle=gpParseDetalle(wb, secciones.map(s=>s.seccion), found.sheetName);
   } else {
-    const auto=gpParseDetalleAuto(wb);
-    if(!auto || !auto.secciones.length) throw new Error('No encontré ni la tabla “AVANCE POR SECCIÓN” (pestaña “Tablero Compras”) ni una estructura de costeo reconocible (secciones con sub-rubros). Hojas vistas: '+wb.SheetNames.join(', ')+'.');
-    secciones=auto.secciones; detalle=auto.detalle; viaFallback=true;
+    // 2) Parser por NOMBRE de sección (subtotal en col J). Lo normal en los costeos de 4housing.
+    const porNombre=gpParseSeccionesJ(wb);
+    if(porNombre && porNombre.secciones.length){
+      secciones=porNombre.secciones; viaNombre=true;
+      totProdInfo=porNombre.totProd; desconocidas=porNombre.desconocidas||[];
+      try{ detalle=gpParseDetalle(wb, secciones.map(s=>s.seccion), porNombre.sheet)||{}; }catch(_){ detalle={}; }
+    } else {
+      // 3) Último recurso: heurística de detalle.
+      const auto=gpParseDetalleAuto(wb);
+      if(!auto || !auto.secciones.length) throw new Error('No encontré ni la tabla “AVANCE POR SECCIÓN”, ni secciones por nombre (subtotal en col. J), ni una estructura de costeo reconocible. Hojas vistas: '+wb.SheetNames.join(', ')+'.');
+      secciones=auto.secciones; detalle=auto.detalle; viaFallback=true;
+    }
   }
   // TC, meta de ahorro y tolerancia: buscar en cualquier celda de cualquier hoja
   let tc=null, meta=null, tol=null;
@@ -6658,7 +6723,16 @@ async function gpParseCosteo(file){
       }
     }
   }
-  return {secciones, tc, meta, tol, detalle, via_fallback:viaFallback};
+  // Cotejo contra el TOTAL PRODUCCIÓN (siempre que la planilla lo tenga).
+  if(!totProdInfo) totProdInfo=gpBuscarTotalProd(wb);
+  const sumAr=secciones.reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
+  const sumUs=secciones.reduce((a,s)=>a+(+s.presupuesto_usd||0),0);
+  let control=null;
+  if(totProdInfo && totProdInfo.ars!=null){
+    const totAr=+totProdInfo.ars||0, totUs=(totProdInfo.usd!=null?+totProdInfo.usd:null);
+    control={ sumAr, sumUs, totAr, totUs, difAr:sumAr-totAr, difUs:(totUs!=null?sumUs-totUs:null), ok:Math.abs(sumAr-totAr)<1 };
+  }
+  return {secciones, tc, meta, tol, detalle, via_fallback:viaFallback, via_nombre:viaNombre, control, desconocidas};
 }
 async function gpActualizarCosteo(){
   const body='<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Subí el Excel del costeo. Leo la pestaña “Tablero Compras” y reemplazo el presupuesto por sección de este proyecto (no toca las OC importadas).</div>'
@@ -6674,10 +6748,7 @@ async function gpCosteoAnalizar(){
   if(!file){ setErr('Necesito el archivo.'); return; }
   msg.style.color='var(--muted)'; msg.textContent='Leyendo…';
   let parsed; try{ parsed=await gpParseCosteo(file); }catch(e){ setErr(e.message||String(e)); return; }
-  if(parsed.via_fallback){
-    const tot=parsed.secciones.reduce((a,s)=>a+(+s.presupuesto_ars||0),0);
-    if(!confirm('Este costeo NO tiene la pestaña “Tablero Compras”: leí las secciones del detalle.\n\n'+parsed.secciones.length+' secciones · total $'+tot.toLocaleString('es-AR')+'\n\nVerificá que el total coincida con el costeo. ¿Guardar igual?')){ msg.textContent=''; return; }
-  }
+  if(!confirm(gpControlDialog(parsed))){ msg.textContent=''; return; }
   const pid=GP.actualId;
   try{
     await sbFetch('/compras_gp_presupuesto?proyecto_id=eq.'+pid,{method:'DELETE',prefer:'return=minimal'});
