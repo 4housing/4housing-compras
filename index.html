@@ -12098,7 +12098,11 @@ function comboClasOG(){
   const src=CLASIF_RENGLON;
   const items=(q?src.filter(c=>((c.codigo||'')+' '+(c.desc||'')).toLowerCase().includes(q)):src).slice(0,80)
     .map(c=>({code:c.codigo, name:c.desc||''}));
-  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name; });
+  comboShow(inp, items, it=>{ inp.value=it.code+' — '+it.name;
+    // Los renglones sin centro de costos toman por defecto el de la OG (los que ya tienen uno no se tocan).
+    let tocado=false; OG_ITEMS.forEach(r=>{ if(!String(r.centro_costos||'').trim()){ r.centro_costos=it.code; tocado=true; } });
+    if(tocado) renderOGItems();
+  });
 }
 window.comboClasOG=comboClasOG;
 function comboClasRen(i){
@@ -12247,6 +12251,8 @@ async function saveOG(id){
   const clasRaw=(document.getElementById('og_clasif').value||'').split(' — ')[0].trim();
   if(!clasRaw){ alert('No se puede guardar: falta la Clasificación (OG).\n\nEscribí el código o nombre y elegila de la lista.'); return; }
   if(!CLASIF_RENGLON.some(c=>c.codigo===clasRaw)){ alert('No se puede guardar: la Clasificación "'+clasRaw+'" no existe en la lista.\n\nElegila de la lista desplegable.'); return; }
+  // Todo renglón lleva centro de costos: si quedó vacío toma el de la OG (se puede cambiar por renglón, pero no puede quedar vacío).
+  OG_ITEMS.forEach(it=>{ if(!String(it.centro_costos||'').trim()) it.centro_costos=clasRaw; });
   const faltantes=[];
   OG_ITEMS.forEach((it,i)=>{
     if(it._locked && !it._artFaltaba) return; // ya certificado: no se revalida retroactivamente (salvo completar un artículo que faltaba)
