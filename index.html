@@ -10891,6 +10891,11 @@ function _asiPctGasto(o, pago){
 }
 function asientoRepartoRenglones(o, pago){
   if(!pago || !(o.items&&o.items.length)) return null;
+  // Reparto elegido por el tesorero al pagar (pagos nuevos): manda sobre el cálculo automático.
+  if(pago.reparto && typeof pago.reparto==='object'){
+    const suma=Object.keys(pago.reparto).reduce((a,k)=>a+(+pago.reparto[k]||0),0);
+    if(suma>0){ const k=(suma-(+pago.ajuste_redondeo||0))/suma, f=_pgBonifOG(o); return o.items.map((it,i)=>(+pago.reparto[i]||0)*k/f); }   // sin el redondeo; /f porque el asiento vuelve a multiplicar por la bonificación
+  }
   const ord=(a,b,fa,fb)=>String(fa||'').localeCompare(String(fb||''));
   const pagos=pagosOf(o.id).slice().sort((a,b)=>ord(a,b,a.fecha,b.fecha)||((+a.op_numero||0)-(+b.op_numero||0))||((+a.id||0)-(+b.id||0)));
   if(!pagos.some(p=>String(p.id)===String(pago.id))) return null;
@@ -11457,12 +11462,90 @@ function armadoView(){
   return '<div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Pagos armados antes de liberar</h3><span class="meta">El comprador de la OG pide armar el pago aunque no esté certificada. La OP armada descuenta de la caja; se marca Pagada cuando lo liberado alcanza.</span></div>'+tPed+tArm+'</div>';
 }
 
+/* ---- Pago por renglón (Tesorería): el tesorero elige cuánto paga de cada renglón, con tope en lo liberado ---- */
+function _pgBonifOG(o){ const b=1-(+o.bonif_pct||0)/100; return b>0?b:1; }
+// Liberado por renglón (neto de la bonificación de la OG, moneda de la OG)
+function pgLiberadoRenglon(o){
+  const f=_pgBonifOG(o), certs=certsOf(o.id).filter(c=>c.aprobacion==='SI'&&c.estado==='Liberado');
+  return (o.items||[]).map((it,i)=>itemTotal(it)*certs.reduce((a,c)=>a+(+((c.avances||{})[i])||0),0)/100*f);
+}
+// Ya pagado/armado por renglón: pagos con reparto elegido y, para los viejos, el reparto automático del asiento
+function pgPagadoRenglon(o){
+  const f=_pgBonifOG(o), x=(o.items||[]).map(()=>0);
+  pagosOf(o.id).forEach(p=>{
+    const r=asientoRepartoRenglones(o,p); if(!r) return;
+    // Pagos viejos: el reparto automático usa el % guardado en el pago, que puede haber quedado desactualizado si cambió el total de la OG;
+    // acá se reescala a lo realmente pagado (importe), sin tocar el pago ni el asiento.
+    const v=r.map(z=>(+z||0)*f), real=pagoMontoOG(p)-(+p.ajuste_redondeo||0);
+    let sobra = p.reparto ? 0 : v.reduce((a,z)=>a+z,0)-real;   // lo asignado de más: sale de los últimos renglones (el automático llena en orden)
+    for(let i=v.length-1;i>=0 && sobra>0.005;i--){ const q=Math.min(v[i],sobra); v[i]-=q; sobra-=q; }
+    v.forEach((z,i)=>{ x[i]+=z; });
+  });
+  armadasOf(o.id).forEach(p=>{ if(p.reparto&&typeof p.reparto==='object') Object.keys(p.reparto).forEach(k=>{ if(x[k]!=null) x[k]+=(+p.reparto[k]||0); }); });
+  return x;
+}
+// Tope por renglón = liberado menos lo ya pagado (con anticipo: mismo criterio A/B de ogMaxPagable, por renglón).
+// En una OP armada (se paga antes de liberarse) el tope es lo que le queda al renglón sobre su total.
+function pgTopeRenglon(o, modo){
+  const f=_pgBonifOG(o), lib=pgLiberadoRenglon(o), pag=pgPagadoRenglon(o);
+  const ant=o.condicion==='CON ANTICIPO', ap=(+o.anticipo_pct||0)/100;
+  return (o.items||[]).map((it,i)=>{
+    const tot=itemTotal(it)*f;
+    let max=lib[i];
+    if(modo==='armada') max=tot;
+    else if(ant) max = o.anticipo_metodo==='B' ? Math.max(tot*ap, lib[i]) : tot*ap + lib[i]*(1-ap);
+    return Math.max(0, Math.min(tot,max)-pag[i]);
+  });
+}
+function pgRepInit(o, modo, pendMonto){
+  const f=_pgBonifOG(o), tope=pgTopeRenglon(o,modo);
+  let resto=pendMonto;
+  const amt=tope.map(t=>{ const v=Math.max(0,Math.min(t,resto)); resto-=v; return Math.round(v*100)/100; });
+  window._pgRep={ tope, amt, modo:'imp',
+    tot:o.items.map(it=>itemTotal(it)*f),
+    unit:o.items.map(it=>(+it.cant? itemTotal(it)*f/(+it.cant) : 0)) };
+  return window._pgRep;
+}
+function pgRepHtml(o, R, simb){
+  const f2=v=>simb+(+v||0).toLocaleString('es-AR',{maximumFractionDigits:2});
+  const filas=o.items.map((it,i)=>'<tr><td style="text-align:left">'+(i+1)+' · '+esc(it.articulo||it.cod_art||'')+(it.hito?'<div style="font-size:10.5px;color:var(--muted)">'+esc(String(it.hito).slice(0,60))+'</div>':'')+'</td>'
+    +'<td style="text-align:right">'+f2(R.tot[i])+'</td><td style="text-align:right"><strong>'+f2(R.tope[i])+'</strong></td>'
+    +'<td><input id="pg_r_'+i+'" type="number" step="0.01" min="0" value="'+R.amt[i]+'" oninput="pgRepRecalc()" '+(R.tope[i]<=0.005?'disabled ':'')+'style="width:100%;text-align:right;border:1px solid var(--line-strong);border-radius:7px;padding:5px 6px;font-size:12px"></td>'
+    +'<td id="pg_rimp_'+i+'" style="text-align:right">'+f2(R.amt[i])+'</td></tr>').join('');
+  return '<div style="margin-bottom:12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px"><label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Qué renglones pagás</label>'
+    +'<span style="font-size:12px">Cargar por <select id="pg_rmodo" onchange="pgRepModo()"><option value="imp">Importe</option><option value="pct">% del renglón</option><option value="uni">Unidades</option></select></span></div>'
+    +'<table class="grid usub" style="font-size:12px"><thead><tr><th>Renglón</th><th>Total</th><th>Disponible</th><th id="pg_rcol">A pagar (importe)</th><th>Importe</th></tr></thead><tbody>'+filas+'</tbody></table>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:4px">Disponible = lo liberado de cada renglón menos lo ya pagado. No se puede pagar más que eso. El importe total del pago es la suma de los renglones.</div></div>';
+}
+function pgRepModo(){
+  const R=window._pgRep; if(!R) return;
+  const modo=document.getElementById('pg_rmodo').value; R.modo=modo;
+  document.getElementById('pg_rcol').textContent = modo==='pct'?'A pagar (% del renglón)':(modo==='uni'?'A pagar (unidades)':'A pagar (importe)');
+  R.amt.forEach((a,i)=>{ const el=document.getElementById('pg_r_'+i); if(!el) return;
+    el.value = modo==='pct' ? (R.tot[i]? Math.round(a/R.tot[i]*10000)/100 : 0) : (modo==='uni' ? (R.unit[i]? Math.round(a/R.unit[i]*1000)/1000 : 0) : a);
+    el.step = modo==='imp'?'0.01':'any'; });
+}
+function pgRepRecalc(){
+  const R=window._pgRep, o=window._pgOG; if(!R||!o) return;
+  const simb=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
+  R.amt=R.amt.map((_,i)=>{ const el=document.getElementById('pg_r_'+i); const v=el?(+el.value||0):0;
+    const a = R.modo==='pct' ? R.tot[i]*v/100 : (R.modo==='uni' ? R.unit[i]*v : v);
+    return Math.round(Math.max(0,a)*100)/100; });
+  R.amt.forEach((a,i)=>{ const c=document.getElementById('pg_rimp_'+i); if(c) c.textContent=simb+a.toLocaleString('es-AR',{maximumFractionDigits:2}); });
+  const imp=document.getElementById('pg_imp'); if(imp) imp.value=R.amt.reduce((a,v)=>a+v,0).toFixed(2);
+  pgCalc();
+}
+window.pgRepModo=pgRepModo; window.pgRepRecalc=pgRepRecalc;
 function openPago(ogId, modo){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
   if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
   const monPagoDef=ogMonedaPagoCode(o)||monOG;   // de qué caja sale la plata (Condición de compra + tilde USD), no la moneda pactada
   const pendPct=ogPendPagoPct(o); const pendMonto=_pgPendMonto(o, modo); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
   window._pgModo=modo||'';
+  const repOn = !!(o.items&&o.items.length>1);
+  const R = repOn ? pgRepInit(o, modo||'', pendMonto) : (window._pgRep=null);
+  const repHtml = repOn ? pgRepHtml(o, R, simbOG) : '';
+  const impInicial = repOn ? R.amt.reduce((a,v)=>a+v,0) : pendMonto;
   const hoy=new Date().toISOString().slice(0,10);
   const sugInicial=tcDiaAnterior(hoy);
   const tc=usdProm(sugInicial)!=null?usdProm(sugInicial):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'');
@@ -11471,7 +11554,8 @@ function openPago(ogId, modo){
     : (COND_SIN_CAJA.includes(o.condicion) ? '<br><span style="color:var(--olive-deep)">'+esc(o.condicion)+' · no impacta la caja (cancelación por compensación)</span>' : '');
   const body='<div style="background:#f3f1e8;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px">'
     +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||'')+'<br>Total: '+simbOG+tot.toLocaleString('es-AR')+' ('+(monOG==='USD'?'dólares':'pesos')+') · Certificado: '+ogLiberadoPct(o).toFixed(0)+'% · Ya pagado: '+ogPagadoPct(o).toFixed(0)+'% · <strong>Pagable ahora: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+' ('+pendPct.toFixed(1).replace('.0','')+'%)</strong>'+antInfo+'</div>'
-    +'<div class="frow c2"><div class="field"><label>Importe a pagar ('+(monOG==='USD'?'US$':'$')+', moneda de la OG)</label><input id="pg_imp" type="number" step="0.01" value="'+pendMonto.toFixed(2)+'" oninput="pgCalc()"><div style="font-size:11px;color:var(--muted);margin-top:3px">Máx pendiente: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+'</div></div>'
+    +repHtml
+    +'<div class="frow c2"><div class="field"><label>Importe a pagar ('+(monOG==='USD'?'US$':'$')+', moneda de la OG)</label><input id="pg_imp" type="number" step="0.01" value="'+impInicial.toFixed(2)+'"'+(repOn?' readonly style="background:#f3f1e8"':'')+' oninput="pgCalc()"><div style="font-size:11px;color:var(--muted);margin-top:3px">Máx pendiente: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+'</div></div>'
     +'<div class="field"><label>Fecha de pago</label><input id="pg_fecha" type="date" value="'+hoy+'" onchange="pgFechaChanged()"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Moneda de pago</label><select id="pg_moneda" onchange="pgCalc()"><option value="ARS"'+(monPagoDef==='ARS'?' selected':'')+'>Pesos (CAJA PESOS PROY)</option><option value="USD"'+(monPagoDef==='USD'?' selected':'')+'>Dólares (CAJA DOLARES PROY)</option></select></div>'
     +'<div class="field"><label>Medio de pago</label><select id="pg_medio"><option>Efectivo</option><option>Transferencia</option><option>Cheque</option></select></div></div>'
@@ -11529,6 +11613,8 @@ async function savePago(ogId, modo){
   if(!canPago()){ toast('Solo el tesorero puede registrar pagos.'); return; }
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
   if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
+  const repOn = !!(window._pgRep && window._pgOG && String(window._pgOG.id)===String(o.id) && o.items && o.items.length>1);
+  if(repOn) pgRepRecalc();   // el importe del pago es la suma de lo elegido por renglón
   let montoOG=+document.getElementById('pg_imp').value||0;    // importe en moneda de la OG
   const pendMonto=_pgPendMonto(o, modo);
   if(montoOG<=0){ toast('Ingresá un importe mayor a 0'); return; }
@@ -11548,6 +11634,16 @@ async function savePago(ogId, modo){
   if((monOG==='USD'||monPago==='USD') && !tc){ toast('Cargá el tipo de cambio'); return; }
   let importe=montoOG;
   if(monOG!==monPago){ if(monOG==='USD'&&monPago==='ARS') importe=montoOG*tc; else if(monOG==='ARS'&&monPago==='USD') importe = tc? montoOG/tc : 0; }
+  // Pago por renglón: cada renglón dentro de su tope (liberado menos lo ya pagado). Se guarda lo elegido en `reparto`.
+  let repObj=null;
+  if(repOn){
+    const tope=pgTopeRenglon(o, modo), amt=window._pgRep.amt; repObj={};
+    for(let i=0;i<amt.length;i++){
+      if(amt[i]>tope[i]+tolMonto+0.01){ toast('Renglón '+(i+1)+' ('+(o.items[i].articulo||o.items[i].cod_art||'')+'): supera lo disponible ('+(monOG==='USD'?'US$ ':'$ ')+tope[i].toLocaleString('es-AR',{maximumFractionDigits:2})+').'); return; }
+      if(amt[i]>0.004) repObj[i]=amt[i];
+    }
+    if(!Object.keys(repObj).length){ toast('Elegí qué renglón pagás: todos están en 0.'); return; }
+  }
   const pago={ og_id:o.id, numero:o.numero,
     fecha:document.getElementById('pg_fecha').value, pct,
     moneda_og:monOG, moneda_pago:monPago, tc:(tc||null),
@@ -11556,6 +11652,7 @@ async function savePago(ogId, modo){
     lugar_pago_txt:document.getElementById('pg_lugar_pago_txt').value,
     sin_caja: COND_SIN_CAJA.includes(o.condicion),
     importe_pago:importe, ajuste_redondeo:(ajusteRedondeo||null), observaciones:document.getElementById('pg_obs').value };
+  if(repObj) pago.reparto=repObj;
   if(modo==='armada') pago.estado_op='Armada';   // descuenta de la caja; se marca Pagada al liberarse
   try{
     if(DEMO_MODE){ pago.id=Math.max(0,...(mem.pagos||[]).map(p=>+p.id||0))+1; pago.op_numero=Math.max(0,...(mem.pagos||[]).map(p=>+p.op_numero||0))+1; mem.pagos=mem.pagos||[]; mem.pagos.push(pago); }
