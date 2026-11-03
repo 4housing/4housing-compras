@@ -9046,12 +9046,21 @@ window.ogReportRows=ogReportRows;
 const ASIENTO_COLS=['FECHA','TIPO','ID CUENTA','CUENTA CONTABLE','Aux Req','02 EERR','03 PROYECTO','04 CONT/MOD','05 MANT','06 MU','07 HERR','08 RODADOS','10 SUELDOS','11 IIBB','Cód. Prov.','Proveedor','Legajo','Empleado','SOLP','OG','CONCEPTO','INGRESO $','EGRESO $','MOVIMIENTO $','SALDO $','LEYENDA TANGO','✓ ENV.','N° ASIENTO TANGO','OBSERVACIONES'];
 const CONTRAPARTIDA={cod:'11110079', nombre:'CAJA PESOS PROY'};
 function auxReqStr(im){ const r=['02']; if(im.aux03)r.push('03'); if(im.aux04)r.push('04'); if(im.aux05)r.push('05'); if(im.aux06)r.push('06'); if(im.aux07)r.push('07'); if(im.aux08)r.push('08'); return r.join(' / '); }
+/* % de la OG que cubre un pago, para el asiento: sale del IMPORTE realmente pagado contra el total ACTUAL de la OG
+   (no del pago.pct guardado al cobrar, que queda viejo si después cambia el total y hacía que el Haber de caja
+   y el gasto salieran distintos de lo pagado). Sin pago puntual = 100%. Si no hay importe, cae al pct guardado. */
+function _asiPctPago(o, pago){
+  if(!pago) return 100;
+  const t=ogTotal(o);
+  if(t>0 && pago.importe_pago!=null && pago.importe_pago!=='') return pagoMontoOG(pago)/t*100;
+  return (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100);
+}
 function asientoRows(ogs, opByOg){
   const rows=[ASIENTO_COLS.slice()];
   ogs.forEach(o=>{
     const pagosOG=(opByOg&&opByOg[o.id])||[null];   // [null] = sin pago puntual, se toma el 100% de la OG
     pagosOG.forEach(pago=>{
-      const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;
+      const pct = _asiPctPago(o, pago);
       const ajusteAgree = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos), en la moneda pactada
       const pctGasto = ajusteAgree ? pct-(ajusteAgree/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
       const opByOgLey = pago ? {[o.id]:pago.op_numero} : opByOg;
@@ -10885,7 +10894,7 @@ function _asientoAvisoEstruc(s, seguir){
    Devuelve un array (uno por renglón, en la misma escala que itemTotal(it)*pctGasto/100) o null si no
    aplica (sin pago puntual, OG sin renglones, o pago que no está entre los pagos efectivos de la OG). */
 function _asiPctGasto(o, pago){
-  const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;
+  const pct = _asiPctPago(o, pago);
   const aj = pago ? (+pago.ajuste_redondeo||0) : 0;
   return aj ? pct-(aj/ogTotal(o)*100) : pct;
 }
@@ -10939,7 +10948,7 @@ function asientoTangoSheets(ogs, opByOg){
     const pagosOG=(opByOg&&opByOg[o.id])||[null];               // [null] = sin pago puntual, se toma el 100% de la OG (preview desde "Ver imputación")
     const multi=pagosOG.length>1;                                 // 2+ pagos de la MISMA OG seleccionados juntos: hay que separarlos en asientos distintos
     pagosOG.forEach(pago=>{
-      const pct = pago ? (pago.pct!=null && pago.pct!=='' ? +pago.pct : 100) : 100;   // % de la OG que cubre ESTE pago (viene de tesorería)
+      const pct = _asiPctPago(o, pago);   // % de la OG que cubre ESTE pago (viene de tesorería)
       const ajusteAgree = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos), en la moneda pactada (monAgree)
       const pctGasto = ajusteAgree ? pct-(ajusteAgree/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
       const id = multi ? (o.numero||o.id)+'-OP'+(pago&&pago.op_numero!=null?pago.op_numero:'') : (o.numero||o.id); // SUPUESTO: si hay 2+ pagos de la misma OG en la misma exportación, se compone el Identificador con "-OP" para no duplicar filas en Tango; confirmar con Axoft si acepta identificador alfanumérico.
