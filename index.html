@@ -7461,6 +7461,25 @@ function gpEstadoSeccion(comprado, presup, tol){
   if(comprado > presup*(1+(tol||0))) return {txt:'Sobrecosto', cls:'b-rojo'};
   return {txt:'En presupuesto', cls:'b-verde'};
 }
+// Control rápido de totales (a grosso modo): Informe Tango vs OGs de la app, para chequear que las dos fuentes entren completas.
+function gpControlTotales(ag){
+  const oc=GP.oc||[]; let bruto=0, anul=0, cierre=0, nAnul=0, nCerr=0;
+  oc.forEach(o=>{ const t=+o.total_ars||0, e=gpTotEf(o); bruto+=t; const est=String(o.estado_oc||'').toUpperCase();
+    if(est.indexOf('ANUL')>=0){ anul+=t; nAnul++; } else if(e<t-0.005){ cierre+=(t-e); nCerr++; } });
+  const neto=bruto-anul-cierre;
+  const ogs=gpOGsDelProyecto(GP.proyecto); let ogTot=0; ogs.forEach(o=>{ ogTot+=gpOGArs(o); });
+  const ogOtros=Math.max(ogTot-(ag.ogComp||0)-(ag.ogSinClasArs||0),0);
+  const f=(l,v,c)=>'<tr><td'+(c?' style="color:var(--muted)"':'')+'>'+l+'</td><td style="text-align:right'+(c?';color:var(--muted)':'')+'">'+gpMoney(v)+'</td></tr>';
+  return '<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Control de totales</h3><span class="meta">Para chequear a grosso modo que entren las dos fuentes</span></div>'
+    +'<div style="display:flex;gap:24px;flex-wrap:wrap;padding:10px 16px 14px">'
+    +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>Informe Tango (OC)</b> · '+oc.length+' renglones</td></tr>'
+    +f('Total del informe (bruto)',bruto)+f('− Anuladas ('+nAnul+' renglones)',-anul,1)+f('− Cerradas: saldo no facturado ('+nCerr+' renglones)',-cierre,1)
+    +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>Tango que cuenta</td><td style="text-align:right">'+gpMoney(neto)+'</td></tr>'
+    +f('de los cuales sin clasificar',ag.sinClasArs,1)+'</tbody></table>'
+    +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>OGs de la app</b> · '+ogs.length+' OGs</td></tr>'
+    +f('Total de OGs del proyecto',ogTot)+f('imputadas a rubros de Compras',ag.ogComp||0,1)+f('sin clasificar',ag.ogSinClasArs||0,1)+f('en MOD / externo',ogOtros,1)+'</tbody></table>'
+    +'</div></div>';
+}
 function gpAgregado(){
   const p=GP.proyecto||{}; const tc=+p.tc_presupuesto||0; const tol=+p.tolerancia_desvio_pct||0;
   // repartos por firma + total por firma (el reparto se aplica al total del renglón)
@@ -7803,6 +7822,7 @@ function gpRenderTablero(){
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
     +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+sinClasKpi+pendRepKpi+trasKpi+ocKpi+ogKpi+solpKpi+'</div>'
+    +gpControlTotales(ag)
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
