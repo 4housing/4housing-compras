@@ -11812,7 +11812,15 @@ async function guardarIngresoCaja(){
   const rec={fecha, moneda:mon, importe, origen_cod:CAJAS_CONF[mon].cod, destino_cod:CAJAS[mon].cod, observaciones:obs};
   try{
     if(DEMO_MODE){ rec.id=Math.max(0,...(mem.ingresos||[]).map(i=>+i.id||0))+1; mem.ingresos=mem.ingresos||[]; mem.ingresos.push(rec); }
-    else { rec.creado_por=(AUTH_USER&&AUTH_USER.email)||''; await sbFetch('/compras_caja_ingresos',{method:'POST',body:JSON.stringify(rec)}); await reloadDB(); }
+    else {
+      rec.creado_por=(AUTH_USER&&AUTH_USER.email)||'';
+      const rows=await sbFetch('/compras_caja_ingresos',{method:'POST',body:JSON.stringify(rec)});
+      // Se agrega la fila devuelta a la memoria (en orden de id, como la carga completa) en vez de bajar toda la base de nuevo:
+      // reloadDB() descarga OGs, certificados, pagos, etc. y hacía que el modal tardara en cerrarse. Sin fila devuelta, recarga como antes.
+      const row=rows&&rows[0];
+      if(row && row.id!=null){ mem.ingresos=mem.ingresos||[]; const i=mem.ingresos.findIndex(r=>String(r.id)===String(row.id)); if(i>=0) mem.ingresos[i]=row; else mem.ingresos.push(row); }
+      else await reloadDB();
+    }
     closeModal(); toast('Ingreso registrado: '+(mon==='USD'?'US$ ':'$ ')+importe.toLocaleString('es-AR'));
     renderTesoreria();
   }catch(e){
@@ -11828,7 +11836,7 @@ window.askDelIngreso=askDelIngreso;
 async function confirmDelIngreso(id){
   try{
     if(DEMO_MODE){ mem.ingresos=(mem.ingresos||[]).filter(i=>String(i.id)!==String(id)); }
-    else { await sbFetch('/compras_caja_ingresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); await reloadDB(); }
+    else { await sbFetch('/compras_caja_ingresos?id=eq.'+id,{method:'DELETE',prefer:'return=minimal'}); mem.ingresos=(mem.ingresos||[]).filter(i=>String(i.id)!==String(id)); }
     toast('Reposición eliminada'); renderTesoreria();
   }catch(e){ toast('Error al eliminar: '+(e.message||e)); }
 }
