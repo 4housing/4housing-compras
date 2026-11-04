@@ -6371,17 +6371,18 @@ window.panolHistImportar=panolHistImportar;
 const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], ogSeccion:{}, charts:{}, filtroSeccion:'' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
 // Total que cuenta como COMPRADO de un renglón de OC (Informe OC de Tango):
-//  - Anulada: 0.  - Cerrada (puede ser un cierre parcial): precio unitario (Total / Cant. pedida) × (Cant. pendiente de facturar + Cant. facturada).
-//  - Resto: el Total tal cual. Si falta la cantidad pendiente de facturar (OC importadas antes de este cambio) se deja el Total hasta reimportar.
+//  - Estado con "ANUL" (EMITIDA Y ANULADA, AUTORIZADA Y ANULADA…): 0.
+//  - AUTORIZADA (sin emitir): el Total.
+//  - Resto: precio unitario (Total / Cant. pedida) × (Cant. pendiente de facturar + Cant. facturada), con tope en el Total.
+//    En un renglón normal eso da el Total; si se cerró (todo o parcial) Tango baja lo pendiente y la cuenta descuenta el saldo cerrado.
+//    Si falta la cantidad pendiente de facturar (OC importadas antes de este cambio) se deja el Total hasta reimportar.
 function gpTotEf(o){
   const tot=+o.total_ars||0, est=String(o.estado_oc||'').toUpperCase();
   if(est.indexOf('ANUL')>=0) return 0;
-  if(est.indexOf('CERR')>=0){
-    const ped=+o.cantidad_pedida||0;
-    if(o.cantidad_pend_facturar==null || !(ped>0)) return tot;
-    return Math.min(tot, tot/ped*((+o.cantidad_pend_facturar||0)+(+o.cantidad_facturada||0)));
-  }
-  return tot;
+  if(est.indexOf('AUTORIZ')>=0) return tot;   // autorizada y todavía no emitida: Tango no carga cantidades pendientes; cuenta como comprometida (criterio del análisis manual)
+  const ped=+o.cantidad_pedida||0;
+  if(o.cantidad_pend_facturar==null || !(ped>0)) return tot;
+  return Math.min(tot, tot/ped*((+o.cantidad_pend_facturar||0)+(+o.cantidad_facturada||0)));
 }
 function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
@@ -7463,8 +7464,8 @@ function gpEstadoSeccion(comprado, presup, tol){
 }
 // Control rápido de totales (a grosso modo): Informe Tango vs OGs de la app, para chequear que las dos fuentes entren completas.
 function gpControlTotales(ag){
-  const oc=GP.oc||[]; let bruto=0, anul=0, cierre=0, nAnul=0, nCerr=0;
-  oc.forEach(o=>{ const t=+o.total_ars||0, e=gpTotEf(o); bruto+=t; const est=String(o.estado_oc||'').toUpperCase();
+  const oc=GP.oc||[]; let bruto=0, anul=0, cierre=0, nAnul=0, nCerr=0; const porEst={};
+  oc.forEach(o=>{ const t=+o.total_ars||0, e=gpTotEf(o); bruto+=t; const ek=o.estado_oc||'(sin estado)'; const pe=(porEst[ek]=porEst[ek]||{n:0,b:0,e:0}); pe.n++; pe.b+=t; pe.e+=e; const est=String(o.estado_oc||'').toUpperCase();
     if(est.indexOf('ANUL')>=0){ anul+=t; nAnul++; } else if(e<t-0.005){ cierre+=(t-e); nCerr++; } });
   const neto=bruto-anul-cierre;
   const ogs=gpOGsDelProyecto(GP.proyecto); let ogTot=0, ogBruto=0; ogs.forEach(o=>{ ogTot+=gpOGArs(o); ogBruto+=gpOGArs(o,true); });
@@ -7475,7 +7476,10 @@ function gpControlTotales(ag){
     +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>Informe Tango (OC)</b> · '+oc.length+' renglones</td></tr>'
     +f('Total del informe (bruto)',bruto)+f('− Anuladas ('+nAnul+' renglones)',-anul,1)+f('− Cerradas: saldo no facturado ('+nCerr+' renglones)',-cierre,1)
     +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>Tango que cuenta</td><td style="text-align:right">'+gpMoney(neto)+'</td></tr>'
-    +f('de los cuales sin clasificar',ag.sinClasArs,1)+'</tbody></table>'
+    +f('de los cuales sin clasificar',ag.sinClasArs,1)
+    +'<tr><td colspan="2" style="padding-top:8px;color:var(--muted)">Por estado del informe (renglones · total bruto · cuenta)</td></tr>'
+    +Object.keys(porEst).sort().map(k=>'<tr><td style="color:var(--muted)">'+esc(k)+' ('+porEst[k].n+')</td><td style="text-align:right;color:var(--muted)">'+fmtNum(porEst[k].b,0)+' · '+fmtNum(porEst[k].e,0)+'</td></tr>').join('')
+    +'</tbody></table>'
     +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>OGs de la app</b> · '+ogs.length+' OGs</td></tr>'
     +f('Total de OGs (bruto)',ogBruto)+f('− Cerrado sin costo',-(ogBruto-ogTot),1)
     +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>OGs que cuentan</td><td style="text-align:right">'+gpMoney(ogTot)+'</td></tr>'
@@ -7590,8 +7594,26 @@ function gpOGImputar(o, mapIdx){
 }
 // Total de una OG expresado en ARS (si se pactó en USD, con su TC; si falta, el TC del presupuesto).
 // Neto de lo cerrado (saldo cancelado sin costo): no es gasto. bruto=true devuelve el total sin descontar.
+// Una OG puede repartirse entre varias obras (clasificación por renglón): solo cuentan los renglones de ESTA obra.
+// Renglón con clasificación propia → se cuenta si es la de la obra; sin clasificación → manda la de la cabecera de la OG.
+function gpOGPartes(o){
+  const keys=new Set(_obraNums((GP.proyecto||{}).codigo).concat(_obraNums((GP.proyecto||{}).nombre)));
+  const cab=_obraNums(o.clasif_og).some(n=>keys.has(n));
+  let bruto=0, cerr=0;
+  if(o.items&&o.items.length){
+    o.items.forEach(it=>{
+      const ns=_obraNums(it.centro_costos);
+      const mio=ns.length?ns.some(n=>keys.has(n)):(String(it.centro_costos||'').trim()?false:cab);
+      if(!mio) return;
+      const t=itemTotal(it); bruto+=t; cerr+=t*(itemCerradoPct(it)/100);
+    });
+    const f=(1-(+o.bonif_pct||0)/100); bruto*=f; cerr*=f;
+  }else{ bruto=ogTotal(o); cerr=ogCerradoMonto(o); }
+  return {bruto, cerr};
+}
 function gpOGArs(o, bruto){
-  const t=bruto?ogTotal(o):Math.max(ogTotal(o)-ogCerradoMonto(o),0);
+  const p=gpOGPartes(o);
+  const t=bruto?p.bruto:Math.max(p.bruto-p.cerr,0);
   if(ogMonedaCode(o)==='USD'){ const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:(+((GP.proyecto||{}).tc_presupuesto)||0); return t*(tc||0); }
   return t;
 }
@@ -9043,10 +9065,10 @@ function ogReportRows(ogs){
       const avancePct = esOG ? ogAcumPct(o.id) : itemAcumPct(o, idx);
       const cerradoPct = esOG ? ogCerradoPct(o) : itemCerradoPct(it);
       const cantPagada = esOG ? '' : +(cant*pagPct/100).toFixed(2);
-      const cantPendPago = esOG ? '' : +(cant-cantPagada).toFixed(2);
+      const cantPendPago = esOG ? '' : (o.anulada ? 0 : +Math.max(0,cant-(+(cant*cerradoPct/100).toFixed(2))-cantPagada).toFixed(2));   // anulada: 0. Cerrado: lo cancelado no queda pendiente de pagar
       const cantCert = esOG ? '' : +(cant*avancePct/100).toFixed(2);
       const cantCerrada = esOG ? '' : +(cant*cerradoPct/100).toFixed(2);
-      const cantPendCert = esOG ? '' : +Math.max(0,cant-cantCert-cantCerrada).toFixed(2);
+      const cantPendCert = esOG ? '' : (o.anulada ? 0 : +Math.max(0,cant-cantCert-cantCerrada).toFixed(2));
       const montoCerrado = esOG ? ogCerradoMonto(o) : total*cerradoPct/100;
       const motivosCerrado = (esOG?(o.cierres||[]):(it.cierres||[])).map(c=>c.motivo).filter(Boolean).join(' | ');
       const r=new Array(REPORT_COLS.length).fill('');
@@ -9066,7 +9088,7 @@ function ogReportRows(ogs){
       r[13]= cantCert;                                 // Cantidad Recibida (= certificada)
       r[14]= cantPagada;                               // Cantidad Facturada (= pagada)
       r[15]= total;                                    // Total
-      r[16]= (avancePct?avancePct.toFixed(1).replace('.0','')+'%':'0%'); // Estado (renglón)
+      r[16]= o.anulada ? 'ANULADA' : (avancePct?avancePct.toFixed(1).replace('.0','')+'%':'0%'); // Estado (renglón)
       r[17]= o.observaciones||'';                      // Observaciones
       r[18]= o.moneda||'';                             // Moneda
       r[19]= tcCompra!=null?tcCompra:'';               // Cotización: el TC registrado al cargar la OG (promedio); OG viejas sin TC: el del día anterior a su fecha
