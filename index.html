@@ -7467,7 +7467,7 @@ function gpControlTotales(ag){
   oc.forEach(o=>{ const t=+o.total_ars||0, e=gpTotEf(o); bruto+=t; const est=String(o.estado_oc||'').toUpperCase();
     if(est.indexOf('ANUL')>=0){ anul+=t; nAnul++; } else if(e<t-0.005){ cierre+=(t-e); nCerr++; } });
   const neto=bruto-anul-cierre;
-  const ogs=gpOGsDelProyecto(GP.proyecto); let ogTot=0; ogs.forEach(o=>{ ogTot+=gpOGArs(o); });
+  const ogs=gpOGsDelProyecto(GP.proyecto); let ogTot=0, ogBruto=0; ogs.forEach(o=>{ ogTot+=gpOGArs(o); ogBruto+=gpOGArs(o,true); });
   const ogOtros=Math.max(ogTot-(ag.ogComp||0)-(ag.ogSinClasArs||0),0);
   const f=(l,v,c)=>'<tr><td'+(c?' style="color:var(--muted)"':'')+'>'+l+'</td><td style="text-align:right'+(c?';color:var(--muted)':'')+'">'+gpMoney(v)+'</td></tr>';
   return '<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Control de totales</h3><span class="meta">Para chequear a grosso modo que entren las dos fuentes</span></div>'
@@ -7477,7 +7477,9 @@ function gpControlTotales(ag){
     +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>Tango que cuenta</td><td style="text-align:right">'+gpMoney(neto)+'</td></tr>'
     +f('de los cuales sin clasificar',ag.sinClasArs,1)+'</tbody></table>'
     +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>OGs de la app</b> · '+ogs.length+' OGs</td></tr>'
-    +f('Total de OGs del proyecto',ogTot)+f('imputadas a rubros de Compras',ag.ogComp||0,1)+f('sin clasificar',ag.ogSinClasArs||0,1)+f('en MOD / externo',ogOtros,1)+'</tbody></table>'
+    +f('Total de OGs (bruto)',ogBruto)+f('− Cerrado sin costo',-(ogBruto-ogTot),1)
+    +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>OGs que cuentan</td><td style="text-align:right">'+gpMoney(ogTot)+'</td></tr>'
+    +f('imputadas a rubros de Compras',ag.ogComp||0,1)+f('sin clasificar',ag.ogSinClasArs||0,1)+f('en MOD / externo',ogOtros,1)+'</tbody></table>'
     +'</div></div>';
 }
 function gpAgregado(){
@@ -7587,8 +7589,9 @@ function gpOGImputar(o, mapIdx){
                      cod_articulo:((o.items&&o.items[0]&&o.items[0].cod_art)||'') }, mapIdx);
 }
 // Total de una OG expresado en ARS (si se pactó en USD, con su TC; si falta, el TC del presupuesto).
-function gpOGArs(o){
-  const t=ogTotal(o);
+// Neto de lo cerrado (saldo cancelado sin costo): no es gasto. bruto=true devuelve el total sin descontar.
+function gpOGArs(o, bruto){
+  const t=bruto?ogTotal(o):Math.max(ogTotal(o)-ogCerradoMonto(o),0);
   if(ogMonedaCode(o)==='USD'){ const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:(+((GP.proyecto||{}).tc_presupuesto)||0); return t*(tc||0); }
   return t;
 }
