@@ -2963,7 +2963,7 @@ function panolPreciosLista(per){
   });
   return [...M.values()].map(o=>{
     const ov=o.cod?panolPrecioOv(o.cod,+per):null, pu=o.q?o.tot/o.q:0, pusd=o.q?o.usd/o.q:0;
-    return {...o, ov, pars:pu, pusd, multi:o.pu.size>1, tc:(pu>0&&pusd>0)?pu/pusd:null, fuente:o.fu.size>1?'varios':[...o.fu][0]||'', um:[...o.um].filter(Boolean).join('/'), alerta:[...o.al].join(', ')};
+    return {...o, ov, pars:pu, pusd, multi:o.pu.size>1, tc:(pu>0&&pusd>0)?pu/pusd:null, fuente:o.fu.size>1?'varios':[...o.fu][0]||'', um:[...o.um].filter(Boolean).join('/'), alerta:[...o.al].join(', '), prov:o.prov||((o.cod&&o.fu.has('Tango'))?panolProvDeOC(o.cod,pu,panolFinMes(per)):'')};
   });
 }
 /* ---- Precios: Excel para validar que los precios sean razonables y detectar diferencias de unidad de medida ----
@@ -4495,6 +4495,12 @@ function panolPrecioOv(cod, periodo){
   if(!(_PNL_OV && _PNL_OVK && _PNL_OVK[0]===l && _PNL_OVK[1]===l.length)){ _PNL_OV=new Map(); l.forEach(r=>_PNL_OV.set(r.periodo+'|'+r.cod_articulo,r)); _PNL_OVK=[l,l.length]; }
   return _PNL_OV.get(periodo+'|'+cod)||null;
 }
+// Si el costo de Tango no trae proveedor (PROV_ULC vacío en el reporte), se toma el de la OC con el mismo precio unitario (±1%): es casi siempre la compra que originó ese costo. Si ninguna coincide, queda vacío (no se adivina).
+function panolProvDeOC(cod, ars, fin){
+  const lst=cod?panolHistIdx().get(cod):null; if(!lst||!(ars>0)) return '';
+  let best=null; lst.forEach(r=>{ if(r.fuente==='OC'&&r.prov&&(!fin||r.fecha<=fin)&&Math.abs(r.ars/ars-1)<=0.01&&(!best||r.fecha>best.fecha)) best=r; });
+  return best?best.prov:'';
+}
 function panolPrecioMes(cod, periodo){
   const out={ars:0, usd:0, fecha:'', fuente:'', prov:'', oc:'', desvioTC:null, varTango:null, control:'SIN PRECIO'};
   const ov=cod?panolPrecioOv(cod, periodo):null;     // precio corregido a mano en la solapa Precios para ese artículo y mes
@@ -4515,7 +4521,7 @@ function panolPrecioMes(cod, periodo){
   else if(desv!=null && Math.abs(desv)<=PANOL_TOL_TC) control='OK';
   else if(row.usd<1) control='OK';                              // USD < 1: el TC no es evaluable
   else control='REVISAR TC';
-  return Object.assign(out,{ars:row.ars, usd:row.usd, fecha:row.fecha, fuente:row.fuente, prov:row.prov, oc:panolOcCorto(row.oc), desvioTC:desv, varTango:varT, control});
+  return Object.assign(out,{ars:row.ars, usd:row.usd, fecha:row.fecha, fuente:row.fuente, prov:row.prov||(row.fuente==='Tango'?panolProvDeOC(cod,row.ars,fin):''), oc:panolOcCorto(row.oc), desvioTC:desv, varTango:varT, control});
 }
 function panolAlertaDe(p, sinAlta, opSinAlta){
   const a=[]; if(sinAlta) a.push(PANOL_ALERTA_SIN_ALTA);
