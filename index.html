@@ -6370,6 +6370,19 @@ window.panolHistImportar=panolHistImportar;
    ================================================================ */
 const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], ogSeccion:{}, charts:{}, filtroSeccion:'' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
+// Total que cuenta como COMPRADO de un renglón de OC (Informe OC de Tango):
+//  - Anulada: 0.  - Cerrada (puede ser un cierre parcial): precio unitario (Total / Cant. pedida) × (Cant. pendiente de facturar + Cant. facturada).
+//  - Resto: el Total tal cual. Si falta la cantidad pendiente de facturar (OC importadas antes de este cambio) se deja el Total hasta reimportar.
+function gpTotEf(o){
+  const tot=+o.total_ars||0, est=String(o.estado_oc||'').toUpperCase();
+  if(est.indexOf('ANUL')>=0) return 0;
+  if(est.indexOf('CERR')>=0){
+    const ped=+o.cantidad_pedida||0;
+    if(o.cantidad_pend_facturar==null || !(ped>0)) return tot;
+    return Math.min(tot, tot/ped*((+o.cantidad_pend_facturar||0)+(+o.cantidad_facturada||0)));
+  }
+  return tot;
+}
 function gpFirma(o){ return String(o.oc_numero||'')+'§'+String(o.cod_articulo||o.descripcion||''); }
 
 // Normaliza para comparar (sin acentos, mayúsculas, espacios colapsados)
@@ -7256,7 +7269,7 @@ async function gpTangoAnalizar(){
       fecha:_syncIdx(H,'Fecha de generación','Fecha de generacion','Fecha de emisión','Fecha de emision'), costeo:_syncIdx(H,'COSTEO (Adic.)','COSTEO'), costeoNew:_syncIdx(H,'COSTEO_NEW (Adic.)','COSTEO_NEW'),
       prov:_syncIdx(H,'Cód. proveedor','Cod. proveedor'), art:_syncIdx(H,'Cód. Artículo','Cod. Articulo'),
       desc:_syncIdx(H,'Descripción','Descripcion'), grupo:_syncIdx(H,'Grupo'), oc:_syncIdx(H,'Nro. Orden de Compra','Nro Orden de Compra'),
-      cantPed:_syncIdx(H,'Cantidad pedida'), cantRec:_syncIdx(H,'Cantidad Recibida'), cantFac:_syncIdx(H,'Cantidad Facturada'),
+      cantPed:_syncIdx(H,'Cantidad pedida'), cantRec:_syncIdx(H,'Cantidad Recibida'), cantFac:_syncIdx(H,'Cantidad Facturada'), cantPendFac:_syncIdx(H,'Cantidad Pendiente de Facturar','Cantidad Pendiente Facturar','Cant. Pendiente de Facturar'),
       total:_syncIdx(H,'Total'), estado:_syncIdx(H,'Estado','Estado (renglón)','Estado (renglon)'), moneda:_syncIdx(H,'Moneda'), comprador:_syncIdx(H,'Nombre del comprador'),
       rubro:_syncIdx(H,'RUBRO (Adic.)','RUBRO'), subrubro:_syncIdx(H,'SUBRUBRO (Adic.)','SUBRUBRO'),
       // Mismo adicional que ya exportamos a Tango desde la OG (DESVIO_ / Desvio, ver REPORT_COLS):
@@ -7284,6 +7297,7 @@ async function gpTangoAnalizar(){
         cantidad_pedida: I.cantPed>=0?_syncNum(row[I.cantPed]):null,
         cantidad_recibida: I.cantRec>=0?_syncNum(row[I.cantRec]):null,
         cantidad_facturada: I.cantFac>=0?_syncNum(row[I.cantFac]):null,
+        cantidad_pend_facturar: I.cantPendFac>=0?_syncNum(row[I.cantPendFac]):null,
         total_ars: I.total>=0?_syncNum(row[I.total]):0,
         estado_oc: I.estado>=0?_syncNorm(row[I.estado]):'',
         moneda: I.moneda>=0?_syncNorm(row[I.moneda]):'',
@@ -7292,7 +7306,7 @@ async function gpTangoAnalizar(){
       const imp=gpImputar(o, mapIdx);
       o.seccion=imp.seccion; o.imputado_por=imp.imputado_por;
       if(imp.nuevoMapeo){ const kk=imp.nuevoMapeo.tipo+'|'+imp.nuevoMapeo.clave; if(!nuevos[kk]){ nuevos[kk]=imp.nuevoMapeo; mapIdx[kk]=imp.nuevoMapeo.seccion; } }
-      total+=(+o.total_ars||0);
+      total+=(gpTotEf(o));
       out.push(o);
     }
     if(!out.length) throw new Error('No encontré filas de datos.');
@@ -7332,7 +7346,7 @@ function gpRevisarSinClasificar(){
     if(!clave){ tipo='costeo'; clave='(sin dato)'; }
     const k=tipo+'|'+clave;
     if(!grupos[k]) grupos[k]={tipo, clave, monto:0, n:0, ej:o.descripcion||''};
-    grupos[k].monto+=(+o.total_ars||0); grupos[k].n++;
+    grupos[k].monto+=(gpTotEf(o)); grupos[k].n++;
   });
   const arr=Object.values(grupos).sort((a,b)=>b.monto-a.monto);
   GP._revGrupos=arr;   // los lee gpGuardarMapeo() (evita incrustar JSON en el onclick)
@@ -7384,7 +7398,7 @@ function gpRepartir(i){
   if(!secs.length){ alert('Primero hay que cargar el costeo (secciones) para poder repartir.'); return; }
   const o=(GP._detRows||[])[i]; if(!o) return;
   const firma=gpFirma(o);
-  const total=(GP.oc||[]).filter(x=>gpFirma(x)===firma).reduce((a,x)=>a+(+x.total_ars||0),0);
+  const total=(GP.oc||[]).filter(x=>gpFirma(x)===firma).reduce((a,x)=>a+(gpTotEf(x)),0);
   GP._repFirma=firma; GP._repTotal=total;
   const existing=(GP.reparto||[]).filter(r=>r.firma===firma).map(r=>({seccion:r.seccion, monto:+r.monto||0}));
   const nRows=Math.max(existing.length+2, 5); GP._repN=nRows;
@@ -7447,17 +7461,38 @@ function gpEstadoSeccion(comprado, presup, tol){
   if(comprado > presup*(1+(tol||0))) return {txt:'Sobrecosto', cls:'b-rojo'};
   return {txt:'En presupuesto', cls:'b-verde'};
 }
+// Control rápido de totales (a grosso modo): Informe Tango vs OGs de la app, para chequear que las dos fuentes entren completas.
+function gpControlTotales(ag){
+  const oc=GP.oc||[]; let bruto=0, anul=0, cierre=0, nAnul=0, nCerr=0;
+  oc.forEach(o=>{ const t=+o.total_ars||0, e=gpTotEf(o); bruto+=t; const est=String(o.estado_oc||'').toUpperCase();
+    if(est.indexOf('ANUL')>=0){ anul+=t; nAnul++; } else if(e<t-0.005){ cierre+=(t-e); nCerr++; } });
+  const neto=bruto-anul-cierre;
+  const ogs=gpOGsDelProyecto(GP.proyecto); let ogTot=0, ogBruto=0; ogs.forEach(o=>{ ogTot+=gpOGArs(o); ogBruto+=gpOGArs(o,true); });
+  const ogOtros=Math.max(ogTot-(ag.ogComp||0)-(ag.ogSinClasArs||0),0);
+  const f=(l,v,c)=>'<tr><td'+(c?' style="color:var(--muted)"':'')+'>'+l+'</td><td style="text-align:right'+(c?';color:var(--muted)':'')+'">'+gpMoney(v)+'</td></tr>';
+  return '<div class="card" style="margin-top:14px"><div class="card-h"><h3 style="margin:0">Control de totales</h3><span class="meta">Para chequear a grosso modo que entren las dos fuentes</span></div>'
+    +'<div style="display:flex;gap:24px;flex-wrap:wrap;padding:10px 16px 14px">'
+    +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>Informe Tango (OC)</b> · '+oc.length+' renglones</td></tr>'
+    +f('Total del informe (bruto)',bruto)+f('− Anuladas ('+nAnul+' renglones)',-anul,1)+f('− Cerradas: saldo no facturado ('+nCerr+' renglones)',-cierre,1)
+    +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>Tango que cuenta</td><td style="text-align:right">'+gpMoney(neto)+'</td></tr>'
+    +f('de los cuales sin clasificar',ag.sinClasArs,1)+'</tbody></table>'
+    +'<table style="font-size:12.5px;min-width:340px"><tbody><tr><td colspan="2"><b>OGs de la app</b> · '+ogs.length+' OGs</td></tr>'
+    +f('Total de OGs (bruto)',ogBruto)+f('− Cerrado sin costo',-(ogBruto-ogTot),1)
+    +'<tr style="font-weight:700;border-top:1px solid var(--line-strong)"><td>OGs que cuentan</td><td style="text-align:right">'+gpMoney(ogTot)+'</td></tr>'
+    +f('imputadas a rubros de Compras',ag.ogComp||0,1)+f('sin clasificar',ag.ogSinClasArs||0,1)+f('en MOD / externo',ogOtros,1)+'</tbody></table>'
+    +'</div></div>';
+}
 function gpAgregado(){
   const p=GP.proyecto||{}; const tc=+p.tc_presupuesto||0; const tol=+p.tolerancia_desvio_pct||0;
   // repartos por firma + total por firma (el reparto se aplica al total del renglón)
   const rep={}; (GP.reparto||[]).forEach(r=>{ (rep[r.firma]=rep[r.firma]||[]).push({seccion:r.seccion, monto:+r.monto||0}); });
-  const firmaTot={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTot[f]=(firmaTot[f]||0)+(+o.total_ars||0); });
+  const firmaTot={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTot[f]=(firmaTot[f]||0)+(gpTotEf(o)); });
   const conRep=new Set(Object.keys(rep).filter(f=>firmaTot[f]!=null));   // repartos de renglones presentes en la foto actual
   const compBySec={}; let sinClasArs=0, sinClasN=0, pendRepArs=0, repOver=0;
   // 1) renglones SIN reparto: por fila
   (GP.oc||[]).forEach(o=>{
     if(conRep.has(gpFirma(o))) return;   // los repartidos se suman aparte, por firma
-    const a=+o.total_ars||0;
+    const a=gpTotEf(o);
     if(o.seccion==='Sin clasificar' || !o.seccion){ sinClasArs+=a; sinClasN++; return; }
     compBySec[o.seccion]=(compBySec[o.seccion]||0)+a;
   });
@@ -7554,8 +7589,9 @@ function gpOGImputar(o, mapIdx){
                      cod_articulo:((o.items&&o.items[0]&&o.items[0].cod_art)||'') }, mapIdx);
 }
 // Total de una OG expresado en ARS (si se pactó en USD, con su TC; si falta, el TC del presupuesto).
-function gpOGArs(o){
-  const t=ogTotal(o);
+// Neto de lo cerrado (saldo cancelado sin costo): no es gasto. bruto=true devuelve el total sin descontar.
+function gpOGArs(o, bruto){
+  const t=bruto?ogTotal(o):Math.max(ogTotal(o)-ogCerradoMonto(o),0);
   if(ogMonedaCode(o)==='USD'){ const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:(+((GP.proyecto||{}).tc_presupuesto)||0); return t*(tc||0); }
   return t;
 }
@@ -7715,7 +7751,7 @@ function gpRenderTablero(){
   const filtro=GP.filtroSeccion;
   const puedeRep=puedeCrearOG()||esDireccion();
   const repByFirma={}; (GP.reparto||[]).forEach(r=>{ (repByFirma[r.firma]=repByFirma[r.firma]||[]).push(r); });
-  const firmaTotDet={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTotDet[f]=(firmaTotDet[f]||0)+(+o.total_ars||0); });
+  const firmaTotDet={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTotDet[f]=(firmaTotDet[f]||0)+(gpTotEf(o)); });
   // al filtrar por sección, incluir también los renglones repartidos que aportan a esa sección
   const detalleBase=(GP.oc||[]).filter(o=>{ if(!filtro) return true; const al=repByFirma[gpFirma(o)]; if(al) return al.some(r=>r.seccion===filtro); return o.seccion===filtro; });
   // Filtros tipo Excel + orden por columna (estándar Mica)
@@ -7734,7 +7770,7 @@ function gpRenderTablero(){
   detalle=_spOrdenar('gpdet', detalle, {
     oc:o=>nroOCTango(o.oc_numero), fecha:o=>o.fecha||'', prov:o=>o.proveedor_cod||'',
     desc:o=>o.descripcion||'', rubro:o=>o.subrubro||o.rubro||o.costeo_tag||'',
-    sec:o=>secVal(o), total:o=>+o.total_ars||0, estado:o=>o.estado_oc||'', desvio:o=>o.desvio||'' });
+    sec:o=>secVal(o), total:o=>gpTotEf(o), estado:o=>o.estado_oc||'', desvio:o=>o.desvio||'' });
   GP._detRows=detalle;
 
   // Motivos de desvío declarados en las OGs (campo "desvio"/"desvio_txt"): se juntan los dos canales
@@ -7749,7 +7785,7 @@ function gpRenderTablero(){
     if(!desvioAgg[motivo]) desvioAgg[motivo]={motivo, ocN:0, ogN:0, total:0};
     desvioAgg[motivo][esOG?'ogN':'ocN']++; desvioAgg[motivo].total+=monto;
   };
-  detalleBase.forEach(o=>desvioAdd(o.desvio, +o.total_ars||0, false));
+  detalleBase.forEach(o=>desvioAdd(o.desvio, gpTotEf(o), false));
   ogsProyecto.forEach(o=>desvioAdd(o.desvio, ogTotal(o), true));
   const desvioRowsBase=Object.values(desvioAgg);
   xlfRegister('gpdesv', { rows:()=>desvioRowsBase, onChange:gpRenderTablero,
@@ -7782,13 +7818,14 @@ function gpRenderTablero(){
     }
     const accion=puedeRep?'<button class="btn ghost sm" onclick="gpRepartir('+i+')">Repartir</button>':'';
     const desvioCell=o.desvio?('<span'+(o.desvio_txt?(' title="'+esc(o.desvio_txt)+'"'):'')+'>'+esc(o.desvio)+'</span>'):'';
-    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(o.total_ars,0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+desvioCell+'</td><td>'+accion+'</td></tr>';
+    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(gpTotEf(o),0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+desvioCell+'</td><td>'+accion+'</td></tr>';
   }).join('');
 
   C().innerHTML=''
     +'<div class="card" style="margin-bottom:14px"><div class="card-h" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">'+esc(p.nombre)+'</h3>'
       +'<span class="meta">'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—')+(p.meta_ahorro_pct!=null?(' · meta ahorro '+gpPct(p.meta_ahorro_pct)):'')+(ultImp?(' · última importación: '+fmtDate(String(ultImp.importado_en).slice(0,10))+' ('+ultImp.filas+' renglones)'):' · sin importaciones aún')+'</span></div></div>'
     +'<div class="kpi-grid">'+kpis+extracostoKpi+ahorroConfKpi+sinClasKpi+pendRepKpi+trasKpi+ocKpi+ogKpi+solpKpi+'</div>'
+    +gpControlTotales(ag)
     +'<div class="frow c2" style="margin-top:14px">'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Comprado vs Presupuesto</h3><span class="meta">por sección ($)</span></div><div style="padding:10px 14px 14px;height:'+Math.max(220, ag.filas.length*26+40)+'px"><canvas id="gpChartBar"></canvas></div></div>'
       +'<div class="card"><div class="card-h"><h3 style="margin:0">Composición del gasto</h3><span class="meta">comprado por sección</span></div><div style="padding:10px 14px 14px;height:260px"><canvas id="gpChartDona"></canvas></div></div>'
