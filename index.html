@@ -922,17 +922,22 @@ async function sbFetch(path, opts={}, _retry=false){
   try{ return await _sbFetch(path, opts, _retry); }
   finally{ _busyDec(); }
 }
+// Últimas llamadas a Supabase con lo que tardó la sesión y el servidor (consola: SB_PERF). Si una escritura tarda mucho, avisa que es el servidor y no la pantalla.
+const SB_PERF=[]; let _sbSlowToast=0;
 async function _sbFetch(path, opts={}, _retry=false){
-  let token = SB_KEY;
+  let token = SB_KEY; const t0=performance.now();
   try{
     const { data } = await sbClient.auth.getSession();
     if(data && data.session && data.session.access_token) token = data.session.access_token;
   }catch(e){}
+  const t1=performance.now();
   const res = await fetch(SB_REST + path, {
     ...opts,
     headers:{ 'apikey':SB_KEY, 'Authorization':'Bearer '+token, 'Content-Type':'application/json',
       'Prefer':opts.prefer||'return=representation', ...(opts.headers||{}) }
   });
+  { const t2=performance.now(), srv=Math.round(t2-t1); SB_PERF.push({metodo:opts.method||'GET', ruta:String(path).split('?')[0], estado:res.status, sesion_ms:Math.round(t1-t0), servidor_ms:srv, hora:new Date().toLocaleTimeString('es-AR')}); if(SB_PERF.length>60) SB_PERF.shift();
+    if(srv>4000 && (opts.method==='POST'||opts.method==='PATCH'||opts.method==='DELETE') && Date.now()-_sbSlowToast>30000){ _sbSlowToast=Date.now(); try{ toast('El servidor tardó '+(srv/1000).toFixed(1)+' s en responder el guardado ('+String(path).split('?')[0].replace('/compras_','')+'). La demora es del servidor o de la conexión, no de la pantalla.'); }catch(_){} } }
   if(!res.ok){
     if((res.status===401||res.status===403) && !_retry){
       try{ await sbClient.auth.refreshSession(); }catch(_){}
@@ -8287,8 +8292,17 @@ function nombresCert(){ return USUARIOS.filter(u=>u.es_certificador&&u.nombre).m
 let OG_ITEMS=[];   // ítems de la cotización en edición (form OG)
 
 function ogList(){ return (mem.ogs||[]).slice(); }
-function ogById(id){ return (mem.ogs||[]).find(o=>String(o.id)===String(id)); }
-function certsOf(ogId){ return (mem.certificados||[]).filter(c=>String(c.og_id)===String(ogId)).slice().sort((a,b)=>(+a.id)-(+b.id)); }
+/* Índice de una sola pasada de dibujo (renderCompras): certsOf / pagosOf / armadasOf / ogById se llaman muchas veces por OG y recorrían las listas completas cada vez
+   (con cientos de OG, dibujar tardaba cada vez más). El índice vale solo mientras dura el dibujo (síncrono) y se descarta al terminar: nunca queda desactualizado. */
+let _RIDX=null;
+function _ridxBuild(){
+  const por=(arr,fn)=>{ const m=new Map(); (arr||[]).forEach(x=>{ if(fn&&!fn(x)) return; const k=String(x.og_id); const l=m.get(k); if(l) l.push(x); else m.set(k,[x]); }); return m; };
+  const c=por(mem.certificados); c.forEach(l=>l.sort((a,b)=>(+a.id)-(+b.id)));
+  const o=new Map(); (mem.ogs||[]).forEach(x=>{ const k=String(x.id); if(!o.has(k)) o.set(k,x); });
+  return {c, p:por(mem.pagos,x=>!pagoArmado(x)), a:por(mem.pagos,x=>pagoArmado(x)), o};
+}
+function ogById(id){ if(_RIDX) return _RIDX.o.get(String(id)); return (mem.ogs||[]).find(o=>String(o.id)===String(id)); }
+function certsOf(ogId){ if(_RIDX) return (_RIDX.c.get(String(ogId))||[]).slice(); return (mem.certificados||[]).filter(c=>String(c.og_id)===String(ogId)).slice().sort((a,b)=>(+a.id)-(+b.id)); }
 function nextCertNum(o){
   const certs=certsOf(o.id); let maxN=0;
   certs.forEach(c=>{ const m=String(c.numero||'').match(/-(\d+)$/); if(m) maxN=Math.max(maxN,+m[1]); });
@@ -8329,8 +8343,8 @@ function ogLiberado(og){ return certsOf(og.id).filter(c=>c.aprobacion==='SI' && 
 // OP "Armada": emitida y descontada de la caja, pero todavía no pagada (la OG puede no estar liberada).
 // No cuenta como pagado para la OG hasta que Tesorería la marque "Pagada" (ver opMarcarPagada).
 function pagoArmado(p){ return !!p && p.estado_op==='Armada'; }
-function pagosOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && !pagoArmado(p)); }
-function armadasOf(ogId){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && pagoArmado(p)); }
+function pagosOf(ogId){ if(_RIDX) return (_RIDX.p.get(String(ogId))||[]).slice(); return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && !pagoArmado(p)); }
+function armadasOf(ogId){ if(_RIDX) return (_RIDX.a.get(String(ogId))||[]).slice(); return (mem.pagos||[]).filter(p=>String(p.og_id)===String(ogId) && pagoArmado(p)); }
 function ogArmadoMonto(og){ return armadasOf(og.id).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
 // Lo ya armado contra el pedido del comprador (armadas + las que salieron de un armado y ya se pagaron)
 function ogPedidoConsumido(og){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(og.id) && (pagoArmado(p)||p.pagada_en)).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
@@ -8779,6 +8793,9 @@ async function setOGBusca(v){ OG_BUSCA=v; await renderCompras(); const el=docume
 window.setOGBusca=setOGBusca;
 
 async function renderCompras(){
+  try{ _RIDX=_ridxBuild(); return await _renderComprasImpl(); } finally{ _RIDX=null; }
+}
+async function _renderComprasImpl(){
   let ogsAll;
   try{ ogsAll = (mem.ogs||[]).slice(); }
   catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
