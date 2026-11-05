@@ -4718,8 +4718,8 @@ function renderPanolErog(){
       +'<td>'+(r.exportado?'<span class="badge b-verde">Sí</span>':'<span class="badge b-gris">No</span>')+'</td>'
       +'<td><div class="row-actions">'+panolBtnAprobar(r,cerr)+(r.exportado||cerr?'':'<button class="iconbtn" title="Editar" onclick="openPanolErogForm('+r.id+')">'+ICO.edit+'</button><button class="iconbtn del" title="Eliminar" onclick="askPanolEgresoDel('+r.id+')">'+ICO.del+'</button>')+'</div></td></tr>').join('')
     : '<tr><td colspan="19" style="text-align:center;padding:20px;color:var(--muted)">Sin erogaciones en este período'+(base.length?' con esos filtros':'')+'.</td></tr>';
-  const nSinP=base.filter(r=>String(r.alerta||'').includes('SIN PRECIO')).length;
-  const aviso=(nSinP?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+nSinP+'</b> erogación(es) <b>sin precio</b> (se valorizan en $0). En la solapa <a href="#" onclick="setPanolTab(\'precios\');return false">Precios</a> figura cada artículo con el motivo y qué hacer.</div>':'')+(SEC==='Depósito'?'<div style="margin:0 16px 8px;font-size:12px;color:var(--muted)">Acá van los artículos que no son de Pañol (los que no empiezan con '+SOL_PREF_PANOL.join(', ')+'). Los de Pañol están en la solapa Pañol.</div>':'')+(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" (solapa Precios) para precios por mes.</div>':'')
+  const nInv=panolEgInvalidos().length, nSinP=base.filter(r=>String(r.alerta||'').includes('SIN PRECIO')).length;
+  const aviso=(nInv?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+nInv+'</b> erogación(es) con <b>fecha inválida</b>: no aparecen en ningún mes. <a href="#" onclick="openPanolInvalidas();return false">Ver y corregir</a>.</div>':'')+(nSinP?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+nSinP+'</b> erogación(es) <b>sin precio</b> (se valorizan en $0). En la solapa <a href="#" onclick="setPanolTab(\'precios\');return false">Precios</a> figura cada artículo con el motivo y qué hacer.</div>':'')+(SEC==='Depósito'?'<div style="margin:0 16px 8px;font-size:12px;color:var(--muted)">Acá van los artículos que no son de Pañol (los que no empiezan con '+SOL_PREF_PANOL.join(', ')+'). Los de Pañol están en la solapa Pañol.</div>':'')+(!histN?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fff6e5;border:1px solid #f0d9a8;font-size:12.5px">Todavía no hay historial de compras cargado: los precios salen solo del último costo de Tango del diccionario. Importá el "Informe APP Costeos" (solapa Precios) para precios por mes.</div>':'')
     +(sinAlta?'<div style="margin:0 16px 8px;padding:8px 12px;border-radius:8px;background:#fdecea;border:1px solid #f3b8b1;font-size:12.5px"><b>'+sinAlta+'</b> erogación(es) con artículo sin alta: pedir que se cree el artículo en Tango y el diccionario, y después editar la erogación para elegirlo.</div>':'');
   C().innerHTML=panolTabs()
     +'<div class="card"><div class="card-h" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">Erogaciones · '+SEC+'</h3>'
@@ -4893,6 +4893,7 @@ function panolErogTotal(){
 window.panolErogTotal=panolErogTotal;
 // Arma la fila de compras_panol_egresos (precio del mes + alarmas) — la usan el formulario y la planilla
 function panolArmarFila(f){
+  if(!panolFechaValida(String(f.fecha||'').slice(0,10))) throw new Error('Fecha inválida: "'+f.fecha+'"');
   const periodo=(+f.fecha.slice(0,4))*100+(+f.fecha.slice(5,7));
   const pr=panolCamposPrecio(f.ra.cod, periodo, f.cant, f.manual);
   const auxTipo=panolAuxTipoDe(f.dest);
@@ -4912,6 +4913,7 @@ async function guardarPanolErog(id){
   const fecha=g('pe_fecha'), cant=+g('pe_cant')||0, proyecto_cod=g('pn_obra'), cod_deposito=g('pe_dep');
   const ra=panolArtResolver(g('pe_art'));
   if(!fecha){ toast('Elegí una fecha'); return; }
+  if(!panolFechaValida(fecha)){ toast('La fecha no es válida: revisá día, mes y año.'); return; }
   if(panolBloqueoCierre((+fecha.slice(0,4))*100+(+fecha.slice(5,7)))) return;
   if(!ra.cod && !ra.libre){ toast('Indicá el artículo'); return; }
   if(!cant){ toast('Ingresá una cantidad'); return; }
@@ -5661,6 +5663,7 @@ window.ppRevisar=ppRevisar;
 async function ppGuardar(){
   const btn=document.getElementById('ppOkBtn'); if(btn){ btn.disabled=true; btn.textContent='Guardando…'; }
   const rows=PANOL_PLAN.rows.filter(r=>!ppVacia(r));
+  { const malas=rows.map((r,i)=>[r,i]).filter(([r])=>ppEstado(r)!=='del'&&!panolFechaValida(String(r.fecha||'').slice(0,10))); if(malas.length){ if(btn){ btn.disabled=false; btn.textContent='Guardar'; } toast('Hay '+malas.length+' fila(s) con fecha inválida o vacía (fila '+malas.slice(0,5).map(([,i])=>i+1).join(', ')+(malas.length>5?'…':'')+'). Corregilas antes de guardar.'); return; } }
   const arma=r=>{ const c=ppCalc(r);
     return panolArmarFila({fecha:r.fecha, horario:r.horario, ra:c.ra, cant:+r.cant, um:r.um, dest:r.destCod, serie:r.serie, galpon:r.galpon, proceso:r.proceso, solp:r.solp, oper:r.oper, dep:c.dep, coment:r.coment, manual:r.manual, auto:PANOL_PLAN.auto!==false, okPrevio:r.okPrevio||null}); };
   try{
@@ -5891,6 +5894,22 @@ async function panolRecalcRows(rows, prog){
   }
   return n;
 }
+/* ---- Erogaciones con fecha inválida (período inexistente, ej. 2021-99): se listan para corregirlas o eliminarlas ---- */
+const panolFechaValida=f=>{ const m=String(f||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m) return false; const y=+m[1], mo=+m[2], d=+m[3], t=new Date(Date.UTC(y,mo-1,d)); return y>=2020&&y<=2100&&t.getUTCFullYear()===y&&t.getUTCMonth()===mo-1&&t.getUTCDate()===d; };
+const panolPerValido=per=>{ const y=Math.floor(+per/100), m=(+per)%100; return y>=2020&&y<=2100&&m>=1&&m<=12; };
+const panolEgInvalidos=()=>(DIC.panol_egresos||[]).filter(r=>!panolPerValido(r.periodo)||!panolFechaValida(String(r.fecha||'').slice(0,10)));
+function openPanolInvalidas(){
+  const l=panolEgInvalidos().sort((a,b)=>(+a.id)-(+b.id));
+  openModal('Erogaciones con fecha inválida',
+    '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Estas erogaciones tienen una fecha que no existe (por eso caen en un período inexistente y no se ven al elegir mes y año). <b>Editar</b> permite poner la fecha correcta: al guardar se corrige el período. Si no corresponde, <b>Eliminar</b>.</div>'
+    +(l.length?'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table class="grid" style="font-size:11.5px"><thead><tr><th>N°</th><th>Fecha guardada</th><th>Período</th><th>Artículo</th><th>Cantidad</th><th>Destino</th><th>Operario</th><th>Total ARS</th><th></th></tr></thead><tbody>'
+      +l.map(r=>'<tr><td>'+r.id+'</td><td style="color:#b3261e;font-weight:700">'+esc(String(r.fecha||'(vacía)'))+'</td><td>'+esc(panolPerTxt(r.periodo))+'</td><td>'+esc(panolErogArt(r))+'</td><td style="text-align:right">'+fmtNum(r.cantidad,2)+' '+esc(r.um||'')+'</td><td>'+esc(r.proyecto_cod||'')+'</td><td>'+esc(r.operario||'')+'</td><td style="text-align:right">'+fmtNum(r.total_ars,2)+'</td>'
+        +'<td style="white-space:nowrap">'+(r.exportado?'<span class="badge b-gris">Exportada</span>':'<button class="btn sm" onclick="closeModal();openPanolErogForm('+r.id+')">Editar</button> <button class="btn ghost sm" style="color:#b3261e" onclick="closeModal();askPanolEgresoDel('+r.id+')">Eliminar</button>')+'</td></tr>').join('')+'</tbody></table></div>'
+      :'<div style="padding:14px;color:var(--muted)">No hay erogaciones con fecha inválida.</div>'),
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>','xwide');
+}
+window.openPanolInvalidas=openPanolInvalidas;
+
 function renderPanolCierres(){
   const filas=panolPeriodosCierre().map(per=>({per, c:panolCierre(per), res:panolResumenPeriodo(per)}));
   const est=f=>f.c&&f.c.estado==='Cerrado'?'Cerrado':'Abierto';
@@ -5901,11 +5920,12 @@ function renderPanolCierres(){
     ult:f=>{ const h=ult(f); return h?String(h.fecha||''):''; }});
   const rows=shown.length?shown.map(f=>{
     const cer=est(f)==='Cerrado', h=ult(f), tieneHist=!!(f.c&&(f.c.historial||[]).length);
-    const acc=(ROLE.admin?(cer?'<button class="btn ghost sm" onclick="openPanolReabrir('+f.per+')">Reabrir</button>':'<button class="btn sm" onclick="openPanolCerrar('+f.per+')">Cerrar mes</button>'):'')
+    const perOk=panolPerValido(f.per);
+    const acc=(!perOk?'<button class="btn sm" style="background:#b3261e" onclick="openPanolInvalidas()">Ver y corregir</button>':ROLE.admin?(cer?'<button class="btn ghost sm" onclick="openPanolReabrir('+f.per+')">Reabrir</button>':'<button class="btn sm" onclick="openPanolCerrar('+f.per+')">Cerrar mes</button>'):'')
       +(tieneHist?' <button class="btn ghost sm" onclick="openPanolCierreHist('+f.per+')">Historial</button>':'')
       +(f.res.n?' <button class="btn ghost sm" onclick="openPanolInforme('+f.per+')">Informe</button> <button class="btn ghost sm" onclick="openPanolAsiento('+f.per+')">Asiento propuesto</button>':'');
     const num=v=>v?'<span style="color:#b3261e">'+v+'</span>':'0';
-    return '<tr><td><b>'+panolPerTxt(f.per)+'</b></td><td>'+(cer?'<span class="badge b-gris">🔒 Cerrado</span>':'<span class="badge b-verde">Abierto</span>')+'</td>'
+    return '<tr><td><b>'+panolPerTxt(f.per)+'</b>'+(perOk?'':' <span class="badge b-rojo" title="El mes no existe: hay erogaciones con la fecha mal cargada">⚠ fecha inválida</span>')+'</td><td>'+(cer?'<span class="badge b-gris">🔒 Cerrado</span>':'<span class="badge b-verde">Abierto</span>')+'</td>'
       +'<td style="text-align:right">'+f.res.n+'</td><td style="text-align:right">'+fmtNum(f.res.ars,2)+'</td><td style="text-align:right">'+fmtNum(f.res.usd,2)+'</td>'
       +'<td style="text-align:right">'+num(f.res.conAlerta)+'</td><td style="text-align:right">'+num(f.res.sinPrecio)+'</td><td style="text-align:right">'+f.res.sinExportar+'</td>'
       +'<td style="font-size:11.5px">'+(h?esc(h.accion)+' · '+_spCuando({autor:h.por,fecha:h.fecha}):'<span style="color:var(--muted)">—</span>')+'</td>'
