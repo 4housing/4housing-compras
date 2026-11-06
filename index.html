@@ -6427,6 +6427,8 @@ function nroOCTango(v){
   const t=String(v==null?'':v).trim(); const m=t.match(/^(\d{5})-?(\d{8})$/);
   return m ? (m[2].replace(/^0+/,'')||'0') : t;
 }
+// Motivo de desvío real: «No Aplica» (valor por defecto del selector de la OG) significa SIN desvío.
+function gpDesvioReal(v){ const t=String(v==null?'':v).trim(); return gpNorm(t)==='NO APLICA'?'':t; }
 function gpPrefijoArt(cod){ const m=String(cod||'').toUpperCase().match(/^([A-Z]{2,6})/); return m?m[1]:''; }
 function gpMoney(v){ return '$ '+fmtNum(v,0); }
 function gpUsd(v){ return 'US$ '+fmtNum(v,0); }
@@ -7834,8 +7836,8 @@ function gpRenderTablero(){
     if(!desvioAgg[motivo]) desvioAgg[motivo]={motivo, ocN:0, ogN:0, total:0};
     desvioAgg[motivo][esOG?'ogN':'ocN']++; desvioAgg[motivo].total+=monto;
   };
-  detalleBase.forEach(o=>desvioAdd(o.desvio, gpTotEf(o), false));
-  ogsProyecto.forEach(o=>desvioAdd(o.desvio, ogTotal(o), true));
+  detalleBase.forEach(o=>desvioAdd(gpDesvioReal(o.desvio), gpTotEf(o), false));
+  ogsProyecto.forEach(o=>desvioAdd(gpDesvioReal(o.desvio), ogTotal(o), true));
   const desvioRowsBase=Object.values(desvioAgg);
   xlfRegister('gpdesv', { rows:()=>desvioRowsBase, onChange:gpRenderTablero,
     val:(d,col)=>{ if(col==='motivo') return d.motivo; return ''; } });
@@ -7965,7 +7967,7 @@ function gpGastosDatos(){
     const base={origen:'OC Tango', solp:setTxt(solpOC[keyNum(nro)]), prov:o.proveedor_cod||'', provNom:provNom(o.proveedor_cod), nro:nro, fecha:o.fecha||'',
       cod:o.cod_articulo||'', det:o.descripcion||'', um:'', cantPed:ped, cantCuenta:cantCuenta, pu:(ped>0?bruto/ped:null), mon:o.moneda||'', tc:null,
       bruto:bruto, dif:dif, cuenta:cuenta, rubro:o.subrubro||o.rubro||o.costeo_tag||'', estado:o.estado_oc||'', cond:cond,
-      motivo:o.desvio||'', desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:null, pagPct:null, obs:''};
+      motivo:gpDesvioReal(o.desvio), desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:null, pagPct:null, obs:''};
     if(allocs && allocs.length && ftot!=null){
       // renglón repartido entre secciones: una fila por parte; los importes del renglón van solo en la primera
       const sum=allocs.reduce((x,r)=>x+(+r.monto||0),0), factor=(sum>ftot&&sum>0)?ftot/sum:1, share=ftot>0?cuenta/ftot:0;
@@ -8004,7 +8006,7 @@ function gpGastosDatos(){
       rows.push({origen:'OG app', solp:solp, prov:o.proveedor_cod||'', provNom:o.proveedor||provNom(o.proveedor_cod), nro:String(o.numero||''), fecha:o.fecha||'',
         cod:l.cod, det:l.det, um:l.um, cantPed:l.cant, cantCuenta:(l.cant==null?null:(anul?0:(l.bruto>0?l.cant*Math.max(l.bruto-l.cerr,0)/l.bruto:l.cant))), pu:l.pu, mon:usd?'USD':'ARS', tc:usd?tcOG:null,
         bruto:bruto, dif:dif, cuenta:cuenta, imputado:cuenta, seccion:se.seccion, rubro:o.costeo_new||o.costeo||'', estado:ogEstado(o), cond:cond,
-        motivo:o.desvio||'', desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:cert, pagPct:pag, obs:o.objeto||''});
+        motivo:gpDesvioReal(o.desvio), desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:cert, pagPct:pag, obs:o.objeto||''});
     });
   });
   return rows;
