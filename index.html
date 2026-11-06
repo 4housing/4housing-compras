@@ -8348,7 +8348,23 @@ function armadasOf(ogId){ if(_RIDX) return (_RIDX.a.get(String(ogId))||[]).slice
 function ogArmadoMonto(og){ return armadasOf(og.id).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
 // Lo ya armado contra el pedido del comprador (armadas + las que salieron de un armado y ya se pagaron)
 function ogPedidoConsumido(og){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(og.id) && (pagoArmado(p)||p.pagada_en)).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
-function ogPedidoRestante(og){ return Math.max(0, (+og.pago_pedido_monto||0) - ogPedidoConsumido(og)); }
+// Lo que falta armar del pedido. Si el pedido es por renglón, cada renglón descuenta lo ya pagado/armado de ESE renglón
+// (también lo pagado por el camino normal tras certificar y liberar): si el renglón pedido ya se pagó, el pedido desaparece.
+// Nunca da más que el cálculo anterior (pedido − armado) ni que lo que le queda por pagar a la OG.
+function ogPedidoRestante(og){
+  let r=Math.min(Math.max(0, (+og.pago_pedido_monto||0) - ogPedidoConsumido(og)), Math.max(0, ogTotal(og)-ogPagadoMonto(og)-ogArmadoMonto(og)));
+  const det=Array.isArray(og.pago_pedido_detalle)?og.pago_pedido_detalle:[];
+  if(r>0 && det.length && og.items && og.items.length){
+    const pag=pgPagadoRenglon(og), f=_pgBonifOG(og);
+    r=Math.min(r, det.reduce((a,d)=>a+ogPedidoRenglonFalta(og,d,pag,f),0));
+  }
+  return r;
+}
+// Lo que falta de un renglón del pedido: lo pedido, con tope en lo que el renglón todavía no tiene pagado/armado
+function ogPedidoRenglonFalta(og,d,pag,f){
+  const it=(og.items||[])[d.idx]; if(!it) return +d.monto||0;
+  return Math.min(+d.monto||0, Math.max(0, itemTotal(it)*f-((pag||[])[d.idx]||0)));
+}
 // Pide armar el pago: solo el comprador de esa OG (o admin)
 function puedePedirArmado(o){ return !!o && !o.anulada && (ROLE.admin || (ROLE.comprador && !!MI_NOMBRE && _syncFold(o.comprador)===_syncFold(MI_NOMBRE))); }
 // Monto de un pago ya registrado, reexpresado en la moneda de la OG (deshace la conversión de caja
@@ -11570,15 +11586,16 @@ function armadoView(){
   const pedidos=(mem.ogs||[]).filter(o=>!o.anulada && ogPedidoRestante(o)>0.01 && _tesMia(o))
     .sort((a,b)=>String(a.pago_pedido_fecha||'9999').localeCompare(String(b.pago_pedido_fecha||'9999')));
   const hoyISO=new Date().toISOString().slice(0,10);
-  const detPed=o=>(Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>'<div>'+esc(d.desc)+': '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(d.monto,2)+(d.pct?' ('+d.pct+'%)':'')+' · '+fmtDate(d.fecha)+'</div>').join('');
+  const detPed=o=>{ const pag=(o.items&&o.items.length)?pgPagadoRenglon(o):null, f=_pgBonifOG(o);
+    return (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>'<div'+(pag&&ogPedidoRenglonFalta(o,d,pag,f)<=0.01?' style="text-decoration:line-through;opacity:.55" title="Renglón ya pagado/armado"':'')+'>'+esc(d.desc)+': '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(d.monto,2)+(d.pct?' ('+d.pct+'%)':'')+' · '+fmtDate(d.fecha)+'</div>').join(''); };
   const armadas=(mem.pagos||[]).filter(pagoArmado).filter(p=>_tesMia(ogById(p.og_id)||{}));
   if(!pedidos.length && !armadas.length) return '';
   const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const sim=o=>ogMonedaCode(o)==='USD'?'US$ ':'$ ';
   const tPed=pedidos.length?'<div style="font-weight:700;font-size:12.5px;padding:10px 14px 4px">Pedidos de Compras para armar el pago ('+pedidos.length+')</div>'
-    +'<table class="grid" id="armPedTabla" style="font-size:12.5px"><thead><tr><th>OG</th><th>Fecha requerida</th><th>Proveedor</th><th>Comprador</th><th>Liberado</th><th>Pedido</th><th>Ya armado</th><th>Falta armar</th><th>Pedido por</th><th>Detalle / nota</th><th></th></tr></thead><tbody>'
+    +'<table class="grid" id="armPedTabla" style="font-size:12.5px"><thead><tr><th>OG</th><th>Fecha requerida</th><th>Proveedor</th><th>Comprador</th><th>Liberado</th><th>Pedido</th><th>Ya armado / pagado</th><th>Falta armar</th><th>Pedido por</th><th>Detalle / nota</th><th></th></tr></thead><tbody>'
     +pedidos.map(o=>'<tr><td><strong>'+esc(o.numero)+'</strong></td><td style="white-space:nowrap'+(o.pago_pedido_fecha&&o.pago_pedido_fecha<=hoyISO?';color:#b4554e;font-weight:700':'')+'">'+(o.pago_pedido_fecha?fmtDate(o.pago_pedido_fecha):'—')+'</td><td style="font-size:11px">'+esc(o.proveedor_cod||o.proveedor||'')+'</td><td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
-      +'<td>'+ogLiberadoPct(o).toFixed(0)+'%</td><td style="text-align:right">'+sim(o)+f2(o.pago_pedido_monto)+'</td><td style="text-align:right">'+sim(o)+f2(ogPedidoConsumido(o))+'</td>'
+      +'<td>'+ogLiberadoPct(o).toFixed(0)+'%</td><td style="text-align:right">'+sim(o)+f2(o.pago_pedido_monto)+'</td><td style="text-align:right">'+sim(o)+f2(Math.max(0,(+o.pago_pedido_monto||0)-ogPedidoRestante(o)))+'</td>'
       +'<td style="text-align:right"><strong>'+sim(o)+f2(ogPedidoRestante(o))+'</strong></td>'
       +'<td style="font-size:11px">'+_spCuando({autor:o.pago_pedido_por, fecha:o.pago_pedido_en})+'</td><td style="font-size:11px">'+detPed(o)+(o.pago_pedido_nota?'<div style="color:var(--muted)">'+esc(o.pago_pedido_nota)+'</div>':'')+'</td>'
       +'<td>'+(canPago()?'<button class="btn sm" onclick="openPago('+o.id+',\'armada\')">Armar OP</button>':'')+'</td></tr>').join('')+'</tbody></table>':'';
