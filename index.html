@@ -7821,7 +7821,7 @@ function gpRenderTablero(){
   detalle=_spOrdenar('gpdet', detalle, {
     oc:o=>nroOCTango(o.oc_numero), fecha:o=>o.fecha||'', prov:o=>o.proveedor_cod||'',
     desc:o=>o.descripcion||'', rubro:o=>o.subrubro||o.rubro||o.costeo_tag||'',
-    sec:o=>secVal(o), total:o=>gpTotEf(o), estado:o=>o.estado_oc||'', desvio:o=>o.desvio||'' });
+    sec:o=>secVal(o), total:o=>gpTotEf(o), estado:o=>o.estado_oc||'', desvio:o=>o.desvio||'', desvtxt:o=>o.desvio_txt||'' });
   GP._detRows=detalle;
 
   // Motivos de desvío declarados en las OGs (campo "desvio"/"desvio_txt"): se juntan los dos canales
@@ -7869,7 +7869,7 @@ function gpRenderTablero(){
     }
     const accion=puedeRep?'<button class="btn ghost sm" onclick="gpRepartir('+i+')">Repartir</button>':'';
     const desvioCell=o.desvio?('<span'+(o.desvio_txt?(' title="'+esc(o.desvio_txt)+'"'):'')+'>'+esc(o.desvio)+'</span>'):'';
-    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(gpTotEf(o),0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+desvioCell+'</td><td>'+accion+'</td></tr>';
+    return '<tr><td>'+esc(nroOCTango(o.oc_numero))+'</td><td>'+fmtDate(o.fecha)+'</td><td>'+esc(o.proveedor_cod)+'</td><td>'+esc(o.descripcion||'')+'</td><td>'+esc(o.subrubro||o.rubro||o.costeo_tag||'')+'</td><td>'+secCell+'</td><td style="text-align:right">'+fmtNum(gpTotEf(o),0)+'</td><td>'+esc(o.estado_oc||'')+'</td><td>'+desvioCell+'</td><td>'+esc(o.desvio_txt||'')+'</td><td>'+accion+'</td></tr>';
   }).join('');
 
   C().innerHTML=''
@@ -7895,8 +7895,8 @@ function gpRenderTablero(){
       +'<div class="tbl-hscroll tbl-compact" style="max-height:50vh"><table id="gpDetTbl" class="grid" style="font-size:11.5px"><thead><tr>'
         +_gpTh('gpdet','OC','oc','oc')+_gpTh('gpdet','Fecha','__fecha__','fecha')+_gpTh('gpdet','Prov.','prov','prov')
         +_gpTh('gpdet','Descripción',null,'desc')+_gpTh('gpdet','Rubro/Costeo','rubro','rubro')+_gpTh('gpdet','Sección','sec','sec')
-        +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+_gpTh('gpdet','Motivo desvío','desvio','desvio')+'<th></th></tr></thead><tbody>'
-      +(detRows||'<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
+        +_gpThNum('gpdet','Total ($)',null,'total')+_gpTh('gpdet','Estado','estado','estado')+_gpTh('gpdet','Motivo desvío','desvio','desvio')+_gpTh('gpdet','Detalle del desvío',null,'desvtxt')+'<th></th></tr></thead><tbody>'
+      +(detRows||'<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--muted)">'+(xlfHasAny('gpdet')?'Ningún renglón coincide con los filtros.':(filtro?'Ningún renglón en esta sección.':'Sin OC importadas todavía. Usá “Importar Tango”.'))+'</td></tr>')+'</tbody></table></div>'
       +(detalle.length>600?'<div style="font-size:11px;color:var(--muted);padding:6px 12px">Mostrando 600 de '+detalle.length+'.</div>':'')+'</div>'
     +gpRenderOGsCard(p)
     +gpRenderSolpCard(p)
