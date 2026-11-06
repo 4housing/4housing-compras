@@ -6427,6 +6427,18 @@ function nroOCTango(v){
   const t=String(v==null?'':v).trim(); const m=t.match(/^(\d{5})-?(\d{8})$/);
   return m ? (m[2].replace(/^0+/,'')||'0') : t;
 }
+// TC oficial (VENTA) del día de una fecha: el dato igual o anterior más cercano de compras_usd_diario_oficial.
+// Sin cotización: cae al TC del presupuesto (tcPres) y lo aclara en «fuente». Lo usan el tablero y el Excel de gastos.
+let _gpOfiCache=null;
+function gpTcDia(fecha, tcPres){
+  const src=DIC.usd_diario_oficial||[];
+  if(!_gpOfiCache || _gpOfiCache.src!==src || _gpOfiCache.n!==src.length)
+    _gpOfiCache={src, n:src.length, l:src.filter(r=>r.venta!=null&&+r.venta>0).slice().sort((a,b)=>String(a.fecha)<String(b.fecha)?-1:String(a.fecha)>String(b.fecha)?1:0)};
+  const l=_gpOfiCache.l, f=String(fecha||'').slice(0,10); let lo=0, hi=l.length-1, k=-1;
+  if(f){ while(lo<=hi){ const m=(lo+hi)>>1; if(String(l[m].fecha).slice(0,10)<=f){ k=m; lo=m+1; } else hi=m-1; } }
+  if(k>=0){ const d=String(l[k].fecha).slice(0,10); return {tc:+l[k].venta, fuente:'Oficial venta '+(d===f?'del día':('del '+fmtDate(d)+' (último con dato)'))}; }
+  return tcPres>0?{tc:tcPres, fuente:'TC presupuesto (sin cotización oficial)'}:{tc:null, fuente:'SIN TC'};
+}
 // Motivo de desvío real: «No Aplica» (valor por defecto del selector de la OG) significa SIN desvío.
 function gpDesvioReal(v){ const t=String(v==null?'':v).trim(); return gpNorm(t)==='NO APLICA'?'':t; }
 function gpPrefijoArt(cod){ const m=String(cod||'').toUpperCase().match(/^([A-Z]{2,6})/); return m?m[1]:''; }
@@ -7517,7 +7529,8 @@ function gpAgregado(){
   const p=GP.proyecto||{}; const tc=+p.tc_presupuesto||0; const tol=+p.tolerancia_desvio_pct||0;
   // repartos por firma + total por firma (el reparto se aplica al total del renglón)
   const rep={}; (GP.reparto||[]).forEach(r=>{ (rep[r.firma]=rep[r.firma]||[]).push({seccion:r.seccion, monto:+r.monto||0}); });
-  const firmaTot={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); firmaTot[f]=(firmaTot[f]||0)+(gpTotEf(o)); });
+  const firmaTot={}, firmaUsd={}; (GP.oc||[]).forEach(o=>{ const f=gpFirma(o); const a=gpTotEf(o); firmaTot[f]=(firmaTot[f]||0)+a; const t=gpTcDia(o.fecha,tc).tc; firmaUsd[f]=(firmaUsd[f]||0)+(t>0?a/t:0); });   // USD de cada renglón al oficial venta del día de la OC
+  const compUsBySec={};
   const conRep=new Set(Object.keys(rep).filter(f=>firmaTot[f]!=null));   // repartos de renglones presentes en la foto actual
   const compBySec={}; let sinClasArs=0, sinClasN=0, pendRepArs=0, repOver=0;
   // 1) renglones SIN reparto: por fila
@@ -7526,13 +7539,14 @@ function gpAgregado(){
     const a=gpTotEf(o);
     if(o.seccion==='Sin clasificar' || !o.seccion){ sinClasArs+=a; sinClasN++; return; }
     compBySec[o.seccion]=(compBySec[o.seccion]||0)+a;
+    const tOc=gpTcDia(o.fecha,tc).tc; if(tOc>0) compUsBySec[o.seccion]=(compUsBySec[o.seccion]||0)+a/tOc;
   });
   // 2) renglones CON reparto: sobre el total del renglón (suma de sus filas)
   conRep.forEach(f=>{
     const total=firmaTot[f]||0, allocs=rep[f]||[];
     let sum=allocs.reduce((x,al)=>x+(+al.monto||0),0);
     let factor=1; if(sum>total && sum>0){ factor=total/sum; repOver++; }   // reparto excede el total: se escala y se marca
-    allocs.forEach(al=>{ const m=(+al.monto||0)*factor; if(m) compBySec[al.seccion]=(compBySec[al.seccion]||0)+m; });
+    allocs.forEach(al=>{ const m=(+al.monto||0)*factor; if(m){ compBySec[al.seccion]=(compBySec[al.seccion]||0)+m; if(total>0) compUsBySec[al.seccion]=(compUsBySec[al.seccion]||0)+m*(firmaUsd[f]||0)/total; } });
     const rem=total-Math.min(sum,total);
     if(rem>1){ pendRepArs+=rem; }   // lo que falta repartir
   });
@@ -7548,13 +7562,15 @@ function gpAgregado(){
     const ars=gpOGArs(o); if(!ars) return;
     const ovr=_ogOvr[o.id];
     const sec=(ovr && _secComp.has(ovr)) ? ovr : gpOGImputar(o, _ogMap).seccion;
-    if(sec && sec!=='Sin clasificar' && _secComp.has(sec)){ compBySec[sec]=(compBySec[sec]||0)+ars; ogBySec[sec]=(ogBySec[sec]||0)+ars; if(_secAmb[sec]==='compras') ogComp+=ars; }
+    if(sec && sec!=='Sin clasificar' && _secComp.has(sec)){ compBySec[sec]=(compBySec[sec]||0)+ars; ogBySec[sec]=(ogBySec[sec]||0)+ars; if(_secAmb[sec]==='compras') ogComp+=ars;
+      const own=(o.tc_pesos!=null&&o.tc_pesos!==''&&+o.tc_pesos>0)?+o.tc_pesos:null, tOg=own||(ogMonedaCode(o)==='USD'?tc:gpTcDia(o.fecha,tc).tc);   // TC de la OG; si no tiene y se pactó en pesos, el oficial del día
+      if(tOg>0) compUsBySec[sec]=(compUsBySec[sec]||0)+ars/tOg; }
     else { ogSinClasArs+=ars; ogSinClasN++; }
   });
   const filas=(GP.presupuesto||[]).map(s=>{
     const comp=compBySec[s.seccion]||0;
     const presAr=+s.presupuesto_ars||0, presUs=+s.presupuesto_usd||0;
-    const compUs=tc>0?comp/tc:0;
+    const compUs=compUsBySec[s.seccion]||0;   // suma de cada renglón convertido a su TC del día (el presupuesto conserva su propio TC)
     const pend=Math.max(presAr-comp,0);
     const desv=comp-presAr;
     const avance=presAr>0?comp/presAr:(comp>0?1:0);
@@ -7739,7 +7755,7 @@ function gpRenderTablero(){
   const ultImp=(GP.imports||[])[0];
   const kpis=''
     +'<div class="kpi"><div class="kpi-label">Presupuesto total</div><div class="kpi-value">'+gpMoney(ag.tot.presAr)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.presUs)+'</div></div>'
-    +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+' · OC + OGs</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(ag.tot.comp)+'</div><div class="kpi-sub">'+gpUsd(ag.tot.compUs)+' · OC + OGs · al TC oficial del día</div></div>'
     +'<div class="kpi"><div class="kpi-label">Avance de compra</div><div class="kpi-value">'+gpPct(avanceTot)+'</div><div class="kpi-sub">'+gpMoney(ag.tot.pend)+' pendiente</div></div>'
     +'<div class="kpi"><div class="kpi-label">Saldo</div><div class="kpi-value '+desvTone+'">'+(ag.tot.desv>=0?'+':'')+gpMoney(ag.tot.desv)+'</div><div class="kpi-sub">+ '+gpMoney(ag.extracosto)+' extracosto − '+gpMoney(ag.ahorroConf+ag.ahorroPot)+' bajo presup.</div></div>';
   const sinClasKpi=ag.sinClasN?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(ag.sinClasArs)+'</div><div class="kpi-sub"><a href="#" onclick="gpRevisarSinClasificar();return false" style="color:#b0584f">'+ag.sinClasN+' renglones · revisar</a></div></div>'):'';
@@ -7942,6 +7958,9 @@ window.gpQuitarFiltro=gpQuitarFiltro;
 function gpGastosDatos(){
   const p=GP.proyecto||{}, tcPres=+p.tc_presupuesto||0;
   const provNom=cod=>{ const x=(DIC.proveedores||[]).find(v=>v.codigo===cod); return x?(x.razon||x.comercial||''):''; };
+  // TC para ver los importes en USD. OC (Tango no trae TC): dólar OFICIAL (venta) del día de la OC; si ese día no tiene dato, el último anterior.
+  // OG: su propio TC (tc_pesos); si no lo tiene y se pactó en pesos, el oficial del día de la OG. Sin ningún dato: TC del presupuesto.
+  const tcOficial=fecha=>gpTcDia(fecha,tcPres);
   // SOLP por N° de OC / N° de OG (las SOLP del proyecto traen num_oc y num_og)
   const keyNum=v=>String(v==null?'':v).trim().replace(/^0+/,'').toUpperCase();
   const solpOC={}, solpOG={};
@@ -7963,9 +7982,9 @@ function gpGastosDatos(){
     if(est.indexOf('ANUL')>=0) cantCuenta=0;
     else if(est.indexOf('AUTORIZ')<0 && o.cantidad_pend_facturar!=null && ped>0) cantCuenta=Math.min(ped,(+o.cantidad_pend_facturar||0)+(+o.cantidad_facturada||0));
     let cond='Cuenta'; if(est.indexOf('ANUL')>=0) cond='No cuenta (anulada)'; else if(dif>0.005) cond=cuenta>0.005?'Cuenta parcial (cerrada)':'No cuenta (cerrada)';
-    const nro=nroOCTango(o.oc_numero), firma=gpFirma(o), allocs=rep[firma], ftot=firmaTot[firma];
+    const nro=nroOCTango(o.oc_numero), firma=gpFirma(o), allocs=rep[firma], ftot=firmaTot[firma], tcO=tcOficial(o.fecha);
     const base={origen:'OC Tango', solp:setTxt(solpOC[keyNum(nro)]), prov:o.proveedor_cod||'', provNom:provNom(o.proveedor_cod), nro:nro, fecha:o.fecha||'',
-      cod:o.cod_articulo||'', det:o.descripcion||'', um:'', cantPed:ped, cantCuenta:cantCuenta, pu:(ped>0?bruto/ped:null), mon:o.moneda||'', tc:null,
+      cod:o.cod_articulo||'', det:o.descripcion||'', um:'', cantPed:ped, cantCuenta:cantCuenta, puArs:(ped>0?bruto/ped:null), mon:o.moneda||'', tcApl:tcO.tc, tcFuente:tcO.fuente,
       bruto:bruto, dif:dif, cuenta:cuenta, rubro:o.subrubro||o.rubro||o.costeo_tag||'', estado:o.estado_oc||'', cond:cond,
       motivo:gpDesvioReal(o.desvio), desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:null, pagPct:null, obs:''};
     if(allocs && allocs.length && ftot!=null){
@@ -7974,7 +7993,7 @@ function gpGastosDatos(){
       const partes=allocs.map(r=>({sec:r.seccion, imp:(+r.monto||0)*factor*share}));
       const rem=ftot-Math.min(sum,ftot); if(rem>1) partes.push({sec:'Sin repartir', imp:rem*share});
       partes.forEach((pt,i)=>{ const r=Object.assign({},base,{seccion:pt.sec, imputado:pt.imp, repartido:true});
-        if(i>0){ r.cantPed=null; r.cantCuenta=null; r.pu=null; r.bruto=null; r.dif=null; r.cuenta=null; }
+        if(i>0){ r.cantPed=null; r.cantCuenta=null; r.puArs=null; r.bruto=null; r.dif=null; r.cuenta=null; }
         rows.push(r); });
     }else{
       rows.push(Object.assign({},base,{seccion:(o.seccion&&o.seccion!=='Sin clasificar')?o.seccion:'Sin clasificar', imputado:cuenta}));
@@ -7986,6 +8005,11 @@ function gpGastosDatos(){
   ogs.forEach(o=>{
     const usd=ogMonedaCode(o)==='USD', tcOG=usd?((o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:tcPres):1;
     const f=(1-(+o.bonif_pct||0)/100), anul=!!o.anulada, se=gpOGSeccion(o);
+    const propio=(o.tc_pesos!=null&&o.tc_pesos!==''&&+o.tc_pesos>0)?+o.tc_pesos:null;
+    let tcApl, tcFuente;
+    if(usd){ tcApl=tcOG; tcFuente=propio?'TC de la OG':'TC presupuesto (OG sin TC)'; }
+    else if(propio){ tcApl=propio; tcFuente='TC de la OG'; }
+    else { const t=tcOficial(o.fecha); tcApl=t.tc; tcFuente=t.fuente; }
     const cab=_obraNums(o.clasif_og).some(n=>keys.has(n));
     const solp=setTxt((()=>{ const st=new Set(solpOG[keyNum(o.numero)]||[]); if(o.solp!=null&&o.solp!=='') st.add(String(o.solp)); return st; })());
     const lineas=[];   // {it, bruto, cerr, cant, pu, um, cod, det, fechaEnt, ccos}
@@ -8004,7 +8028,7 @@ function gpGastosDatos(){
       const bruto=l.bruto*tcOG, cerr=Math.min(l.cerr*tcOG,bruto), cuenta=anul?0:Math.max(bruto-cerr,0), dif=bruto-cuenta;
       let cond='Cuenta'; if(anul) cond='No cuenta (anulada)'; else if(dif>0.005) cond=cuenta>0.005?'Cuenta parcial (cerrada)':'No cuenta (cerrada)';
       rows.push({origen:'OG app', solp:solp, prov:o.proveedor_cod||'', provNom:o.proveedor||provNom(o.proveedor_cod), nro:String(o.numero||''), fecha:o.fecha||'',
-        cod:l.cod, det:l.det, um:l.um, cantPed:l.cant, cantCuenta:(l.cant==null?null:(anul?0:(l.bruto>0?l.cant*Math.max(l.bruto-l.cerr,0)/l.bruto:l.cant))), pu:l.pu, mon:usd?'USD':'ARS', tc:usd?tcOG:null,
+        cod:l.cod, det:l.det, um:l.um, cantPed:l.cant, cantCuenta:(l.cant==null?null:(anul?0:(l.bruto>0?l.cant*Math.max(l.bruto-l.cerr,0)/l.bruto:l.cant))), puArs:(l.pu==null?null:l.pu*tcOG), mon:usd?'USD':'ARS', tcApl:tcApl, tcFuente:tcFuente,
         bruto:bruto, dif:dif, cuenta:cuenta, imputado:cuenta, seccion:se.seccion, rubro:o.costeo_new||o.costeo||'', estado:ogEstado(o), cond:cond,
         motivo:gpDesvioReal(o.desvio), desvioTxt:o.desvio_txt||'', comprador:o.comprador||'', certPct:cert, pagPct:pag, obs:o.objeto||''});
     });
@@ -8016,82 +8040,135 @@ async function gpExportGastos(){
   let EJ; try{ EJ=await panolExcelJS(); }catch(e){ toast('No se pudo cargar el generador de Excel. Verificá tu conexión e intentá de nuevo.'); return; }
   try{
     const p=GP.proyecto, ag=gpAgregado(), rows=gpGastosDatos();
-    const wb=new EJ.Workbook(); wb.creator='4housing'; wb.created=new Date();
+    if(!rows.length){ toast('Este proyecto todavía no tiene OC ni OGs cargadas.'); return; }
+    const n=rows.length, wb=new EJ.Workbook(); wb.creator='4housing'; wb.created=new Date(); wb.calcProperties={fullCalcOnLoad:true};
     const T='4housing · Gastos del proyecto · '+(p.nombre||''), emitido=new Date().toLocaleString('es-AR');
-    const sub='Emitido '+emitido+' por '+gpEmail()+' · OC de Tango + OGs de la app · pesos';
+    const sub='Emitido '+emitido+' por '+gpEmail()+' · OC de Tango + OGs de la app · importes en la moneda elegida en la hoja Resumen';
     const foot='&L&8 4housing · Gestión de proyectos&R&8 Página &P de &N';
     const r2=v=>(v==null||v==='')?'':+(+v).toFixed(2);
-    const D=prFecha;
+    const D=prFecha, q=s=>String(s).replace(/"/g,'""');
+    // Selector de moneda (Resumen!B4). Cada renglón se convierte con SU tipo de cambio (columna «TC aplicado» de la hoja Gastos).
+    const MON='Resumen!$B$4', UNI='IF('+MON+'="USD","US$","$")';
+    const hdr=(txt,res)=>({formula:'"'+q(txt)+' ("&'+UNI+'&")"', result:txt+' ($)'});
+    const colL=k=>{ let t=''; while(k>0){ const m=(k-1)%26; t=String.fromCharCode(65+m)+t; k=Math.floor((k-1)/26); } return t; };
+    const G=c=>'Gastos!$'+c+'$5:$'+c+'$'+(4+n);
+    const sumG=(c,critCol,crit,c2,crit2)=>'SUMIFS('+G(c)+','+G(critCol)+',"'+q(crit)+'"'+(c2?(','+G(c2)+',"'+q(crit2)+'"'):'')+')';
+    // ---- datos de la hoja Por sección (se arman antes porque el Resumen los referencia) ----
+    const ocBy=ag.ocBySec||{}, ogBy=ag.ogBySec||{};
+    const secDefs=ag.filas.map(f=>({key:f.seccion, nombre:f.desglose_de?('   ⤷ '+f.seccion):f.seccion, ambito:({compras:'Compras',mod:'MOD',externo:'Externo',desglosada:'Desglosada'})[f.ambito]||f.ambito,
+      presAr:f.presAr, presUs:(f.presUs>0?f.presUs:(ag.tc>0?f.presAr/ag.tc:0)), oc:ocBy[f.seccion]||0, og:ogBy[f.seccion]||0, cerrada:f.cerrada, tipo:'norm'}));
+    if(ag.sinClasArs>0.5||ag.ogSinClasArs>0.5) secDefs.push({key:'Sin clasificar', nombre:'Sin clasificar', ambito:'', oc:ag.sinClasArs||0, og:ag.ogSinClasArs||0, tipo:'sc'});
+    if(ag.pendRepArs>1) secDefs.push({key:'Sin repartir', nombre:'Pendiente de repartir', ambito:'', oc:ag.pendRepArs, og:0, tipo:'sc'});
+    const m=secDefs.length, totS=5+m;   // fila del TOTAL en «Por sección»
+    const PS=c=>"'Por sección'!$"+c+'$5:$'+c+'$'+(4+m);
     // ---- Hoja Resumen (se crea primero para que quede de primera) ----
     { const ws=wb.addWorksheet('Resumen',{views:[{showGridLines:false}], properties:{tabColor:{argb:XL_VERDE}}, pageSetup:{orientation:'portrait',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0}});
       ws.getColumn(1).width=50; ws.getColumn(2).width=22; ws.getColumn(3).width=70;
       ws.mergeCells('A1:C1'); ws.getCell('A1').value=T; ws.getCell('A1').font={size:16,bold:true,color:{argb:XL_VERDE}}; ws.getRow(1).height=26;
       ws.mergeCells('A2:C2'); ws.getCell('A2').value=(p.codigo?('Obra '+p.codigo+' · '):'')+'TC presupuesto '+(p.tc_presupuesto?fmtNum(p.tc_presupuesto,0):'—'); ws.getCell('A2').font={size:11,bold:true,color:{argb:XL_GRIS}};
       ws.mergeCells('A3:C3'); ws.getCell('A3').value=sub; ws.getCell('A3').font={size:9,italic:true,color:{argb:XL_GRIS}};
-      let r=5; const sec=t=>{ ws.mergeCells(r,1,r,3); const c=ws.getCell(r,1); c.value=t; c.font={size:11,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; r++; };
+      ws.getCell('A4').value='VER LOS IMPORTES EN →  (elegí en la celda amarilla)'; ws.getCell('A4').font={size:11,bold:true,color:{argb:XL_VERDE}};
+      const sel=ws.getCell('B4'); sel.value='Pesos'; sel.font={size:12,bold:true}; sel.alignment={horizontal:'center'}; sel.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF2B3'}};
+      sel.border={top:{style:'medium',color:{argb:XL_VERDE}},left:{style:'medium',color:{argb:XL_VERDE}},bottom:{style:'medium',color:{argb:XL_VERDE}},right:{style:'medium',color:{argb:XL_VERDE}}};
+      sel.dataValidation={type:'list',allowBlank:false,formulae:['"Pesos,USD"'],showErrorMessage:true,errorTitle:'Moneda',error:'Elegí Pesos o USD'};
+      ws.getCell('C4').value='En USD cada renglón se convierte con su propio TC: OC = dólar oficial (venta) del día de la OC; OG = su TC (o el oficial del día si no lo tiene). Ver columnas «TC aplicado» y «Fuente del TC» en la hoja Gastos.';
+      ws.getCell('C4').font={size:9,italic:true,color:{argb:XL_GRIS}}; ws.getCell('C4').alignment={wrapText:true,vertical:'top'}; ws.getRow(4).height=48;
+      let r=6; const sec=t=>{ ws.mergeCells(r,1,r,3); const c=ws.getCell(r,1); c.value=t; c.font={size:11,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_VERDE}}; r++; };
       const lin=(a,b,f,nota,neg)=>{ const c1=ws.getCell(r,1), c2=ws.getCell(r,2), c3=ws.getCell(r,3); c1.value=a; c2.value=b; c3.value=nota||''; c1.font={size:10}; c2.font={size:11,bold:true,color:{argb:neg?XL_ROJO:'FF1F2937'}}; c3.font={size:9,italic:true,color:{argb:XL_GRIS}};
-        c2.alignment={horizontal:'right',vertical:'top'}; c1.alignment={vertical:'top',wrapText:true}; c3.alignment={wrapText:true,vertical:'top'}; if(f) c2.numFmt=XL_FMT[f]; [c1,c2,c3].forEach(c=>{ c.border={bottom:{style:'hair',color:{argb:XL_BORDE}}}; if(r%2) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_ZEBRA}}; }); r++; };
+        c2.alignment={horizontal:'right',vertical:'top'}; c1.alignment={vertical:'top',wrapText:true}; c3.alignment={wrapText:true,vertical:'top'}; if(f) c2.numFmt=XL_FMT[f]; [c1,c2,c3].forEach(c=>{ c.border={bottom:{style:'hair',color:{argb:XL_BORDE}}}; if(r%2) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XL_ZEBRA}}; }); return r++; };
       const ocFilas=rows.filter(x=>x.origen==='OC Tango'), ogFilas=rows.filter(x=>x.origen==='OG app');
       const sc=(arr,k)=>+arr.reduce((a,x)=>a+(+x[k]||0),0).toFixed(2);
+      const F=(formula,result)=>({formula,result});
+      const ext=ag.extracosto, aho=ag.ahorroConf+ag.ahorroPot;
       sec('Resultado del proyecto (igual al tablero)');
-      lin('Presupuesto total (Compras)',r2(ag.tot.presAr),'ars'); lin('Comprado (OC + OGs)',r2(ag.tot.comp),'ars'); lin('Avance de compra',+((ag.tot.presAr>0?ag.tot.comp/ag.tot.presAr:0)*100).toFixed(1),'pct');
-      lin('Saldo (comprado − presupuesto)',r2(ag.tot.desv),'ars','Positivo = por encima del presupuesto',ag.tot.desv>0);
-      lin('   Extracosto (rubros por encima)',r2(ag.extracosto),'ars'); lin('   Ahorro (rubros por debajo: confirmado + potencial)',r2(ag.ahorroConf+ag.ahorroPot),'ars','Confirmado solo si el rubro está cerrado');
+      lin('Presupuesto total (Compras)',F("'Por sección'!C"+totS,r2(ag.tot.presAr)),'n2');
+      lin('Comprado (OC + OGs)',F("'Por sección'!F"+totS,r2(ag.tot.comp)),'n2');
+      lin('Avance de compra (%)',F("'Por sección'!H"+totS,+((ag.tot.presAr>0?ag.tot.comp/ag.tot.presAr:0)*100).toFixed(1)),'pct');
+      lin('Saldo (comprado − presupuesto)',F("'Por sección'!I"+totS,r2(ag.tot.desv)),'n2','Positivo = por encima del presupuesto',ag.tot.desv>0);
+      lin('   Extracosto (rubros por encima)',F('SUMIFS('+PS('I')+','+PS('B')+',"Compras",'+PS('I')+',">0")',r2(ext)),'n2');
+      lin('   Ahorro (rubros por debajo: confirmado + potencial)',F('-SUMIFS('+PS('I')+','+PS('B')+',"Compras",'+PS('I')+',"<0")',r2(aho)),'n2','Confirmado solo si el rubro está cerrado');
       r++; sec('Cómo se arma el Comprado');
       lin('OC de Tango — renglones en el informe',ocFilas.filter(x=>x.cuenta!=null).length,'n0');
-      lin('   Total bruto del informe',sc(ocFilas,'bruto'),'ars','Suma de la columna "Total del renglón" (hoja Gastos)');
-      lin('   − Anuladas / cerradas sin facturar',-sc(ocFilas,'dif'),'ars','Anulada: no cuenta. Cerrada (parcial o total): se descuenta el saldo no facturado.');
-      lin('   OC que cuentan',sc(ocFilas,'cuenta'),'ars','Autorizada sin emitir: cuenta el total (comprometida).');
+      const rb=lin('   Total bruto del informe',F('SUMIFS('+G('P')+','+G('A')+',"OC Tango")',sc(ocFilas,'bruto')),'n2','Suma de la columna «Total del renglón» (hoja Gastos)');
+      lin('   − Anuladas / cerradas sin facturar',F('-SUMIFS('+G('Q')+','+G('A')+',"OC Tango")',-sc(ocFilas,'dif')),'n2','Anulada: no cuenta. Cerrada (parcial o total): se descuenta el saldo no facturado.');
+      const rc=lin('   OC que cuentan',F('SUMIFS('+G('R')+','+G('A')+',"OC Tango")',sc(ocFilas,'cuenta')),'n2','Autorizada sin emitir: cuenta el total (comprometida).');
       lin('OGs de la app — filas (renglones)',ogFilas.length,'n0');
-      lin('   Total bruto de las OGs',sc(ogFilas,'bruto'),'ars','Solo renglones imputados a esta obra; OG en USD convertida con el TC de la OG (o el del presupuesto).');
-      lin('   − Anuladas / cerradas sin costo',-sc(ogFilas,'dif'),'ars','OG anulada: no cuenta. Renglón con cierre de saldo: se descuenta el % cerrado.');
-      lin('   OGs que cuentan',sc(ogFilas,'cuenta'),'ars');
-      lin('Total que cuenta (OC + OG)',+(sc(ocFilas,'cuenta')+sc(ogFilas,'cuenta')).toFixed(2),'ars','Incluye lo "Sin clasificar" y lo de MOD/externo; por eso puede diferir del Comprado de Compras de arriba.');
-      lin('   de eso, sin clasificar',+((ag.sinClasArs||0)+(ag.ogSinClasArs||0)).toFixed(2),'ars','Hay que imputarlo a un rubro para que sume al Comprado',((ag.sinClasArs||0)+(ag.ogSinClasArs||0))>0.5);
+      lin('   Total bruto de las OGs',F('SUMIFS('+G('P')+','+G('A')+',"OG app")',sc(ogFilas,'bruto')),'n2','Solo renglones imputados a esta obra.');
+      lin('   − Anuladas / cerradas sin costo',F('-SUMIFS('+G('Q')+','+G('A')+',"OG app")',-sc(ogFilas,'dif')),'n2','OG anulada: no cuenta. Renglón con cierre de saldo: se descuenta el % cerrado.');
+      const rg=lin('   OGs que cuentan',F('SUMIFS('+G('R')+','+G('A')+',"OG app")',sc(ogFilas,'cuenta')),'n2');
+      lin('Total que cuenta (OC + OG)',F('B'+rc+'+B'+rg,+(sc(ocFilas,'cuenta')+sc(ogFilas,'cuenta')).toFixed(2)),'n2','Incluye lo «Sin clasificar» y lo de MOD/externo; por eso puede diferir del Comprado de Compras de arriba.');
+      lin('   de eso, sin clasificar',F('SUMIFS('+G('S')+','+G('T')+',"Sin clasificar")',+((ag.sinClasArs||0)+(ag.ogSinClasArs||0)).toFixed(2)),'n2','Hay que imputarlo a un rubro para que sume al Comprado',((ag.sinClasArs||0)+(ag.ogSinClasArs||0))>0.5);
       r++; sec('Hojas');
-      lin('Gastos','','', 'Una fila por renglón de OC / OG, con SOLP, proveedor, cantidad, precio, estado, sección y motivo de desvío. Las filas amarillas cuentan parcial/no cuentan; las rojas son anuladas. Tiene filtros.');
-      lin('Por sección','','', 'Presupuesto vs comprado (separado OC y OG), desvío, estado y motivos de desvío declarados.');
+      lin('Gastos','','', 'Una fila por renglón de OC / OG, con SOLP, proveedor, cantidad, precio, TC aplicado, estado, sección y motivo de desvío. Las filas amarillas cuentan parcial/no cuentan; las rojas son anuladas. Tiene filtros.');
+      lin('Por sección','','', 'Presupuesto vs comprado (separado OC y OG), desvío, estado y motivos de desvío declarados. En USD el presupuesto sale del costeo (US$) y lo comprado, de la suma de los renglones convertidos.');
       lin('Motivos de desvío','','', 'Resumen por motivo con los detalles escritos.');
     }
     // ---- Hoja Gastos (una fila por renglón) ----
-    const head=['Origen','SOLP','Cód. proveedor','Proveedor','N° OC / OG','Fecha','Cód. artículo','Detalle del renglón','U.M.','Cantidad pedida','Cantidad que cuenta','Precio unit. (moneda orig.)','Moneda','TC (OG en USD)',
-      'Total del renglón ($)','Descontado: anulado / cerrado ($)','Importe que cuenta ($)','Imputado a la sección ($)','Sección imputada','Rubro / costeo','Estado OC / OG','¿Cuenta en el comprado?','Motivo de desvío','Detalle del desvío','Comprador','OG: % certificado','OG: % pagado','Objeto de la OG'];
+    const head=['Origen','SOLP','Cód. proveedor','Proveedor','N° OC / OG','Fecha','Cód. artículo','Detalle del renglón','U.M.','Cantidad pedida','Cantidad que cuenta','Precio unit.','Moneda pactada','TC aplicado (ARS por US$)','Fuente del TC',
+      'Total del renglón','Descontado: anulado / cerrado','Importe que cuenta','Imputado a la sección','Sección imputada','Rubro / costeo','Estado OC / OG','¿Cuenta en el comprado?','Motivo de desvío','Detalle del desvío','Comprador','OG: % certificado','OG: % pagado','Objeto de la OG'];
     const filas=rows.map(r=>[r.origen,r.solp,r.prov,r.provNom,r.nro,D(r.fecha)||'',r.cod,r.det,r.um,r.cantPed==null?'':+(+r.cantPed).toFixed(4),r.cantCuenta==null?'':+(+r.cantCuenta).toFixed(4),
-      r.pu==null?'':+(+r.pu).toFixed(4),r.mon,r.tc==null?'':+(+r.tc).toFixed(2),r2(r.bruto),r2(r.dif),r2(r.cuenta),r2(r.imputado),r.seccion,r.rubro,r.estado,r.cond,r.motivo,r.desvioTxt,r.comprador,
+      r.puArs==null?'':+(+r.puArs).toFixed(4),r.mon,r.tcApl>0?+(+r.tcApl).toFixed(4):'',r.tcFuente,r2(r.bruto),r2(r.dif),r2(r.cuenta),r2(r.imputado),r.seccion,r.rubro,r.estado,r.cond,r.motivo,r.desvioTxt,r.comprador,
       r.certPct==null?'':+(+r.certPct).toFixed(1),r.pagPct==null?'':+(+r.pagPct).toFixed(1),r.obs]);
-    const sum=i=>+rows.reduce((a,r)=>a+(+(i)(r)||0),0).toFixed(2);
-    const totRow=Array(head.length).fill(''); totRow[0]='TOTAL'; totRow[14]=sum(r=>r.bruto); totRow[15]=sum(r=>r.dif); totRow[16]=sum(r=>r.cuenta); totRow[17]=sum(r=>r.imputado);
-    const wsG=xlHoja(wb,'Gastos',{titulo:T,sub,head,rows:filas,total:totRow,
-      widths:[10,9,11,26,11,11,13,44,7,11,11,15,8,10,16,16,16,16,26,22,18,22,24,34,18,11,11,34],
-      fmts:[,,,,,'fecha',,,,'n2','n2','arsU',,'n2','ars','ars','ars','ars',,,,,,,,'n0','n0'],wrap:[7,22,23],filtro:1,congelaCol:5,
-      filaFn:(r)=>r[21]==='Cuenta'?null:(String(r[21]).indexOf('anulada')>=0?'FFFBE3E0':'FFFFF4D6')});
+    const sum=f=>+rows.reduce((a,r)=>a+(+f(r)||0),0).toFixed(2);
+    const totRow=Array(head.length).fill(''); totRow[0]='TOTAL'; totRow[15]=sum(r=>r.bruto); totRow[16]=sum(r=>r.dif); totRow[17]=sum(r=>r.cuenta); totRow[18]=sum(r=>r.imputado);
+    const fm=[]; fm[5]='fecha'; fm[9]='n2'; fm[10]='n2'; fm[11]='n4'; fm[13]='n4'; [15,16,17,18].forEach(i=>fm[i]='n2'); fm[26]='n0'; fm[27]='n0';
+    const wd=[10,9,11,26,11,11,13,44,7,11,11,14,9,12,24,16,16,16,16,26,22,18,22,24,34,18,11,11,34];
+    const wsG=xlHoja(wb,'Gastos',{titulo:T,sub,head,rows:filas,total:totRow,widths:wd,fmts:fm,wrap:[7,14,23,24],filtro:1,congelaCol:5,
+      filaFn:(r)=>r[22]==='Cuenta'?null:(String(r[22]).indexOf('anulada')>=0?'FFFBE3E0':'FFFFF4D6')});
     wsG.headerFooter={oddFooter:foot};
+    // Importes y encabezados con fórmula: cada fila usa su TC (columna N). Solo hay conversión si el TC es > 0.
+    const fx=(v,row)=>(v===''||v==null)?null:{formula:'IF(AND('+MON+'="USD",$N'+row+'>0),'+v+'/$N'+row+','+v+')', result:v};
+    [[11,'Precio unit.'],[15,'Total del renglón'],[16,'Descontado: anulado / cerrado'],[17,'Importe que cuenta'],[18,'Imputado a la sección']].forEach(([i,t])=>{ wsG.getCell(4,i+1).value=hdr(t); });
+    filas.forEach((f,ri)=>{ [11,15,16,17,18].forEach(i=>{ const v=fx(f[i],5+ri); if(v) wsG.getCell(5+ri,i+1).value=v; }); });
+    [[15,'bruto'],[16,'dif'],[17,'cuenta'],[18,'imputado']].forEach(([i,k])=>{ const L=colL(i+1); wsG.getCell(5+n,i+1).value={formula:'SUM('+L+'5:'+L+(4+n)+')', result:sum(r=>r[k])}; });
     // ---- Hoja Por sección ----
-    const motPorSec={}; rows.forEach(r=>{ if(!r.motivo) return; const k=r.seccion||'Sin clasificar'; const m=(motPorSec[k]=motPorSec[k]||{}); m[r.motivo]=(m[r.motivo]||0)+1; });
-    const motTxt=sec=>Object.entries(motPorSec[sec]||{}).sort((a,b)=>b[1]-a[1]).map(([m,n])=>m+' ('+n+')').join(' · ');
-    const secRows=ag.filas.map(f=>{
-      const oc=(ag.ocBySec&&ag.ocBySec[f.seccion])||0, og=(ag.ogBySec&&ag.ogBySec[f.seccion])||0;
-      return [f.desglose_de?('   ⤷ '+f.seccion):f.seccion, ({compras:'Compras',mod:'MOD',externo:'Externo',desglosada:'Desglosada'})[f.ambito]||f.ambito, r2(f.presAr), r2(oc), r2(og), r2(f.comp), r2(f.pend), +(f.avance*100).toFixed(1), r2(f.desv), f.est.txt, f.cerrada?'Sí':'', motTxt(f.seccion)];
-    });
-    if(ag.sinClasArs>0.5||ag.ogSinClasArs>0.5) secRows.push(['Sin clasificar','', '', r2(ag.sinClasArs), r2(ag.ogSinClasArs), r2((ag.sinClasArs||0)+(ag.ogSinClasArs||0)), '', '', '', 'Falta imputar', '', motTxt('Sin clasificar')]);
-    if(ag.pendRepArs>1) secRows.push(['Pendiente de repartir','', '', r2(ag.pendRepArs), '', r2(ag.pendRepArs), '', '', '', 'Falta repartir', '', motTxt('Sin repartir')]);
-    const totS=['TOTAL Compras (sin MOD / externo)','',r2(ag.tot.presAr),'','',r2(ag.tot.comp),r2(ag.tot.pend),+((ag.tot.presAr>0?ag.tot.comp/ag.tot.presAr:0)*100).toFixed(1),r2(ag.tot.desv),'','',''];
+    const motPorSec={}; rows.forEach(r=>{ if(!r.motivo) return; const k=r.seccion||'Sin clasificar'; const mm=(motPorSec[k]=motPorSec[k]||{}); mm[r.motivo]=(mm[r.motivo]||0)+1; });
+    const motTxt=sec=>Object.entries(motPorSec[sec]||{}).sort((a,b)=>b[1]-a[1]).map(([mo,c])=>mo+' ('+c+')').join(' · ');
+    const secRows=secDefs.map(d=>d.tipo==='norm'
+      ? [d.nombre,d.ambito,r2(d.presAr),r2(d.oc),r2(d.og),r2(d.oc+d.og),'','','','','',motTxt(d.key)]
+      : [d.nombre,'','',r2(d.oc),r2(d.og),r2(d.oc+d.og),'','','',(d.key==='Sin repartir'?'Falta repartir':'Falta imputar'),'',motTxt(d.key)]);
+    const totalesS=['TOTAL Compras (sin MOD / externo)','','','','','','','','','','',''];
     const wsS=xlHoja(wb,'Por sección',{titulo:T+' · Comprado vs presupuesto por sección',sub:sub+' · el TOTAL cuenta solo el ámbito Compras, igual que el tablero',
-      head:['Sección','Ámbito','Presupuesto ($)','Comprado vía OC ($)','Comprado vía OG ($)','Comprado total ($)','Pendiente ($)','Avance %','Desvío ($)','Estado','Rubro cerrado','Motivos de desvío declarados (cant. de renglones)'],
-      rows:secRows,total:totS,widths:[34,11,17,17,17,17,17,10,17,16,10,70],fmts:[,,'ars','ars','ars','ars','ars','pct','ars'],wrap:[11],filtro:1,
-      filaFn:(r)=>r[1]==='MOD'||r[1]==='Externo'?'FFF1F1EE':(r[9]==='Sobrecosto'?'FFFBE3E0':null)});
+      head:['Sección','Ámbito','Presupuesto','Comprado vía OC','Comprado vía OG','Comprado total','Pendiente','Avance %','Desvío','Estado','Rubro cerrado','Motivos de desvío declarados (cant. de renglones)'],
+      rows:secRows,total:totalesS,widths:[34,11,17,17,17,17,17,10,17,16,10,70],fmts:[,,'n2','n2','n2','n2','n2','pct','n2'],wrap:[11],filtro:1,
+      filaFn:(r)=>r[1]==='MOD'||r[1]==='Externo'?'FFF1F1EE':null});
     wsS.headerFooter={oddFooter:foot};
+    [[2,'Presupuesto'],[3,'Comprado vía OC'],[4,'Comprado vía OG'],[5,'Comprado total'],[6,'Pendiente'],[8,'Desvío']].forEach(([i,t])=>{ wsS.getCell(4,i+1).value=hdr(t); });
+    const tol=+ag.tol||0;
+    secDefs.forEach((d,ri)=>{
+      const r=5+ri, cs=(col,v,res)=>{ wsS.getCell(r,col).value={formula:v,result:res}; };
+      cs(4,sumG('S','T',d.key,'A','OC Tango'),r2(d.oc)); cs(5,sumG('S','T',d.key,'A','OG app'),r2(d.og)); cs(6,'D'+r+'+E'+r,r2(d.oc+d.og));
+      if(d.tipo!=='norm') return;
+      const comp=d.oc+d.og, pres=d.presAr;
+      cs(3,'IF('+MON+'="USD",'+(+(+d.presUs).toFixed(2))+','+(+(+d.presAr).toFixed(2))+')',r2(pres));
+      cs(7,'MAX(C'+r+'-F'+r+',0)',r2(Math.max(pres-comp,0)));
+      cs(8,'IF(C'+r+'>0,F'+r+'/C'+r+',IF(F'+r+'>0,1,0))*100',+((pres>0?comp/pres:(comp>0?1:0))*100).toFixed(1));
+      cs(9,'F'+r+'-C'+r,r2(comp-pres));
+      cs(10,'IF(F'+r+'<=0,"Sin iniciar",IF(C'+r+'<=0,"Sin presupuesto",IF(F'+r+'>C'+r+'*(1+'+tol+'),"Sobrecosto","En presupuesto")))',gpEstadoSeccion(comp,pres,tol).txt);
+      wsS.getCell(r,11).value=d.cerrada?'Sí':'';
+    });
+    if(m){
+      const R=(c)=>c+'5:'+c+(4+m), tot=(c,res)=>{ wsS.getCell(totS,c).value={formula:'SUMIFS('+R(colL(c))+',$B$5:$B$'+(4+m)+',"Compras")',result:res}; };
+      tot(3,r2(ag.tot.presAr)); tot(4,''); tot(5,''); tot(6,r2(ag.tot.comp)); tot(7,r2(ag.tot.pend)); tot(9,r2(ag.tot.desv));
+      wsS.getCell(totS,4).value={formula:'SUMIFS('+R('D')+',$B$5:$B$'+(4+m)+',"Compras")',result:r2(secDefs.filter(d=>d.ambito==='Compras').reduce((a,d)=>a+d.oc,0))};
+      wsS.getCell(totS,5).value={formula:'SUMIFS('+R('E')+',$B$5:$B$'+(4+m)+',"Compras")',result:r2(secDefs.filter(d=>d.ambito==='Compras').reduce((a,d)=>a+d.og,0))};
+      wsS.getCell(totS,8).value={formula:'IF(C'+totS+'>0,F'+totS+'/C'+totS+',0)*100',result:+((ag.tot.presAr>0?ag.tot.comp/ag.tot.presAr:0)*100).toFixed(1)};
+      // «Sobrecosto» en rojo y «Sin iniciar» en gris según el valor que dé la fórmula (cambia con la moneda)
+      wsS.addConditionalFormatting({ref:'J5:J'+(4+m), rules:[{type:'expression',formulae:['$J5="Sobrecosto"'],style:{fill:{type:'pattern',pattern:'solid',bgColor:{argb:'FFFBE3E0'}}}}]});
+    }
     // ---- Hoja Motivos de desvío ----
-    const mot={}; rows.forEach(r=>{ if(!r.motivo) return; const m=(mot[r.motivo]=mot[r.motivo]||{n:{'OC Tango':0,'OG app':0}, imp:0, secs:new Set(), txt:new Set()});
-      if(r.cuenta!=null){ m.n[r.origen]++; m.imp+=(+r.cuenta||0); } m.secs.add(r.seccion||'Sin clasificar'); if(r.desvioTxt) m.txt.add(r.desvioTxt); });
-    const motRows=Object.entries(mot).sort((a,b)=>b[1].imp-a[1].imp).map(([k,m])=>[k,m.n['OC Tango'],m.n['OG app'],r2(m.imp),Array.from(m.secs).join(' · '),Array.from(m.txt).slice(0,8).join(' | ')]);
+    const mot={}; rows.forEach(r=>{ if(!r.motivo) return; const o=(mot[r.motivo]=mot[r.motivo]||{n:{'OC Tango':0,'OG app':0}, imp:0, secs:new Set(), txt:new Set()});
+      if(r.cuenta!=null){ o.n[r.origen]++; o.imp+=(+r.cuenta||0); } o.secs.add(r.seccion||'Sin clasificar'); if(r.desvioTxt) o.txt.add(r.desvioTxt); });
+    const motList=Object.entries(mot).sort((a,b)=>b[1].imp-a[1].imp);
+    const motRows=motList.map(([k,o])=>[k,o.n['OC Tango'],o.n['OG app'],r2(o.imp),Array.from(o.secs).join(' · '),Array.from(o.txt).slice(0,8).join(' | ')]);
     const wsM=xlHoja(wb,'Motivos de desvío',{titulo:T+' · Motivos de desvío',sub:sub+' · '+rows.filter(r=>r.motivo).length+' de '+rows.length+' filas con motivo cargado',
-      head:['Motivo','Renglones OC','Renglones OG','Importe que cuenta ($)','Secciones donde aparece','Detalles escritos (hasta 8)'],rows:motRows,widths:[34,12,12,18,50,80],fmts:[,'n0','n0','ars'],wrap:[4,5],filtro:1});
-    wsM.headerFooter={oddFooter:foot};
+      head:['Motivo','Renglones OC','Renglones OG','Importe que cuenta','Secciones donde aparece','Detalles escritos (hasta 8)'],rows:motRows,widths:[34,12,12,18,50,80],fmts:[,'n0','n0','n2'],wrap:[4,5],filtro:1});
+    wsM.headerFooter={oddFooter:foot}; wsM.getCell(4,4).value=hdr('Importe que cuenta');
+    motList.forEach(([k,o],ri)=>{ wsM.getCell(5+ri,4).value={formula:sumG('R','X',k),result:r2(o.imp)}; });
     const buf=await wb.xlsx.writeBuffer(), blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), a=document.createElement('a');
     const nom=String(p.nombre||'proyecto').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
     a.href=URL.createObjectURL(blob); a.download='Gastos_'+nom+'_'+new Date().toISOString().slice(0,10)+'.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
-    toast('Excel exportado: '+rows.length+' filas ('+rows.filter(x=>x.origen==='OC Tango').length+' de OC · '+rows.filter(x=>x.origen==='OG app').length+' de OGs)');
+    toast('Excel exportado: '+rows.length+' filas ('+rows.filter(x=>x.origen==='OC Tango').length+' de OC · '+rows.filter(x=>x.origen==='OG app').length+' de OGs). Elegí Pesos o USD en la hoja Resumen.');
   }catch(e){ console.error(e); toast('No se pudo armar el Excel: '+(e.message||e)); }
 }
 window.gpExportGastos=gpExportGastos;
