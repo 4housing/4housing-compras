@@ -8589,22 +8589,38 @@ function armadasOf(ogId){ if(_RIDX) return (_RIDX.a.get(String(ogId))||[]).slice
 function ogArmadoMonto(og){ return armadasOf(og.id).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
 // Lo ya armado contra el pedido del comprador (armadas + las que salieron de un armado y ya se pagaron)
 function ogPedidoConsumido(og){ return (mem.pagos||[]).filter(p=>String(p.og_id)===String(og.id) && (pagoArmado(p)||p.pagada_en)).reduce((a,p)=>a+pagoMontoOG(p)-(+p.ajuste_redondeo||0),0); }
-// Lo que falta armar del pedido. Si el pedido es por renglón, cada renglón descuenta lo ya pagado/armado de ESE renglón
-// (también lo pagado por el camino normal tras certificar y liberar): si el renglón pedido ya se pagó, el pedido desaparece.
+// Lo que falta armar del pedido. Si el pedido es por renglón, cada renglón pedido se da por cubierto con lo que
+// avanzó DESPUÉS de pedirlo: lo pagado/armado y también lo LIBERADO (eso se paga por el camino normal, en
+// "Pagos pendientes", y no tiene que figurar dos veces). Si el renglón pedido ya se liberó o pagó, el pedido desaparece.
 // Nunca da más que el cálculo anterior (pedido − armado) ni que lo que le queda por pagar a la OG.
 function ogPedidoRestante(og){
   let r=Math.min(Math.max(0, (+og.pago_pedido_monto||0) - ogPedidoConsumido(og)), Math.max(0, ogTotal(og)-ogPagadoMonto(og)-ogArmadoMonto(og)));
   const det=Array.isArray(og.pago_pedido_detalle)?og.pago_pedido_detalle:[];
   if(r>0 && det.length && og.items && og.items.length){
-    const pag=pgPagadoRenglon(og), f=_pgBonifOG(og);
-    r=Math.min(r, det.reduce((a,d)=>a+ogPedidoRenglonFalta(og,d,pag,f),0));
+    const ctx=_pedidoCtx(og);
+    r=Math.min(r, det.reduce((a,d)=>a+ogPedidoRenglonFalta(og,d,ctx),0));
   }
   return r;
 }
-// Lo que falta de un renglón del pedido: lo pedido, con tope en lo que el renglón todavía no tiene pagado/armado
-function ogPedidoRenglonFalta(og,d,pag,f){
+// Por renglón (moneda de la OG, con bonificación): pagado/armado hoy, liberado hoy y lo pagado ANTES del pedido (la base)
+function _pedidoCtx(og){
+  const f=_pgBonifOG(og), pag=pgPagadoRenglon(og);
+  const lib=(og.items||[]).map((it,i)=>itemTotal(it)*f*itemLiberadoPct(og,i)/100);
+  const desde=String(og.pago_pedido_en||'').slice(0,10);   // pagos de días anteriores al pedido = lo que ya estaba pagado al pedir
+  let base=(og.items||[]).map(()=>0);
+  if(desde){
+    const todos=mem.pagos;
+    try{ mem.pagos=(todos||[]).filter(p=>String(p.og_id)!==String(og.id) || (!pagoArmado(p) && String(p.fecha||'')<desde)); base=pgPagadoRenglon(og); }
+    finally{ mem.pagos=todos; }
+  }
+  return {f, pag, lib, base};
+}
+// Lo que falta de un renglón del pedido: el pedido apunta a "lo pagado al pedir + lo pedido"; lo cubre lo pagado/armado
+// o liberado hoy (lo mayor). Entre 0 y lo pedido.
+function ogPedidoRenglonFalta(og,d,ctx){
   const it=(og.items||[])[d.idx]; if(!it) return +d.monto||0;
-  return Math.min(+d.monto||0, Math.max(0, itemTotal(it)*f-((pag||[])[d.idx]||0)));
+  const i=d.idx, cubierto=Math.max(ctx.pag[i]||0, ctx.lib[i]||0);
+  return Math.min(+d.monto||0, Math.max(0, (ctx.base[i]||0)+(+d.monto||0)-cubierto));
 }
 // Pide armar el pago: solo el comprador de esa OG (o admin)
 function puedePedirArmado(o){ return !!o && !o.anulada && (ROLE.admin || (ROLE.comprador && !!MI_NOMBRE && _syncFold(o.comprador)===_syncFold(MI_NOMBRE))); }
@@ -11868,8 +11884,8 @@ function armadoView(){
   const pedidos=(mem.ogs||[]).filter(o=>!o.anulada && ogPedidoRestante(o)>0.01 && _tesMia(o))
     .sort((a,b)=>String(a.pago_pedido_fecha||'9999').localeCompare(String(b.pago_pedido_fecha||'9999')));
   const hoyISO=new Date().toISOString().slice(0,10);
-  const detPed=o=>{ const pag=(o.items&&o.items.length)?pgPagadoRenglon(o):null, f=_pgBonifOG(o);
-    return (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>'<div'+(pag&&ogPedidoRenglonFalta(o,d,pag,f)<=0.01?' style="text-decoration:line-through;opacity:.55" title="Renglón ya pagado/armado"':'')+'>'+esc(d.desc)+': '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(d.monto,2)+(d.pct?' ('+d.pct+'%)':'')+' · '+fmtDate(d.fecha)+'</div>').join(''); };
+  const detPed=o=>{ const ctx=(o.items&&o.items.length)?_pedidoCtx(o):null;
+    return (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>'<div'+(ctx&&ogPedidoRenglonFalta(o,d,ctx)<=0.01?' style="text-decoration:line-through;opacity:.55" title="Renglón ya liberado o pagado"':'')+'>'+esc(d.desc)+': '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(d.monto,2)+(d.pct?' ('+d.pct+'%)':'')+' · '+fmtDate(d.fecha)+'</div>').join(''); };
   const armadas=(mem.pagos||[]).filter(pagoArmado).filter(p=>_tesMia(ogById(p.og_id)||{}));
   if(!pedidos.length && !armadas.length) return '';
   const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
