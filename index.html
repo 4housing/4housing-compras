@@ -11745,6 +11745,7 @@ function openPedirArmado(ogId){
     +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||o.proveedor_cod||'')+'<br>Total: '+simb+fmtNum(ogTotal(o),2)+' · Liberado: '+ogLiberadoPct(o).toFixed(0)+'% · Pagado: '+ogPagadoPct(o).toFixed(0)+'%'
     +' · Pendiente de pago: '+simb+fmtNum(pendTotal,2)
     +(consumido>0?'<br>Ya armado por Tesorería: '+simb+fmtNum(consumido,2):'')
+    +(o.pago_pedido_anulado_en?'<br><span style="color:#b3261e">Último pedido anulado por '+_spCuando({autor:o.pago_pedido_anulado_por, fecha:o.pago_pedido_anulado_en})+'</span>':'')
     +(+o.pago_pedido_monto>0?'<br>Pedido actual: '+simb+fmtNum(o.pago_pedido_monto,2)+' · '+_spCuando({autor:o.pago_pedido_por, fecha:o.pago_pedido_en}):'')+'</div>'
     +'<p style="margin:0 0 10px;font-size:12.5px;color:var(--muted);line-height:1.5">Tesorería arma la OP por lo que pidas (aunque la OG no esté certificada) y la tiene lista para la fecha requerida. La marca Pagada cuando certifiques y liberes. Cargá cada renglón por <strong>%</strong> o por <strong>monto</strong>.</p>'
     +'<div class="frow c2"><div class="field"><label>% para todos los renglones</label><input id="pa_pct_all" type="number" step="0.01" placeholder="ej. 100" oninput="paTodos(\'pct\',this.value)"></div>'
@@ -11781,14 +11782,14 @@ function paTotal(){
   const el=document.getElementById('pa_total'); if(el) el.textContent=(window._paSimb||'$ ')+fmtNum(t,2);
 }
 window.paTotal=paTotal;
-async function guardarPedidoArmado(ogId, quitar){
+async function guardarPedidoArmado(ogId, quitar, forzar){
   const o=ogById(ogId); if(!puedePedirArmado(o)) return;
   const msg=document.getElementById('paMsg');
   const consumido=ogPedidoConsumido(o);
   let patch;
   if(quitar){
-    // lo ya armado queda; se deja de pedir el resto
-    patch={pago_pedido_monto:consumido>0?consumido:null, pago_pedido_nota:null, pago_pedido_detalle:null, pago_pedido_fecha:null};
+    // lo ya armado queda; se deja de pedir el resto (queda registrado quién lo quitó y cuándo)
+    patch=_pedidoAnularPatch(o);
   } else {
     const fecAll=(document.getElementById('pa_fec_all')||{}).value||'';
     const det=[];
@@ -11805,13 +11806,26 @@ async function guardarPedidoArmado(ogId, quitar){
     if(monto<=0){ msg.textContent='Cargá al menos un renglón (% o monto).'; return; }
     if(monto<consumido-0.01){ msg.textContent='Ya hay '+fmtNum(consumido,2)+' armado: el pedido no puede ser menor.'; return; }
     if(monto>tope+ogTotal(o)*0.01){ msg.textContent='Supera lo pendiente de pago de la OG ('+fmtNum(tope,2)+').'; return; }
+    // Monto muy chico frente al renglón (menos del 1%): suele ser un % cargado en la columna Monto. Avisa, no bloquea.
+    if(!forzar){
+      const tot={}; (window._paRen||[]).forEach(r=>{ tot[r.idx]=r.total; });
+      const chicos=det.filter(d=>tot[d.idx]>0 && d.monto<tot[d.idx]*0.01);
+      if(chicos.length){
+        const simb=window._paSimb||'$ ';
+        msg.innerHTML='<div style="background:#fbf1e0;border:1px solid #e3c98f;border-radius:10px;padding:10px 12px;color:#7a5a20;font-size:12.5px;line-height:1.5">'
+          +chicos.map(d=>'Renglón <strong>'+esc(d.desc)+'</strong>: pediste '+simb+fmtNum(d.monto,2)+', que es el '+(v=>v<0.01?v.toLocaleString('es-AR',{maximumSignificantDigits:2}):fmtNum(v,2))(d.monto/tot[d.idx]*100)+'% del renglón.').join('<br>')
+          +'<br>¿Quisiste poner el % en la columna %?'
+          +'<div style="display:flex;gap:8px;margin-top:8px"><button type="button" class="btn ghost sm" onclick="document.getElementById(\'paMsg\').innerHTML=\'\'">Corregir</button>'
+          +'<button type="button" class="btn sm" onclick="guardarPedidoArmado('+o.id+',false,true)">Pedir igual</button></div></div>';
+        return;
+      }
+    }
     patch={pago_pedido_monto:Math.round(monto*100)/100, pago_pedido_detalle:det, pago_pedido_fecha:det.map(d=>d.fecha).sort()[0],
       pago_pedido_nota:(document.getElementById('pa_nota').value||'').trim()||null,
       pago_pedido_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', pago_pedido_en:new Date().toISOString()};
   }
   try{
-    if(DEMO_MODE) Object.assign(o,patch);
-    else{ await sbFetch('/compras_ogs?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(patch)}); Object.assign(o,patch); }
+    await _pedidoPatch(o, patch);
     closeModal(); toast(quitar?'Pedido de armado quitado':'Pedido enviado a Tesorería'); renderComprasKeepScroll();
   }catch(e){ msg.textContent='Error: '+(e.message||e); }
 }
@@ -11859,14 +11873,30 @@ async function confirmOpPagada(id){
   }catch(e){ toast('No se pudo: '+(e.message||e)); }
 }
 window.confirmOpPagada=confirmOpPagada;
-// Tesorería anula el pedido de armado del comprador (p. ej. porque la OG se paga por el camino normal).
-// Mismo efecto que "Quitar pedido" del comprador: lo ya armado queda, se deja de pedir el resto.
-async function _pedidoAnular(o){
-  const c=ogPedidoConsumido(o);
-  const patch={pago_pedido_monto:c>0?c:null, pago_pedido_nota:null, pago_pedido_detalle:null, pago_pedido_fecha:null};
-  if(!DEMO_MODE) await sbFetch('/compras_ogs?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(patch)});
-  Object.assign(o,patch);
+// Guarda cambios del pedido de armado en la OG. Si todavía no se corrió sql/2026-11_pedido_armado_anulado.sql
+// (faltan las columnas pago_pedido_anulado_*), reintenta sin ellas y avisa: el pedido se anula igual, sin registrar quién.
+let PED_ANUL_FALTA=false;
+async function _pedidoPatch(o, patch){
+  if(DEMO_MODE){ Object.assign(o,patch); return; }
+  const sinAnul=()=>{ const y={...patch}; delete y.pago_pedido_anulado_por; delete y.pago_pedido_anulado_en; return y; };
+  let body=PED_ANUL_FALTA?sinAnul():patch;
+  try{ await sbFetch('/compras_ogs?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(body)}); }
+  catch(e){
+    if(PED_ANUL_FALTA || !/pago_pedido_anulado/i.test(String(e&&e.message||e))) throw e;
+    PED_ANUL_FALTA=true; body=sinAnul();
+    await sbFetch('/compras_ogs?id=eq.'+o.id,{method:'PATCH',body:JSON.stringify(body)});
+    toast('Falta correr sql/2026-11_pedido_armado_anulado.sql: no se guardó quién anuló el pedido (el resto sí).');
+  }
+  Object.assign(o,body);
 }
+// Anula el pedido de armado (Tesorería, o el comprador con "Quitar pedido"): lo ya armado queda, se deja de pedir
+// el resto. Queda registrado quién y cuándo.
+function _pedidoAnularPatch(o){
+  const c=ogPedidoConsumido(o);
+  return {pago_pedido_monto:c>0?c:null, pago_pedido_nota:null, pago_pedido_detalle:null, pago_pedido_fecha:null,
+    pago_pedido_anulado_por:(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'', pago_pedido_anulado_en:new Date().toISOString()};
+}
+async function _pedidoAnular(o){ await _pedidoPatch(o, _pedidoAnularPatch(o)); }
 // Texto del pedido abierto (monto que falta, quién lo pidió y para cuándo)
 function _pedidoTxt(o){
   const simb=ogMonedaCode(o)==='USD'?'US$ ':'$ ';
