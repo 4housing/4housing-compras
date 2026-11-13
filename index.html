@@ -11746,15 +11746,18 @@ function openPedirArmado(ogId){
   const prev={}; (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).forEach(d=>{ prev[d.idx]=d; });
   const hoy=new Date().toISOString().slice(0,10);
   const ren=_paRenglones(o); window._paRen=ren;
-  const inp='width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;font-size:13px';
+  const inp='width:100%;box-sizing:border-box;border:1px solid var(--line-strong);border-radius:7px;padding:6px 8px;font-size:13px';
+  // % a pedir: bien visible (más ancho, a la derecha, en negrita, con el signo % al lado)
+  const inpPct=inp+';text-align:right;font-weight:700;padding-right:4px';
+  const tdDesc='<td style="font-size:12px;line-height:1.35">';
   const filas=ren.map(r=>{
-    if(r.disp<=0.01) return '<tr style="color:var(--muted)"><td>'+esc(r.desc)+'</td><td style="text-align:right;white-space:nowrap">'+simb+fmtNum(r.total,2)+'</td><td style="text-align:center">'+(+r.lib||0).toFixed(0)+'%</td>'
+    if(r.disp<=0.01) return '<tr style="color:var(--muted)">'+tdDesc+esc(r.desc)+'</td><td style="text-align:right;white-space:nowrap">'+simb+fmtNum(r.total,2)+'</td><td style="text-align:center">'+(+r.lib||0).toFixed(0)+'%</td>'
       +'<td style="text-align:right">—</td><td colspan="3" style="font-size:12px;font-style:italic">Ya liberado / pagado: se paga por el camino normal</td></tr>';
     const d=Object.assign({}, prev[r.idx]||{});
     if(d.monto!=null && +d.monto>r.disp){ d.monto=r.disp; d.pct=r.total?Math.round(r.disp/r.total*10000)/100:null; }   // pedido anterior: hasta lo disponible hoy
-    return '<tr><td>'+esc(r.desc)+'</td><td style="text-align:right;white-space:nowrap">'+simb+fmtNum(r.total,2)+'</td><td style="text-align:center">'+(+r.lib||0).toFixed(0)+'%</td>'
+    return '<tr>'+tdDesc+esc(r.desc)+'</td><td style="text-align:right;white-space:nowrap">'+simb+fmtNum(r.total,2)+'</td><td style="text-align:center">'+(+r.lib||0).toFixed(0)+'%</td>'
       +'<td style="text-align:right;white-space:nowrap"><strong>'+simb+fmtNum(r.disp,2)+'</strong></td>'
-      +'<td><input id="pa_pct_'+r.idx+'" type="number" step="0.01" min="0" max="100" value="'+(d.pct!=null?d.pct:'')+'" placeholder="%" oninput="paSync('+r.idx+',\'pct\')" style="'+inp+'"></td>'
+      +'<td><div style="display:flex;align-items:center;gap:4px"><input id="pa_pct_'+r.idx+'" type="number" step="0.01" min="0" max="100" value="'+(d.pct!=null?d.pct:'')+'" placeholder="0" oninput="paSync('+r.idx+',\'pct\')" style="'+inpPct+'"><span style="font-weight:700">%</span></div></td>'
       +'<td><input id="pa_mon_'+r.idx+'" type="number" step="0.01" min="0" value="'+(d.monto!=null?(+d.monto).toFixed(2):'')+'" placeholder="monto" oninput="paSync('+r.idx+',\'mon\')" style="'+inp+'"></td>'
       +'<td><input id="pa_fec_'+r.idx+'" type="date" value="'+esc(d.fecha||'')+'" style="'+inp+'"></td></tr>'; }).join('');
   const body='<div style="background:#f3f1e8;border-radius:10px;padding:12px;margin-bottom:12px;font-size:12.5px;line-height:1.6">'
@@ -11766,7 +11769,8 @@ function openPedirArmado(ogId){
     +'<p style="margin:0 0 10px;font-size:12.5px;color:var(--muted);line-height:1.5">Tesorería arma la OP por lo que pidas (aunque la OG no esté certificada) y la tiene lista para la fecha requerida. La marca Pagada cuando certifiques y liberes. Cargá cada renglón por <strong>%</strong> o por <strong>monto</strong>.</p>'
     +'<div class="frow c2"><div class="field"><label>% para todos los renglones</label><input id="pa_pct_all" type="number" step="0.01" placeholder="ej. 100" oninput="paTodos(\'pct\',this.value)"></div>'
     +'<div class="field"><label>Fecha requerida para todos</label><input id="pa_fec_all" type="date" value="'+hoy+'" onchange="paTodos(\'fec\',this.value)"></div></div>'
-    +'<table class="grid usub"><thead><tr><th>Renglón</th><th>Total</th><th>Liberado</th><th title="Total del renglón menos lo ya liberado o pagado">Disponible para pedir</th><th>%</th><th>Monto ('+simb.trim()+')</th><th>Fecha requerida</th></tr></thead><tbody>'+filas+'</tbody>'
+    +'<table class="grid usub" style="table-layout:fixed;width:100%"><colgroup><col><col style="width:104px"><col style="width:86px"><col style="width:110px"><col style="width:92px"><col style="width:116px"><col style="width:136px"></colgroup>'
+    +'<thead><tr><th>Renglón</th><th>Total</th><th>Liberado</th><th title="Total del renglón menos lo ya liberado o pagado">Disponible<br>para pedir</th><th>% a pedir</th><th>Monto ('+simb.trim()+')</th><th>Fecha<br>requerida</th></tr></thead><tbody>'+filas+'</tbody>'
     +'<tfoot><tr><td colspan="5" style="text-align:right;font-weight:700">Total a armar</td><td id="pa_total" style="font-weight:700;text-align:right"></td><td></td></tr></tfoot></table>'
     +'<div class="field" style="margin-top:12px"><label>Nota para Tesorería (opcional)</label><input id="pa_nota" type="text" value="'+esc(o.pago_pedido_nota||'')+'" placeholder="Ej: lo retira el taller el viernes"></div>'
     +'<div id="paMsg" style="font-size:12px;color:#b3261e;min-height:16px"></div>';
