@@ -11950,23 +11950,71 @@ async function confirmAnularPedido(ogId){
 }
 window.askAnularPedido=askAnularPedido; window.confirmAnularPedido=confirmAnularPedido;
 // Card en "Pagos pendientes": pedidos de armado y OP armadas esperando liberación
+// Pedidos de armado: orden por título (por defecto, fecha requerida: lo más urgente primero)
+const ARMPED_SORT={k:'fec', dir:1};
+function armpedSort(ev,k){
+  if(ev && ev.target && ev.target.closest && ev.target.closest('.xlfbtn,.col-resizer')) return;
+  ARMPED_SORT.k===k ? (ARMPED_SORT.dir=-ARMPED_SORT.dir) : (ARMPED_SORT.k=k, ARMPED_SORT.dir=1);
+  renderTesoreria();
+}
+window.armpedSort=armpedSort;
+const _usrMail=e=>String(e||'').split('@')[0];
 function armadoView(){
-  const pedidos=(mem.ogs||[]).filter(o=>!o.anulada && ogPedidoRestante(o)>0.01 && _tesMia(o))
-    .sort((a,b)=>String(a.pago_pedido_fecha||'9999').localeCompare(String(b.pago_pedido_fecha||'9999')));
+  const pedidosAll=(mem.ogs||[]).filter(o=>!o.anulada && ogPedidoRestante(o)>0.01 && _tesMia(o));
   const hoyISO=new Date().toISOString().slice(0,10);
-  const detPed=o=>{ const ctx=(o.items&&o.items.length)?_pedidoCtx(o):null;
-    return (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>'<div'+(ctx&&ogPedidoRenglonFalta(o,d,ctx)<=0.01?' style="text-decoration:line-through;opacity:.55" title="Renglón ya liberado o pagado"':'')+'>'+esc(d.desc)+': '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(d.monto,2)+(d.pct?' ('+d.pct+'%)':'')+' · '+fmtDate(d.fecha)+'</div>').join(''); };
-  const armadas=(mem.pagos||[]).filter(pagoArmado).filter(p=>_tesMia(ogById(p.og_id)||{}));
-  if(!pedidos.length && !armadas.length) return '';
-  const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const sim=o=>ogMonedaCode(o)==='USD'?'US$ ':'$ ';
-  const tPed=pedidos.length?'<div style="font-weight:700;font-size:12.5px;padding:10px 14px 4px">Pedidos de Compras para armar el pago ('+pedidos.length+')</div>'
-    +'<table class="grid" id="armPedTabla" style="font-size:12.5px"><thead><tr><th>OG</th><th>Fecha requerida</th><th>Proveedor</th><th>Comprador</th><th>Liberado</th><th>Pedido</th><th>Ya armado / pagado</th><th>Falta armar</th><th>Pedido por</th><th>Detalle / nota</th><th></th></tr></thead><tbody>'
-    +pedidos.map(o=>'<tr><td><strong>'+esc(o.numero)+'</strong></td><td style="white-space:nowrap'+(o.pago_pedido_fecha&&o.pago_pedido_fecha<=hoyISO?';color:#b4554e;font-weight:700':'')+'">'+(o.pago_pedido_fecha?fmtDate(o.pago_pedido_fecha):'—')+'</td><td style="font-size:11px">'+esc(o.proveedor_cod||o.proveedor||'')+'</td><td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
-      +'<td>'+ogLiberadoPct(o).toFixed(0)+'%</td><td style="text-align:right">'+sim(o)+f2(o.pago_pedido_monto)+'</td><td style="text-align:right">'+sim(o)+f2(Math.max(0,(+o.pago_pedido_monto||0)-ogPedidoRestante(o)))+'</td>'
-      +'<td style="text-align:right"><strong>'+sim(o)+f2(ogPedidoRestante(o))+'</strong></td>'
-      +'<td style="font-size:11px">'+_spCuando({autor:o.pago_pedido_por, fecha:o.pago_pedido_en})+'</td><td style="font-size:11px">'+detPed(o)+(o.pago_pedido_nota?'<div style="color:var(--muted)">'+esc(o.pago_pedido_nota)+'</div>':'')+'</td>'
-      +'<td>'+(canPago()?'<div class="row-actions"><button class="btn sm" onclick="openPago('+o.id+',\'armada\')">Armar OP</button><button class="btn ghost sm" style="color:#b3261e" onclick="askAnularPedido('+o.id+')">Anular pedido</button></div>':'')+'</td></tr>').join('')+'</tbody></table>':'';
+  const f2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  // Detalle compacto: una línea por renglón (descripción cortada; completa al pasar el mouse) y la nota aparte
+  const corta=(t,n)=>{ t=String(t||'').replace(/\s+/g,' ').trim(); return t.length>n?t.slice(0,n-1).trimEnd()+'…':t; };
+  const detPed=o=>{ const ctx=(o.items&&o.items.length)?_pedidoCtx(o):null;
+    return (Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[]).map(d=>{
+      const cub=ctx&&ogPedidoRenglonFalta(o,d,ctx)<=0.01;
+      return '<div title="'+esc(String(d.desc||'').replace(/\s+/g,' ').trim()+(cub?' (ya liberado o pagado)':''))+'" style="white-space:nowrap'+(cub?';text-decoration:line-through;opacity:.55':'')+'">• '
+        +esc(corta(d.desc,50))+' — <strong>'+sim(o)+fmtNum(d.monto,2)+'</strong>'+(d.pct?' ('+d.pct+'%)':'')+(d.fecha?' · '+fmtDate(d.fecha).slice(0,5):'')+'</div>'; }).join('')
+      +(o.pago_pedido_nota?'<div style="color:var(--muted);font-style:italic;white-space:normal">'+esc(o.pago_pedido_nota)+'</div>':''); };
+  const armadas=(mem.pagos||[]).filter(pagoArmado).filter(p=>_tesMia(ogById(p.og_id)||{}));
+  if(!pedidosAll.length && !armadas.length) return '';
+  let tPed='';
+  if(pedidosAll.length){
+    xlfRegister('armped', { rows:()=>pedidosAll, onChange:renderTesoreria, dateVal:o=>String(o.pago_pedido_fecha||'').slice(0,10),
+      val:(o,col)=>{
+        if(col==='og') return o.numero?String(o.numero):'(sin N°)';
+        if(col==='prov') return o.proveedor_cod||o.proveedor||'(sin proveedor)';
+        if(col==='comp') return o.comprador?ogxName(o.comprador):'(sin comprador)';
+        if(col==='por') return _usrMail(o.pago_pedido_por)||'(sin dato)';
+        return '';
+      } });
+    const vis=pedidosAll.filter(o=>xlfPass('armped',o));
+    const claves={ og:o=>+o.numero||o.numero, fec:o=>o.pago_pedido_fecha, prov:o=>o.proveedor_cod||o.proveedor, comp:o=>o.comprador?ogxName(o.comprador):'',
+      lib:o=>ogLiberadoPct(o), falta:o=>ogPedidoRestante(o), por:o=>o.pago_pedido_en };
+    const fn=claves[ARMPED_SORT.k];
+    const pedidos=fn?vis.slice().sort((x,y)=>{ const a=fn(x), b=fn(y); if(a==null||a==='') return 1; if(b==null||b==='') return -1;
+      return ((typeof a==='number'&&typeof b==='number')?a-b:String(a).localeCompare(String(b),'es',{numeric:true}))*ARMPED_SORT.dir; }):vis;
+    const fl=k=>ARMPED_SORT.k===k?(ARMPED_SORT.dir===1?' ▲':' ▼'):'';
+    const th=(label,col,k,st)=>{ const on='onclick="armpedSort(event,\''+k+'\')"';
+      if(col==null) return '<th style="cursor:pointer;'+(st||'')+'" title="Ordenar" '+on+'>'+label+fl(k)+'</th>';
+      return xlfTh('armped',label,col).replace('<th style="white-space:nowrap">'+esc(label), '<th style="white-space:nowrap;cursor:pointer;'+(st||'')+'" title="Ordenar" '+on+'>'+esc(label)+fl(k)); };
+    const filas=pedidos.map(o=>{
+      const rest=ogPedidoRestante(o), cubierto=Math.max(0,(+o.pago_pedido_monto||0)-rest);
+      const fh=_spCuando({fecha:o.pago_pedido_en}).replace(/^ · /,'');
+      return '<tr>'
+        +'<td>'+(canPago()?'<div style="display:flex;flex-direction:column;gap:4px"><button class="btn sm" style="white-space:nowrap" onclick="openPago('+o.id+',\'armada\')">Armar OP</button>'
+          +'<button class="btn ghost sm" style="white-space:nowrap;color:#b3261e" onclick="askAnularPedido('+o.id+')">Anular pedido</button></div>':'')+'</td>'
+        +'<td><strong>'+esc(o.numero)+'</strong></td>'
+        +'<td style="white-space:nowrap'+(o.pago_pedido_fecha&&o.pago_pedido_fecha<=hoyISO?';color:#b4554e;font-weight:700':'')+'">'+(o.pago_pedido_fecha?fmtDate(o.pago_pedido_fecha):'—')+'</td>'
+        +'<td style="font-size:11.5px">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
+        +'<td style="font-size:11.5px;white-space:nowrap">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
+        +'<td style="text-align:center">'+ogLiberadoPct(o).toFixed(0)+'%</td>'
+        +'<td style="text-align:right;white-space:nowrap"><strong style="font-size:13.5px">'+sim(o)+f2(rest)+'</strong>'
+          +'<div style="font-size:10.5px;color:var(--muted)">de '+sim(o)+f2(o.pago_pedido_monto)+' pedido'+(cubierto>0.01?'<br>'+sim(o)+f2(cubierto)+' ya armado / pagado':'')+'</div></td>'
+        +'<td style="font-size:11.5px;white-space:nowrap" title="'+esc(o.pago_pedido_por||'')+'">'+esc(_usrMail(o.pago_pedido_por)||'—')+'<div style="font-size:10.5px;color:var(--muted)">'+fh+'</div></td>'
+        +'<td style="font-size:11.5px;line-height:1.45">'+detPed(o)+'</td></tr>'; }).join('')
+      || '<tr><td colspan="9" style="color:var(--muted);padding:14px">Ningún pedido coincide con los filtros.</td></tr>';
+    tPed='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px 4px"><div style="font-weight:700;font-size:12.5px">Pedidos de Compras para armar el pago ('+pedidosAll.length+')</div>'
+      +xlfClearAllBtn('armped')+'<button class="btn ghost sm" style="'+(xlfHasAny('armped')?'':'margin-left:auto')+'" onclick="tblAutofit(\'#armPedTabla\')">Auto-ajustar columnas</button></div>'
+      +'<table class="grid" id="armPedTabla" style="font-size:12.5px"><thead><tr><th></th>'+th('OG','og','og')+th('Fecha requerida','__fecha__','fec')+th('Proveedor','prov','prov')
+      +th('Comprador','comp','comp')+th('Liberado',null,'lib')+th('Falta armar',null,'falta','text-align:right')+th('Pedido por','por','por')+'<th>Detalle / nota</th></tr></thead><tbody>'+filas+'</tbody></table>';
+  }
   const tArm=armadas.length?'<div style="font-weight:700;font-size:12.5px;padding:12px 14px 4px">OP armadas, esperando liberación ('+armadas.length+')</div>'
     +'<table class="grid" id="armOpTabla" style="font-size:12.5px"><thead><tr><th>OP</th><th>Fecha</th><th>OG</th><th>Proveedor</th><th>Comprador</th><th>Monto</th><th>Liberado</th><th>Estado</th><th></th></tr></thead><tbody>'
     +armadas.map(p=>{ const o=ogById(p.og_id)||{}; const falta=opArmadaFalta(p); const lista=opArmadaLista(p);
