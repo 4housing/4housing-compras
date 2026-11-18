@@ -10801,24 +10801,19 @@ function fridayOf(d){ const f=new Date(d); const dow=f.getDay(); f.setDate(f.get
 // baldes semanales, para que la Previsión coincida siempre con "Detalle por OG" — vienen de la misma
 // fuente, filtrada igual (recibe "items", la lista ya filtrada por ▾ en proyectadoView).
 function proyeccionSemanal(items){
+  // Cada saldo va en la moneda PACTADA de la OG, sin convertir: las OG en dólares se proyectan en dólares
+  // (aunque se paguen en pesos al TC del día) para no mezclar monedas.
   const buckets={};
   const add=(key,mon,monto)=>{ buckets[key]=buckets[key]||{ARS:0,USD:0}; buckets[key][mon]+=monto; };
   items.forEach(x=>{
-    const o=x.o, monPago=ogMonedaPagoCode(o);
-    if(!monPago) return;   // compensación: no mueve caja, no entra en la previsión de caja
-    const mon=x.mon;   // moneda en la que está pactado/expresado el monto de la OG
-    const tc=(o.tc_pesos!=null&&o.tc_pesos!=='')?+o.tc_pesos:null;
-    // Convierte un monto pactado en "mon" a la moneda en la que efectivamente se paga (monPago).
-    // Sin TC cargado: mejor esfuerzo, no convierte (subestima/sobreestima, pero no rompe la previsión).
-    const aMonPago=m=>{
-      if(mon===monPago || !tc) return m;
-      return mon==='USD' ? m*tc : m/tc;
-    };
-    const pend=aMonPago(x.sc+x.cl+x.lp);
-    if(pend<=0.5) return;
-    if(x.atrasado){ add('atrasado', monPago, pend); return; }
-    if(!x.fechaPago){ add('sinfecha', monPago, pend); return; }
-    add(x.fechaPago, monPago, pend);
+    const o=x.o;
+    if(!ogMonedaPagoCode(o)) return;   // compensación: no mueve caja, no entra en la previsión de caja
+    const mon=x.mon==='USD'?'USD':'ARS';
+    const pend=x.sc+x.cl+x.lp;
+    if(pend<=0.005) return;
+    if(x.atrasado){ add('atrasado', mon, pend); return; }
+    if(!x.fechaPago){ add('sinfecha', mon, pend); return; }
+    add(x.fechaPago, mon, pend);
   });
   return buckets;
 }
@@ -10835,9 +10830,6 @@ function proyeccionSemanalHtml(items){
     delete buckets[k];
   });
   const claves=['atrasado', ...semanas, 'masadelante', 'sinfecha'];
-  const hayAlgo=claves.some(k=>{ const b=buckets[k]; return b&&(b.ARS>0.5||b.USD>0.5); });
-  if(!hayAlgo) return '';
-  const maxARS=Math.max(1,...claves.map(k=>(buckets[k]||{}).ARS||0));
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const lbl=k=>{
     if(k==='atrasado') return 'Atrasado (pagar ya)';
@@ -10845,23 +10837,32 @@ function proyeccionSemanalHtml(items){
     if(k==='masadelante') return 'Más adelante (+'+HORIZONTE+' sem.)';
     return 'Semana al viernes '+fmtDate(k);
   };
-  let acumARS=0, acumUSD=0;
-  const rows=claves.map(k=>{
-    const b=buckets[k]||{ARS:0,USD:0};
-    if(b.ARS<=0.5 && b.USD<=0.5) return '';
-    const esAtrasado=(k==='atrasado');
-    const acumula=(k!=='sinfecha'&&k!=='masadelante');
-    if(acumula){ acumARS+=b.ARS; acumUSD+=b.USD; }
-    const bar=b.ARS>0.5?('<div style="background:#e6e3d5;border-radius:4px;height:7px;overflow:hidden;margin-top:3px"><div style="background:'+(esAtrasado?'#b4554e':'#5f7a4e')+';height:100%;width:'+Math.max(2,Math.min(100,b.ARS/maxARS*100))+'%"></div></div>'):'';
-    return '<tr'+(esAtrasado?' style="background:#fdece9"':'')+'>'
-      +'<td style="font-size:12px'+(esAtrasado?';color:#b4554e;font-weight:700':'')+'">'+lbl(k)+'</td>'
-      +'<td style="text-align:right">'+(b.ARS>0.5?'$ '+fmt2(b.ARS):'—')+bar+'</td>'
-      +'<td style="text-align:right">'+(b.USD>0.5?'US$ '+fmt2(b.USD):'—')+'</td>'
-      +'<td style="text-align:right;color:var(--muted);font-size:11.5px">'+(acumula?('$ '+fmt2(acumARS)+(acumUSD>0.5?' · US$ '+fmt2(acumUSD):'')):'—')+'</td></tr>';
-  }).join('');
+  // Una tabla por moneda (pesos arriba, dólares abajo). El acumulado suma todas las filas: la última da el total.
+  const tabla=(mon)=>{
+    const simb=mon==='USD'?'US$ ':'$ ';
+    if(!claves.some(k=>((buckets[k]||{})[mon]||0)>0.005)) return '';
+    const max=Math.max(1,...claves.map(k=>(buckets[k]||{})[mon]||0));
+    let acum=0;
+    const rows=claves.map(k=>{
+      const v=(buckets[k]||{})[mon]||0;
+      if(v<=0.005) return '';
+      const esAtrasado=(k==='atrasado');
+      acum+=v;
+      const bar='<div style="background:#e6e3d5;border-radius:4px;height:7px;overflow:hidden;margin-top:3px"><div style="background:'+(esAtrasado?'#b4554e':'#5f7a4e')+';height:100%;width:'+Math.max(2,Math.min(100,v/max*100))+'%"></div></div>';
+      return '<tr'+(esAtrasado?' style="background:#fdece9"':'')+'>'
+        +'<td style="font-size:12px'+(esAtrasado?';color:#b4554e;font-weight:700':'')+'">'+lbl(k)+'</td>'
+        +'<td style="text-align:right">'+simb+fmt2(v)+bar+'</td>'
+        +'<td style="text-align:right;color:var(--muted);font-size:11.5px">'+simb+fmt2(acum)+'</td></tr>';
+    }).join('');
+    return '<div style="font-weight:700;font-size:12.5px;padding:12px 15px 4px">'+(mon==='USD'?'En dólares (OG pactadas en dólares)':'En pesos (OG pactadas en pesos)')+'</div>'
+      +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Semana</th><th style="text-align:right">Necesita en '+(mon==='USD'?'dólares':'pesos')+'</th><th style="text-align:right">Acumulado</th></tr></thead><tbody>'+rows+'</tbody>'
+      +'<tfoot><tr><td style="text-align:right;font-weight:700">Total</td><td style="text-align:right;font-weight:700">'+simb+fmt2(acum)+'</td><td></td></tr></tfoot></table>';
+  };
+  const tARS=tabla('ARS'), tUSD=tabla('USD');
+  if(!tARS && !tUSD) return '';
   return '<div class="card" style="margin-top:14px"><div class="card-h"><h3>Previsión semana a semana</h3><span class="meta">Según la Fecha de entrega de cada renglón · corte los viernes (día de pago)</span></div>'
-    +'<table class="grid" style="font-size:12.5px"><thead><tr><th>Semana</th><th style="text-align:right">Necesita en pesos</th><th style="text-align:right">Necesita en dólares</th><th style="text-align:right">Acumulado</th></tr></thead><tbody>'+rows+'</tbody></table>'
-    +'<div style="font-size:11px;color:var(--muted);padding:10px 15px">Se calcula sobre todo lo que cada renglón todavía tiene sin pagar (esté sin certificar, certificado sin liberar, o liberado sin pagar) — lo cerrado se excluye, porque no es costo y nunca se paga. "Sin fecha estimada" son renglones sin Fecha de entrega cargada y OGs sin renglones — no se pueden ubicar en el calendario todavía.</div></div>';
+    +tARS+tUSD
+    +'<div style="font-size:11px;color:var(--muted);padding:10px 15px">Se calcula sobre todo lo que cada renglón todavía tiene sin pagar (esté sin certificar, certificado sin liberar, o liberado sin pagar) — lo cerrado se excluye, porque no es costo y nunca se paga. Cada OG va en la moneda en que se pactó, sin convertir: las OG en dólares están en la tabla de dólares aunque se paguen en pesos (al TC del día de pago). Las compensaciones no mueven caja y no se incluyen. "Sin fecha estimada" son renglones sin Fecha de entrega cargada y OGs sin renglones — no se pueden ubicar en el calendario todavía.</div></div>';
 }
 window.proyeccionSemanalHtml=proyeccionSemanalHtml;
 
