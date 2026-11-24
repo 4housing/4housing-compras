@@ -31,6 +31,24 @@ pañol, herramientas, mantenimiento, stock). Parte del portal unificado 4housing
 - Datos confidenciales (cuentas, aux_*) solo los ve quien tiene `ve_confidencial`;
   caja/pagos solo los edita `es_tesorero`.
 
+## ⚠ Cálculos copiados en el conector de Claude (4housing Apps)
+
+El conector MCP del portal (`4housing/portal`, `supabase/functions/conector-4housing/`) tiene
+**copias** de cálculos de esta app, para que Claude dé los mismos números que la pantalla:
+
+- `compras_gp.ts` → foto **económica** de Gestión de Proyectos (comprado vs presupuesto):
+  `gpAgregado`, `gpTotEf`, `gpImputar`, `gpOGsDelProyecto`, `gpOGPartes`, `gpOGArs`, `gpTcDia`,
+  `gpTrasNetoCompras`, `gpEstadoSeccion`, `COSTEO_NEW_OPC`, `itemTotal`, `ogTotal`, cierres, moneda.
+- `compras_fin.ts` → foto **financiera** de OGs: `certMonto`, `ogAcumMonto`, `ogLiberado`,
+  `ogPagadoPct`/`ogPagadoMonto`, `ogMaxPagable`/`ogPendPagoMonto`, `ogArmadoMonto`, `ogEstado`,
+  `ogPesosPagados`, `pagoMontoOG`, `asientoRepartoRenglones`, `pgPagadoRenglon`, `pgLiberadoRenglon`,
+  `_asiPctPago`/`_asiPctGasto`, `_pgBonifOG`.
+
+**Si cambiás cualquiera de esas funciones (o qué cuenta como comprado / certificado / pagado),
+avisá para actualizar también el conector** — si no, Claude va a dar números distintos a la app.
+Copias tomadas del commit `33f8945` (2026-11-18). El encabezado de cada archivo del conector
+lista las funciones de origen.
+
 ## Reglas de trabajo — NO NEGOCIABLES
 
 > **Criterio, no candado.** Estas reglas son el default. Se pueden saltar si el dueño
