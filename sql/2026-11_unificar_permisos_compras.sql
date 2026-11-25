@@ -1,13 +1,24 @@
--- PROPUESTA — NO EJECUTAR TODAVÍA. Para revisión de Pablo/Mica antes de correr nada.
+-- Unificar permisos de Compras con el modelo del portal (perfiles_sector),
+-- para administrarse desde admin.html como el resto de las apps.
 --
--- Objetivo: que Compras deje de tener su propio sistema de roles
--- (compras_usuarios_autorizados) y use el mismo modelo que el resto de las
--- apps del portal (perfiles_sector.permisos), administrable desde admin.html.
+-- Diseño aprobado por Pablo (conversación de Claude Code, nov/2026):
+--   - es_admin             -> rol "Admin" del sector compras (perfiles_sector.cargo),
+--                             el mismo selector que ya usan todas las apps.
+--   - es_comprador         -> 'compras' y 'seguimiento' en permisos.editar
+--   - es_tesorero          -> 'tesoreria' en permisos.editar
+--   - es_panol             -> 'panol' en permisos.editar
+--   - ve_confidencial      -> permisos.ve_confidencial (flag suelto, no hay pestaña:
+--     es_certificador      -> permisos.es_certificador  mismo mecanismo que
+--     puede_cargar_asiento -> permisos.puede_cargar_asiento  "Edita costos" en LABO
+--     puede_eliminar_pagos -> permisos.puede_eliminar_pagos  o ve_sueldos en Planif.)
+--   - es_finanzas          -> no se migra: no lo usa ni la app ni ningún RLS (flag
+--                             muerto, confirmado por grep). Se puede eliminar la
+--                             columna en una limpieza aparte.
 --
--- Ver la explicación completa (qué cambia, qué riesgos hay, qué preguntas
--- quedan abiertas) en la conversación de Claude Code. Este archivo es solo
--- el borrador de SQL; los cambios de index.html y admin.html van aparte,
--- después de que se apruebe este diseño.
+-- NO se ejecuta solo: lo corre Pablo a mano en el SQL Editor de Supabase,
+-- después de revisar. Los cambios de index.html (loadRole) y admin.html
+-- (checkboxes de los 4 flags sueltos) van en el mismo PR, pero no dependen de
+-- que este SQL ya haya corrido para poder revisarse.
 --
 -- IMPORTANTE: esto NO toca ninguna política de RLS existente. Las 8 políticas
 -- que llaman a compras_flag(...) (compras_caja, compras_pagos, compras_cuentas,
@@ -16,9 +27,11 @@
 -- se REDEFINE con el mismo nombre y firma, así que no hay que tocarlas.
 --
 -- IMPORTANTE: compras_usuarios_autorizados NO se borra en esta migración.
--- Sigue siendo la fuente del campo `nombre` (formato "Apellido, Nombre") que
--- usa el matching de comprador/certificador contra las OG viejas — ver nota
--- más abajo, es un hallazgo real de los datos de producción.
+-- Sigue siendo la fuente del campo `nombre` (formato "Apellido, Nombre"), que
+-- es lo que compara el matching de comprador/certificador contra las OG ya
+-- cargadas. El `perfiles.nombre` del portal en muchos casos es solo el
+-- usuario de mail (ej. "agustinarodriguez"), no sirve para ese matching —
+-- verificado contra los datos reales antes de proponer esto.
 
 begin;
 
@@ -26,34 +39,20 @@ begin;
 -- 1) Volcar los flags de compras_usuarios_autorizados a perfiles_sector
 --    (sector='compras'), para cada email que YA tiene perfil en el portal.
 --
---    Mapeo elegido:
---      es_admin             -> permisos.es_admin              (flag propio)
---      ve_confidencial      -> permisos.ve_confidencial       (flag propio)
---      es_certificador      -> permisos.es_certificador       (flag propio)
---      puede_cargar_asiento -> permisos.puede_cargar_asiento  (flag propio)
---      puede_eliminar_pagos -> permisos.puede_eliminar_pagos  (flag propio)
---      es_comprador         -> 'compras' y 'seguimiento' en editar
---      es_tesorero          -> 'tesoreria' en editar
---      es_panol             -> 'panol' en editar
---      es_finanzas          -> (no se migra: no lo usa ni la app ni ningún RLS,
---                                es un flag muerto; se puede confirmar y
---                                eliminar la columna en una limpieza aparte)
---
 --    ver: todas las secciones (hoy Compras no filtra por ver, así que no hay
 --    forma de restringir sin cambiar la app primero — nadie pierde acceso).
 --
---    cargo: 'admin' si es_admin; si no, 'editor' si algo quedó en editar;
---    si no, 'lector'. (Dato administrativo nomás: hoy ningún gate de Compras
---    lee el cargo directamente, solo permisos — pero así queda consistente
---    con cómo se ve en la pantalla de ADMIN.)
---
 --    OJO — esto PISA el cargo/permisos que ya tuviera cada usuario en
---    perfiles_sector para sector='compras'. Es intencional: los datos que hay
---    ahí hoy son de relleno (se cargaron cuando se habilitó el sector, pero
---    la app de Compras nunca los leyó), así que no hay nada real que perder.
---    Verificado contra producción: la mayoría tiene cargo='miembro' (un valor
---    que ni siquiera es uno de los 3 roles que ofrece la pantalla de ADMIN
---    para Compras) y permisos={} — no reflejan accesos reales de nadie.
+--    perfiles_sector para sector='compras'. Es intencional: verificado contra
+--    producción, lo que hay ahí hoy es de relleno (cargo='miembro' —ni
+--    siquiera uno de los 3 roles que ofrece ADMIN para Compras— y
+--    permisos={}), no reflejan el acceso real de nadie: la app nunca los leyó.
+--
+--    alexiscarranza@4housing.com.ar (sin perfil en el portal) y
+--    administracion@4housing.com.ar son la misma persona (confirmado por
+--    Pablo) usando dos mails distintos; administracion@ ya tiene todos los
+--    flags que tenía alexiscarranza@ y además comprador/certificador, así que
+--    no se pierde nada al no migrar la fila sin perfil.
 
 with datos as (
   select
@@ -82,7 +81,6 @@ mapeado as (
     jsonb_strip_nulls(jsonb_build_object(
       'ver',  to_jsonb(d.todas_secciones),
       'editar', to_jsonb(d.editar_calc),
-      'es_admin',             case when d.es_admin then true else null end,
       'es_certificador',      case when d.es_certificador then true else null end,
       've_confidencial',      case when d.ve_confidencial then true else null end,
       'puede_cargar_asiento', case when d.puede_cargar_asiento then true else null end,
@@ -100,9 +98,11 @@ on conflict (perfil_id, sector) do update
 
 -- Reporte de verificación: emails de compras_usuarios_autorizados que NO
 -- tienen perfil en el portal (no se migraron, quedan sin fila en
--- perfiles_sector). Revisar a mano: ¿son gente sin login real (certificadores
--- históricos que nunca usaron la app, p.ej. los que tienen ".SIN-LOGIN" en el
--- email) o faltó darles de alta en el portal?
+-- perfiles_sector). Esperado: alexiscarranza@4housing.com.ar (duplicado de
+-- administracion@, ver nota arriba) y los 4 emails ".SIN-LOGIN" (gente que
+-- nunca entró a la app ella misma — certificadores/compradores históricos
+-- solo de nombre en OGs viejas). Si aparece alguien más acá, falta darlo de
+-- alta en el portal antes de confiar en esta migración para esa persona.
 select u.email, u.nombre
 from compras_usuarios_autorizados u
 where not exists (
@@ -126,7 +126,7 @@ set search_path to 'public'
 as $function$
   select coalesce((
     select case p_flag
-             when 'admin'        then coalesce((ps.permisos->>'es_admin')::boolean, false)
+             when 'admin'        then (ps.cargo = 'admin')
              when 'confidencial' then coalesce((ps.permisos->>'ve_confidencial')::boolean, false)
              when 'certificador' then coalesce((ps.permisos->>'es_certificador')::boolean, false)
              when 'tesorero'     then coalesce((ps.permisos->'editar') ? 'tesoreria', false)
@@ -144,11 +144,9 @@ commit;
 -- ========================================================================
 -- Pendiente (NO en este archivo, se hace en una limpieza aparte, más adelante
 -- y con más margen de que no quede nadie afuera por error):
---   - Confirmar con Pablo/Mica los 4 emails con ".SIN-LOGIN" y
---     alexiscarranza@4housing.com.ar (no tiene perfil — ¿duplicado de
---     administracion@4housing.com.ar, que sí lo tiene?).
 --   - Una vez confirmado que todo sigue andando igual un tiempo, eliminar las
 --     columnas booleanas de compras_usuarios_autorizados (dejar solo
---     email/nombre, que sigue haciendo falta — ver nota abajo) y dar de baja
---     compras_flag() en favor de leer perfiles_sector directo donde haga falta.
---   - Confirmar y eliminar la columna es_finanzas (no se usa en ningún lado).
+--     email/nombre, que sigue haciendo falta) y la columna es_finanzas.
+--   - Dar de baja la fila de alexiscarranza@4housing.com.ar en
+--     compras_usuarios_autorizados (duplicado de administracion@), conservando
+--     su `nombre` si hace falta para algún matching histórico.

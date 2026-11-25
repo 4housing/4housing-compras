@@ -1038,21 +1038,40 @@ async function loadRole(){
   if(DEMO_MODE){ applyDemoRole(); return; }
   ROLE={comprador:false, certificador:false, tesorero:false, confidencial:false, admin:false, asiento:false, eliminarPagos:false, panol:false};   // por defecto, sin permisos
   MI_NOMBRE=''; ES_DIRECCION=false;
+  // El nombre (formato "Apellido, Nombre") sigue saliendo de acá: es lo que matchea
+  // contra el campo comprador/certificador de las OG ya cargadas, y perfiles.nombre
+  // del portal no sirve para eso (en muchos casos es solo el usuario de mail).
   try{
     const email=(AUTH_USER&&AUTH_USER.email)||'';
-    if(!email) return;
-    const rows=await sbFetch('/compras_usuarios_autorizados?select=*&email=eq.'+encodeURIComponent(email));
-    const u=rows&&rows[0];
-    if(u){ ROLE={comprador:!!u.es_comprador, certificador:!!u.es_certificador, tesorero:!!u.es_tesorero, confidencial:!!u.ve_confidencial, admin:!!u.es_admin, asiento:!!u.puede_cargar_asiento, eliminarPagos:!!u.puede_eliminar_pagos, panol:!!u.es_panol}; MI_NOMBRE=u.nombre||''; }
-  }catch(e){ /* si falla, queda sin permisos */ }
-  // es_direccion del portal (perfiles) — igual criterio que nav.js. Habilita la estructura de Gestión de Proyectos.
+    if(email){ const rows=await sbFetch('/compras_usuarios_autorizados?select=nombre&email=eq.'+encodeURIComponent(email)); MI_NOMBRE=(rows&&rows[0]&&rows[0].nombre)||''; }
+  }catch(e){ /* si falla, queda sin nombre: no va a poder editar/certificar sus OGs, pero no rompe nada más */ }
+  // es_direccion y los permisos de Compras salen del portal (perfiles / perfiles_sector),
+  // igual que el resto de las apps — ver sql/2026-11_unificar_permisos_compras.sql.
   try{
     const uid=(AUTH_USER&&AUTH_USER.id)||'';
-    if(uid){ const pr=await sbFetch('/perfiles?select=es_direccion&id=eq.'+encodeURIComponent(uid)); ES_DIRECCION=!!(pr&&pr[0]&&pr[0].es_direccion); }
-  }catch(e){ /* si falla, no es dirección */ }
+    if(uid){
+      const pr=await sbFetch('/perfiles?select=es_direccion,perfiles_sector(cargo,permisos)&id=eq.'+encodeURIComponent(uid)+'&perfiles_sector.sector=eq.compras');
+      const p=pr&&pr[0];
+      ES_DIRECCION=!!(p&&p.es_direccion);
+      const ps=(p&&p.perfiles_sector&&p.perfiles_sector[0])||null;
+      if(ps){
+        const perm=ps.permisos||{}; const editar=new Set(Array.isArray(perm.editar)?perm.editar:[]);
+        ROLE={
+          admin: ps.cargo==='admin',
+          confidencial: !!perm.ve_confidencial,
+          certificador: !!perm.es_certificador,
+          asiento: !!perm.puede_cargar_asiento,
+          eliminarPagos: !!perm.puede_eliminar_pagos,
+          tesorero: editar.has('tesoreria'),
+          comprador: editar.has('compras'),
+          panol: editar.has('panol'),
+        };
+      }
+    }
+  }catch(e){ /* si falla, queda sin permisos */ }
 }
 function canEditOG(){ return ROLE.comprador||ROLE.admin; }
-function canPanol(){ return !!(ROLE.admin||ROLE.panol); }   // Abastecimiento: quien tiene es_panol en usuarios autorizados (hoy Iván y Nicolás) y el administrador
+function canPanol(){ return !!(ROLE.admin||ROLE.panol); }   // Abastecimiento: quien tiene editar=panol en perfiles_sector (sector compras) y el administrador
 function canCert(){ return ROLE.certificador||ROLE.admin; }
 function canPago(){ return ROLE.tesorero||ROLE.admin; }
 // N° de asiento Tango: a diferencia del resto de Tesorería (cualquier tesorero/admin), esto lo
