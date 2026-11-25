@@ -6544,7 +6544,10 @@ function gpRenderLista(){
       +'<div class="kpi"><div class="kpi-label">Presupuestado</div><div class="kpi-value">'+gpMoney(tot.presAr)+'</div><div class="kpi-sub">'+conAg.length+' de '+cons.length+' proyecto'+(cons.length===1?'':'s')+' con costeo cargado</div></div>'
       +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(tot.comp)+'</div><div class="kpi-sub">avance de compra '+gpPct(avanceTot)+'</div></div>'
       +'<div class="kpi"><div class="kpi-label">Saldo</div><div class="kpi-value '+desvTone+'">'+(tot.desv>=0?'+':'')+gpMoney(tot.desv)+'</div><div class="kpi-sub">'+(tot.desv>0?'sobrecosto neto':(tot.desv<0?'ahorro neto':'—'))+' (extracosto − ahorro, sumado entre proyectos)</div></div>'
-      +'<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value '+(tot.pendRepArs>1?'bad':'')+'">'+gpMoney(tot.pendRepArs)+'</div><div class="kpi-sub">sin clasificar '+gpMoney(tot.sinClasArs)+'</div></div>';
+      // Mismas dos tarjetas (separadas, no una sola) que ya usa el tablero de un proyecto individual
+      // — ahí quedó claro que son dos cosas distintas, acá iban mezcladas en una y no se entendía.
+      +(tot.sinClasArs>1?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(tot.sinClasArs)+'</div><div class="kpi-sub">suma entre proyectos</div></div>'):'')
+      +(tot.pendRepArs>1?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(tot.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'');
     const ranking=conAg.slice().sort((a,b)=>Math.abs(b.ag.tot.desv)-Math.abs(a.ag.tot.desv)).slice(0,5).map(c=>{
       const est=(c.p.estado||'en_curso'); const cls=est==='cerrado'?'b-gris':(est==='pausado'?'b-ambar':'b-verde');
       const av=c.ag.tot.presAr>0?c.ag.tot.comp/c.ag.tot.presAr:0;
