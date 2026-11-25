@@ -6393,7 +6393,7 @@ window.panolHistImportar=panolHistImportar;
    Base presupuestaria (costeo) + seguimiento de OC de Tango por rubro.
    Tablas: compras_gp_proyectos / _presupuesto / _mapeo / _oc / _importaciones
    ================================================================ */
-const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], ogSeccion:{}, charts:{}, filtroSeccion:'' };
+const GP = { proyectos:[], actualId:null, proyecto:null, presupuesto:[], oc:[], mapeo:[], imports:[], reparto:[], traslados:[], solp:[], ogSeccion:{}, charts:{}, filtroSeccion:'', consolidado:null, filtroEstado:'en_curso' };
 // Firma de un renglón: identifica "ese gasto" entre importaciones (N° OC + artículo, o descripción si no hay código)
 // Total que cuenta como COMPRADO de un renglón de OC (Informe OC de Tango):
 //  - Estado con "ANUL" (EMITIDA Y ANULADA, AUTORIZADA Y ANULADA…): 0.
@@ -6474,13 +6474,45 @@ async function gpLoadProyecto(id){
   GP.solp=(solp||[]).filter(s=> _obraNums(s.obra_cod).some(n=>onset.has(n)));
 }
 
+// Tablero consolidado (lista de proyectos): agrega gpAgregado() de TODOS los proyectos a la vez.
+// No toca gpAgregado() (la reutiliza tal cual, sin cambiarla: la usa también el conector de Claude,
+// ver CLAUDE.md) — para cada proyecto, pisa temporalmente el estado GP.* de "proyecto actual" con los
+// datos de ESE proyecto, llama a gpAgregado(), guarda el resultado, y sigue con el próximo. Como la
+// lista solo se muestra cuando no hay un proyecto abierto (GP.actualId null), no hay nada que
+// restaurar al terminar: se deja GP.proyecto en null, igual que está antes de abrir cualquiera.
+async function gpLoadConsolidado(){
+  const proyectos=GP.proyectos||[];
+  if(!proyectos.length){ GP.consolidado=[]; return; }
+  const [pres, oc, map, rep, ogsec] = await Promise.all([
+    sbFetchAll('/compras_gp_presupuesto?select=*'),
+    sbFetchAll('/compras_gp_oc?select=*'),
+    sbFetchAll('/compras_gp_mapeo?select=*'),
+    sbFetchAll('/compras_gp_reparto?select=*'),
+    sbFetchAll('/compras_gp_og_seccion?select=og_id,seccion,proyecto_id').catch(()=>[]),
+  ]);
+  const porProyecto=(rows)=>{ const m={}; (rows||[]).forEach(r=>{ (m[r.proyecto_id]=m[r.proyecto_id]||[]).push(r); }); return m; };
+  const presBy=porProyecto(pres), ocBy=porProyecto(oc), mapBy=porProyecto(map), repBy=porProyecto(rep), ogsecBy=porProyecto(ogsec);
+  GP.consolidado = proyectos.map(p=>{
+    const miPresupuesto=presBy[p.id]||[];
+    if(!miPresupuesto.length) return {p, ag:null};   // sin costeo cargado todavía: no entra en los totales
+    GP.proyecto=p; GP.presupuesto=miPresupuesto; GP.oc=ocBy[p.id]||[]; GP.mapeo=mapBy[p.id]||[]; GP.reparto=repBy[p.id]||[];
+    GP.ogSeccion={}; (ogsecBy[p.id]||[]).forEach(r=>{ GP.ogSeccion[r.og_id]=r.seccion; });
+    return {p, ag:gpAgregado()};
+  });
+  GP.proyecto=null; GP.presupuesto=[]; GP.oc=[]; GP.mapeo=[]; GP.reparto=[]; GP.ogSeccion={};
+}
+
 async function renderProyectos(){
   if(DEMO_MODE){ document.getElementById('topActions').innerHTML=''; C().innerHTML='<div class="empty">Gestión de Proyectos requiere estar conectado a Supabase (no disponible en modo demo).</div>'; return; }
   C().innerHTML='<div class="empty">Cargando…</div>';
   try{ await gpLoadLista(); }
   catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar: '+esc(e.message)+'</div>'; return; }
   if(GP.actualId && !(GP.proyectos||[]).some(p=>String(p.id)===String(GP.actualId))) GP.actualId=null;
-  if(!GP.actualId){ return gpRenderLista(); }
+  if(!GP.actualId){
+    try{ await gpLoadConsolidado(); }
+    catch(e){ GP.consolidado=null; /* el tablero consolidado es un extra: si falla, la lista de proyectos igual se ve */ }
+    return gpRenderLista();
+  }
   C().innerHTML='<div class="empty">Cargando proyecto…</div>';
   try{ await gpLoadProyecto(GP.actualId); }
   catch(e){ C().innerHTML='<div class="empty" style="color:#b4554e">No se pudo cargar el proyecto: '+esc(e.message)+'</div>'; return; }
@@ -6488,23 +6520,68 @@ async function renderProyectos(){
 }
 window.renderProyectos=renderProyectos;
 
-/* -------- Lista de proyectos -------- */
+function gpSetFiltroEstado(v){ GP.filtroEstado=v; gpRenderLista(); }
+window.gpSetFiltroEstado=gpSetFiltroEstado;
+
+/* -------- Lista de proyectos (+ tablero consolidado) -------- */
 function gpRenderLista(){
   document.getElementById('topActions').innerHTML = (esDireccion()? '<button class="btn" onclick="gpNuevoProyecto()">'+ICO.plus+'Nuevo proyecto</button>':'');
   const ps=GP.proyectos||[];
-  const cards = ps.map(p=>{
+  const filtro=GP.filtroEstado||'en_curso';
+  const estLbl={en_curso:'En curso', pausado:'Pausado', cerrado:'Cerrado'};
+  const chips=[['en_curso','En curso'],['pausado','Pausado'],['cerrado','Cerrado'],['todas','Todas']]
+    .map(([k,l])=>'<button class="solp-chip'+(filtro===k?' on':'')+'" onclick="gpSetFiltroEstado(\''+k+'\')">'+l+'</button>').join('');
+
+  const cons=(GP.consolidado||[]).filter(c=>filtro==='todas' || (c.p.estado||'en_curso')===filtro);
+  let consolidadoHtml='';
+  if(GP.consolidado){
+    const conAg=cons.filter(c=>c.ag);
+    const tot=conAg.reduce((a,c)=>({presAr:a.presAr+c.ag.tot.presAr, comp:a.comp+c.ag.tot.comp, desv:a.desv+c.ag.tot.desv, sinClasArs:a.sinClasArs+c.ag.sinClasArs, pendRepArs:a.pendRepArs+c.ag.pendRepArs}),
+      {presAr:0,comp:0,desv:0,sinClasArs:0,pendRepArs:0});
+    const avanceTot=tot.presAr>0?tot.comp/tot.presAr:0;
+    const desvTone=tot.desv>0?'bad':(tot.desv<0?'ok':'');
+    const kpis=''
+      +'<div class="kpi"><div class="kpi-label">Presupuestado</div><div class="kpi-value">'+gpMoney(tot.presAr)+'</div><div class="kpi-sub">'+conAg.length+' de '+cons.length+' proyecto'+(cons.length===1?'':'s')+' con costeo cargado</div></div>'
+      +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(tot.comp)+'</div><div class="kpi-sub">avance de compra '+gpPct(avanceTot)+'</div></div>'
+      +'<div class="kpi"><div class="kpi-label">Saldo</div><div class="kpi-value '+desvTone+'">'+(tot.desv>=0?'+':'')+gpMoney(tot.desv)+'</div><div class="kpi-sub">'+(tot.desv>0?'sobrecosto neto':(tot.desv<0?'ahorro neto':'—'))+' (extracosto − ahorro, sumado entre proyectos)</div></div>'
+      +'<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value '+(tot.pendRepArs>1?'bad':'')+'">'+gpMoney(tot.pendRepArs)+'</div><div class="kpi-sub">sin clasificar '+gpMoney(tot.sinClasArs)+'</div></div>';
+    const ranking=conAg.slice().sort((a,b)=>Math.abs(b.ag.tot.desv)-Math.abs(a.ag.tot.desv)).slice(0,5).map(c=>{
+      const est=(c.p.estado||'en_curso'); const cls=est==='cerrado'?'b-gris':(est==='pausado'?'b-ambar':'b-verde');
+      const av=c.ag.tot.presAr>0?c.ag.tot.comp/c.ag.tot.presAr:0;
+      const dv=c.ag.tot.desv; const dCls=dv>0?'bad':(dv<0?'ok':'');
+      return '<tr><td>'+esc(c.p.nombre)+'</td><td style="text-align:center"><span class="badge '+cls+'">'+esc(estLbl[est]||est)+'</span></td>'
+        +'<td style="text-align:center">'+gpPct(av)+'</td><td style="text-align:center" class="'+dCls+'"><b>'+(dv>=0?'+':'')+gpMoney(dv)+'</b></td></tr>';
+    }).join('');
+    consolidadoHtml=''
+      +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px"><h2 style="margin:0;font-size:16px;font-family:\'Quicksand\',sans-serif">Tablero consolidado</h2>'
+        +'<span style="font-size:11.5px;color:var(--muted)">'+cons.length+' proyecto(s) en esta vista</span></div>'
+      +'<div class="solp-chips">'+chips+'</div>'
+      +'<div class="kpi-grid">'+kpis+'</div>'
+      +(ranking?('<div class="card" style="margin-bottom:22px"><div class="card-h"><h3 style="margin:0">Mayor desvío</h3><span class="meta">presupuesto vs. comprado</span></div>'
+        +'<table class="grid"><thead><tr><th style="text-align:left">Proyecto</th><th>Estado</th><th>Avance</th><th>Saldo</th></tr></thead><tbody>'+ranking+'</tbody></table></div>'):'')
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><h2 style="margin:0;font-size:16px;font-family:\'Quicksand\',sans-serif">Proyectos</h2></div>';
+  }
+
+  const cards = (GP.consolidado ? cons.map(c=>c.p) : ps).map(p=>{
     const est=(p.estado||'en_curso');
     const cls=est==='cerrado'?'b-gris':(est==='pausado'?'b-ambar':'b-verde');
+    const c=(GP.consolidado||[]).find(x=>x.p.id===p.id);
+    const avanceCell = (c&&c.ag) ? (()=>{ const av=c.ag.tot.presAr>0?Math.min(100,c.ag.tot.comp/c.ag.tot.presAr*100):0; const dv=c.ag.tot.desv; const dCls=dv>0?'bad':(dv<0?'ok':'');
+        return '<div class="pbar"><div style="width:'+av.toFixed(0)+'%"></div></div><div style="display:flex;justify-content:space-between;margin-top:6px"><span>'+gpMoney(c.ag.tot.comp)+' de '+gpMoney(c.ag.tot.presAr)+'</span><span class="'+dCls+'"><b>'+(dv>=0?'+':'')+gpMoney(dv)+'</b></span></div>'; })()
+      : '<span style="font-size:11.5px">Sin costeo cargado todavía</span>';
     return '<button class="card" onclick="gpAbrir('+p.id+')" style="text-align:left;cursor:pointer;border:1px solid var(--line-strong);padding:0">'
-      +'<div class="card-h"><h3 style="margin:0">'+esc(p.nombre)+'</h3><span class="badge '+cls+'">'+esc(est)+'</span></div>'
-      +'<div style="padding:8px 16px 14px;font-size:12.5px;color:var(--muted)">'
-        +(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?esc(fmtNum(p.tc_presupuesto,0)):'—')
+      +'<div class="card-h"><h3 style="margin:0">'+esc(p.nombre)+'</h3><span class="badge '+cls+'">'+esc(estLbl[est]||est)+'</span></div>'
+      +'<div style="padding:8px 16px 14px;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:6px">'
+        +'<div>'+(p.codigo?('Obra '+esc(p.codigo)+' · '):'')+'TC '+(p.tc_presupuesto?esc(fmtNum(p.tc_presupuesto,0)):'—')+'</div>'
+        +avanceCell
       +'</div></button>';
   }).join('');
-  C().innerHTML = '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Elegí un proyecto para ver su tablero, o creá uno nuevo cargando el costeo como base presupuestaria.</div>'
-    + (ps.length
-        ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">'+cards+'</div>'
-        : '<div class="empty">Todavía no hay proyectos. Usá “Nuevo proyecto” para crear el primero cargando su costeo.</div>');
+  const listaVacia=GP.consolidado ? !cons.length : !ps.length;
+  C().innerHTML = consolidadoHtml
+    + '<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">Elegí un proyecto para ver su tablero, o creá uno nuevo cargando el costeo como base presupuestaria.</div>'
+    + (!listaVacia
+        ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px">'+cards+'</div>'
+        : (ps.length ? '<div class="empty">Ningún proyecto en este filtro.</div>' : '<div class="empty">Todavía no hay proyectos. Usá “Nuevo proyecto” para crear el primero cargando su costeo.</div>'));
 }
 function gpAbrir(id){ GP.actualId=id; GP.filtroSeccion=''; try{ delete XLF_STORE['gpdet']; delete XLF_DATE['gpdet']; delete SP_SORT['gpdet']; }catch(_){ } renderProyectos(); }
 window.gpAbrir=gpAbrir;
