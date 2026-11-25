@@ -12997,6 +12997,16 @@ async function saveOG(id){
     desvio:gv('og_desvio'), desvio_txt:gv('og_desvio_txt'), alcance:gv('og_alcance'), observaciones:gv('og_obs'),
     items };
   obj.monto_total = items.length ? items.reduce((a,it)=>a+(it.cant*it.precio_unit),0) : (gv('og_monto')===''?null:+gv('og_monto'));
+  // Una OG nueva no puede cargarse contra la obra de un proyecto Cerrado en Gestión de Proyectos
+  // (editar una OG ya existente de ese proyecto sí se permite: certificar/pagar lo ya comprado no
+  // es "comprar más"). Match por N° de obra, mismo criterio que gpOGsDelProyecto.
+  if(isNew){
+    const obraNums=new Set(_ogObraNums(obj));
+    if(obraNums.size){
+      const cerrado=(GP.proyectos||[]).find(p=>(p.estado||'en_curso')==='cerrado' && _obraNums(p.codigo).concat(_obraNums(p.nombre)).some(n=>obraNums.has(n)));
+      if(cerrado){ alert('No se puede crear esta OG: el proyecto "'+cerrado.nombre+'" está marcado como Cerrado en Gestión de Proyectos.\n\nSi hace falta comprar algo más para esa obra, reabrí el proyecto primero (Gestión de Proyectos → Editar → Estado).'); return; }
+    }
+  }
   // Si ya se pagó algo de esta OG (anticipo u otro pago), no se puede bajar el total por debajo de lo pagado:
   // el % pagado de cada pago quedó "congelado" sobre el total de ese momento, y si el total baja después,
   // el monto realmente pagado (en pesos/dólares) queda subestimado sin que nadie lo note.
@@ -17573,6 +17583,13 @@ async function reloadDicts(background){
       (async()=>{ try{
         const deps = await sbFetchAll('/compras_depositos?select=codigo,descripcion,direccion,inhabilitado,sucursal&order=codigo.asc');
         if(deps) DIC.depositos = deps.map(d=>({codigo:d.codigo, descripcion:d.descripcion||'', direccion:d.direccion||'', inhabilitado:d.inhabilitado||'No', sucursal:d.sucursal||''}));
+      }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
+      // Gestión de Proyectos: solo lo liviano (estado), para poder bloquear OGs nuevas contra un
+      // proyecto Cerrado sin depender de haber entrado a esa sección. gpLoadLista() pisa esto con
+      // el detalle completo (select=*) cuando sí se entra.
+      (async()=>{ try{
+        const ps = await sbFetchAll('/compras_gp_proyectos?select=id,nombre,codigo,estado&order=creado_en.desc');
+        if(ps) GP.proyectos = ps;
       }catch(e){ /* si la tabla no existe todavía, queda vacío */ } })(),
       // Abastecimiento: egresos a producción (movimiento propio de la app) y saldos actuales (foto importada de Tango)
       (async()=>{ try{
