@@ -6536,17 +6536,18 @@ function gpRenderLista(){
   let consolidadoHtml='';
   if(GP.consolidado){
     const conAg=cons.filter(c=>c.ag);
-    const tot=conAg.reduce((a,c)=>({presAr:a.presAr+c.ag.tot.presAr, comp:a.comp+c.ag.tot.comp, desv:a.desv+c.ag.tot.desv, sinClasArs:a.sinClasArs+c.ag.sinClasArs, pendRepArs:a.pendRepArs+c.ag.pendRepArs}),
-      {presAr:0,comp:0,desv:0,sinClasArs:0,pendRepArs:0});
+    const tot=conAg.reduce((a,c)=>({presAr:a.presAr+c.ag.tot.presAr, comp:a.comp+c.ag.tot.comp, pend:a.pend+c.ag.tot.pend, desv:a.desv+c.ag.tot.desv, sinClasArs:a.sinClasArs+c.ag.sinClasArs, pendRepArs:a.pendRepArs+c.ag.pendRepArs}),
+      {presAr:0,comp:0,pend:0,desv:0,sinClasArs:0,pendRepArs:0});
     const avanceTot=tot.presAr>0?tot.comp/tot.presAr:0;
     const desvTone=tot.desv>0?'bad':(tot.desv<0?'ok':'');
     const kpis=''
       +'<div class="kpi"><div class="kpi-label">Presupuestado</div><div class="kpi-value">'+gpMoney(tot.presAr)+'</div><div class="kpi-sub">'+conAg.length+' de '+cons.length+' proyecto'+(cons.length===1?'':'s')+' con costeo cargado</div></div>'
       +'<div class="kpi"><div class="kpi-label">Comprado</div><div class="kpi-value">'+gpMoney(tot.comp)+'</div><div class="kpi-sub">avance de compra '+gpPct(avanceTot)+'</div></div>'
+      +'<div class="kpi"><div class="kpi-label">Presupuesto pendiente</div><div class="kpi-value">'+gpMoney(tot.pend)+'</div><div class="kpi-sub">sin ejecutar/gastar, sumado entre proyectos</div></div>'
       +'<div class="kpi"><div class="kpi-label">Saldo</div><div class="kpi-value '+desvTone+'">'+(tot.desv>=0?'+':'')+gpMoney(tot.desv)+'</div><div class="kpi-sub">'+(tot.desv>0?'sobrecosto neto':(tot.desv<0?'ahorro neto':'—'))+' (extracosto − ahorro, sumado entre proyectos)</div></div>'
       // Mismas dos tarjetas (separadas, no una sola) que ya usa el tablero de un proyecto individual
       // — ahí quedó claro que son dos cosas distintas, acá iban mezcladas en una y no se entendía.
-      +(tot.sinClasArs>1?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(tot.sinClasArs)+'</div><div class="kpi-sub">suma entre proyectos</div></div>'):'')
+      +(tot.sinClasArs>1?('<div class="kpi"><div class="kpi-label">Sin clasificar</div><div class="kpi-value bad">'+gpMoney(tot.sinClasArs)+'</div><div class="kpi-sub">suma de compras sin clasificar</div></div>'):'')
       +(tot.pendRepArs>1?('<div class="kpi"><div class="kpi-label">Pendiente de repartir</div><div class="kpi-value bad">'+gpMoney(tot.pendRepArs)+'</div><div class="kpi-sub">renglones repartidos con saldo sin asignar</div></div>'):'');
     const ranking=conAg.slice().sort((a,b)=>Math.abs(b.ag.tot.desv)-Math.abs(a.ag.tot.desv)).slice(0,5).map(c=>{
       const est=(c.p.estado||'en_curso'); const cls=est==='cerrado'?'b-gris':(est==='pausado'?'b-ambar':'b-verde');
@@ -6560,7 +6561,7 @@ function gpRenderLista(){
         +'<span style="font-size:11.5px;color:var(--muted)">'+cons.length+' proyecto(s) en esta vista</span></div>'
       +'<div class="solp-chips" style="margin-bottom:16px">'+chips+'</div>'
       +'<div class="kpi-grid">'+kpis+'</div>'
-      +(ranking?('<div class="card" style="margin-bottom:22px"><div class="card-h"><h3 style="margin:0">Mayor desvío</h3><span class="meta">avance de compra y saldo, por proyecto</span></div>'
+      +(ranking?('<div class="card" style="margin-bottom:22px"><div class="card-h"><h3 style="margin:0">Avance y saldo por proyecto</h3><span class="meta">ordenados por mayor saldo</span></div>'
         +'<table class="grid"><thead><tr><th style="text-align:left">Proyecto</th><th>Estado</th><th>Avance</th><th>Saldo</th></tr></thead><tbody>'+ranking+'</tbody></table></div>'):'')
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><h2 style="margin:0;font-size:16px;font-family:\'Quicksand\',sans-serif">Proyectos</h2></div>';
   }
