@@ -8753,6 +8753,10 @@ function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   
 // Moneda en la que efectivamente se PAGA (de qué caja sale la plata): la define la Condición de compra
 // + el tilde "pago_usd", no la Moneda de la OG (se puede pactar en dólares y pagar su equivalente en pesos, o al revés).
 // null = la condición no mueve caja (compensación): no hay "moneda de pago".
+// OG que se paga por transferencia desde la cuenta Santander UY (la gestiona Finanzas; no pasa por la caja de Tesorería)
+function ogPagoUY(og){ return !!og && og.pago_desde==='santander_uy'; }
+// Pedidos de transferencia UY de una OG (los que no están cancelados)
+function ogTransfUY(og){ return (mem.solicitudes_pago||[]).filter(s=>s.tipo==='transferencia_uy' && String(s.og_id)===String(og.id) && s.estado!=='Cancelada'); }
 function ogMonedaPagoCode(og){ return COND_SIN_CAJA.includes(og.condicion) ? null : (og.pago_usd ? 'USD' : 'ARS'); }
 function ogLugarPago(og){ return (og.lugar_pago==='Otra' ? og.lugar_pago_txt : og.lugar_pago) || og.lugar_pago_txt || og.lugar_pago || ''; }
 // Igual criterio, pero para un pago puntual ya registrado (el tesorero puede confirmar/cambiar el lugar al emitir la OP,
@@ -9246,10 +9250,13 @@ async function _renderComprasImpl(){
         +'<td style="min-width:110px">'+pbar(ogAcumPct(o.id))+'</td>'
         +'<td>'+badge(ogEstado(o))+'</td>'
         +'<td>'+(ogTienePendiente(o)?'<span class="badge b-ambar">Con pendientes</span>':'<span class="badge b-verde">Sin pendientes</span>')
-          +(ogAdelantoSinCert(o)>0.01?'<div style="margin-top:3px"><span class="badge b-ambar" style="white-space:nowrap;background:#fbf1e0;color:#9a6b12" title="Tesorería ya pagó por adelantado: falta certificar y liberar este monto">Pagado sin certificar: '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(ogAdelantoSinCert(o),2)+'</span></div>':'')+'</td>'
+          +(ogAdelantoSinCert(o)>0.01?'<div style="margin-top:3px"><span class="badge b-ambar" style="white-space:nowrap;background:#fbf1e0;color:#9a6b12" title="Tesorería ya pagó por adelantado: falta certificar y liberar este monto">Pagado sin certificar: '+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(ogAdelantoSinCert(o),2)+'</span></div>':'')
+          +(ogPagoUY(o)?'<div style="margin-top:3px"><span class="badge b-azul" style="white-space:nowrap" title="Se paga por transferencia desde Santander UY (Finanzas)">Santander UY'
+            +(()=>{ const t=ogTransfUY(o); if(!t.length) return ' · sin pedir'; const u=t[0]; return ' · '+esc(u.estado||'Pendiente')+(t.length>1?' (+'+(t.length-1)+')':''); })()+'</span></div>':'')+'</td>'
         +'<td><div class="row-actions">'
         +'<button class="iconbtn" title="Emitir OC (PDF)" onclick="exportOG_OC('+o.id+')">'+ICO.pdf+'</button>'
-        +(puedePedirArmado(o)?'<button class="iconbtn" title="'+(+o.pago_pedido_monto>0?'Pago adelantado pedido a Tesorería — ver / cambiar':'Pedir a Tesorería un pago adelantado (aunque no esté certificada)')+'" onclick="openPedirArmado('+o.id+')" style="'+(+o.pago_pedido_monto>0?'color:var(--olive-deep);border-color:var(--olive)':'')+'">$</button>':'')
+        +(ogPagoUY(o)&&puedePedirArmado(o)?'<button class="iconbtn" title="Pedir transferencia a Finanzas (Santander UY) con la factura adjunta" onclick="openPedirTransfUY('+o.id+')" style="color:#1f5f8b;border-color:#9cc3dd;font-size:10px;font-weight:700;width:auto;padding:0 6px">UY</button>':'')
+        +(!ogPagoUY(o)&&puedePedirArmado(o)?'<button class="iconbtn" title="'+(+o.pago_pedido_monto>0?'Pago adelantado pedido a Tesorería — ver / cambiar':'Pedir a Tesorería un pago adelantado (aunque no esté certificada)')+'" onclick="openPedirArmado('+o.id+')" style="'+(+o.pago_pedido_monto>0?'color:var(--olive-deep);border-color:var(--olive)':'')+'">$</button>':'')
         +((canEditOG()&&!o.anulada)?'<button class="iconbtn" title="'+(puedeEditarOG(o)?'Ver / editar OG':'Ver OG (solo lectura: no es tuya)')+'" onclick="openOG('+o.id+')">'+ICO.edit+'</button>':'')
         +(puedeCrearOG()?'<button class="iconbtn" title="Duplicar OG (crea una copia abierta, sin certificar ni pagar)" onclick="duplicateOG('+o.id+')">'+ICO.copy+'</button>':'')
         +((puedeEditarOG(o)&&!o.anulada)?'<button class="iconbtn del" title="Anular OG" onclick="askAnularOG('+o.id+')">'+ICO.del+'</button>':'')
@@ -9696,10 +9703,10 @@ function renderTesoreria(){
   const ogs=(mem.ogs||[]).slice();
   // Cola: lo liberado sin pagar que NO cubre ya una OP armada (esa ya salió de la caja y figura arriba,
   // en "OP armadas, esperando liberación": si no, se contaría dos veces). Anulada: no se paga nada por ella.
-  const cola=ogs.filter(o=>!o.anulada && _pgPendMonto(o)>0.01);
+  const cola=ogs.filter(o=>!o.anulada && !ogPagoUY(o) && _pgPendMonto(o)>0.01);   // Santander UY: las paga Finanzas
   const totalAPagar=cola.reduce((a,o)=>a+_pgPendMonto(o), 0);
   // Adelantos que pidió Compras (sin certificar) y todavía no se pagaron: van en la misma lista de Pagos pendientes
-  const adel=ogs.filter(o=>!o.anulada && ogPedidoRestante(o)>0.01);
+  const adel=ogs.filter(o=>!o.anulada && !ogPagoUY(o) && ogPedidoRestante(o)>0.01);
   _autoAdelantosPagados();
   const hoyMes=new Date().toISOString().slice(0,7);
   const pagadoMesArs=cajaMovs('ARS').filter(p=>(p.fecha||'').slice(0,7)===hoyMes).reduce((a,p)=>a+(+p.importe_pago||0),0);
@@ -9781,7 +9788,7 @@ function solicitudesPagoView(){
     val:(s,col)=>{
       if(col==='fac') return s.nro_factura||'(sin N°)';
       if(col==='prov') return s.proveedor_cod||'(sin proveedor)';
-      if(col==='oc') return nroOCTango(s.oc_numero)||'(sin OC)';
+      if(col==='oc') return s.tipo==='transferencia_uy'?'Transferencia UY (OG)':(nroOCTango(s.oc_numero)||'(sin OC)');
       if(col==='proy') return s.proyecto_cod||'(sin proyecto)';
       if(col==='comp') return s.comprador||'(sin comprador)';
       if(col==='mon') return s.moneda==='USD'?'Dólares':'Pesos';
@@ -9812,7 +9819,7 @@ function solicitudesPagoView(){
     return '<tr data-q="'+esc(_syncFold([s.nro_factura,s.proveedor_cod,s.proveedor,nroOCTango(s.oc_numero),s.proyecto_cod,s.comprador,s.remito_numero].join(' ')))+'">'
       +'<td><strong>'+esc(s.nro_factura||'—')+'</strong>'+(s.adjunto_path?' <button class="iconbtn" title="Ver factura" onclick="verAdjuntoSolicitud('+s.id+')">'+ICO.pdf+'</button>':'')+'</td>'
       +'<td style="font-size:11px">'+esc(s.proveedor_cod||'')+' '+esc(s.proveedor||'')+'</td>'
-      +'<td>'+esc(nroOCTango(s.oc_numero)||'—')+'</td>'
+      +'<td>'+(s.tipo==='transferencia_uy'?'OG '+esc((ogById(s.og_id)||{}).numero||s.og_id||'—')+'<div><span class="badge b-azul" style="font-size:10px;white-space:nowrap">Transferencia Santander UY</span></div>':esc(nroOCTango(s.oc_numero)||'—'))+'</td>'
       +'<td>'+esc(s.proyecto_cod||'—')+'</td>'
       +'<td style="font-size:11px">'+esc(s.comprador||'')+'</td>'
       +'<td style="text-align:right">'+(s.monto?((s.moneda==='USD'?'US$ ':'$ ')+(+s.monto).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})):'—')+'</td>'
@@ -10019,6 +10026,73 @@ async function agregarComentarioSolicitud(id){
 }
 window.agregarComentarioSolicitud=agregarComentarioSolicitud;
 
+/* ===== Transferencia por Santander UY: el comprador la pide a Finanzas con la factura (CFE) adjunta =====
+   Queda en Compras ↔ Finanzas → Pagos solicitados (tipo transferencia_uy). Finanzas registra la factura en
+   Contabilidad UY y el pago; el pago de la OG en Compras se registra solo (costo del proyecto). Solo US$. */
+// Lo que todavía se puede pedir: total de la OG menos lo pagado y lo ya pedido (pedidos activos que todavía no son pago)
+function ogTransfUYDisponible(o){
+  const pedido=ogTransfUY(o).filter(s=>!s.compras_pago_id).reduce((a,s)=>a+(+s.monto||0),0);
+  return Math.max(0, ogTotal(o)-ogPagadoMonto(o)-pedido);
+}
+function openPedirTransfUY(ogId){
+  const o=ogById(ogId); if(!o) return;
+  if(!puedePedirArmado(o)){ toast('Solo el comprador de esta OG puede pedir la transferencia.'); return; }
+  if(!ogPagoUY(o)){ toast('Esta OG no está marcada "Se paga desde Santander UY".'); return; }
+  if(ogMonedaCode(o)!=='USD'){ toast('Las transferencias por Santander UY son solo para OG en dólares.'); return; }
+  const disp=ogTransfUYDisponible(o), hoy=new Date().toISOString().slice(0,10);
+  const prev=ogTransfUY(o);
+  const inp='width:100%;box-sizing:border-box';
+  const body='<div style="background:#f3f1e8;border-radius:10px;padding:12px;margin-bottom:12px;font-size:12.5px;line-height:1.6">'
+    +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor_cod||'')+' '+esc(o.proveedor||'')+(o.clasif_og?' · '+esc(o.clasif_og):'')
+    +'<br>Total: US$ '+fmtNum(ogTotal(o),2)+' · Pagado: US$ '+fmtNum(ogPagadoMonto(o),2)+' · <strong>Disponible para pedir: US$ '+fmtNum(disp,2)+'</strong>'
+    +(prev.length?'<br>Pedidos anteriores: '+prev.map(s=>'US$ '+fmtNum(s.monto,2)+' ('+esc(s.estado||'Pendiente')+')').join(' · '):'')+'</div>'
+    +'<p style="margin:0 0 10px;font-size:12.5px;color:var(--muted);line-height:1.5">Finanzas recibe el pedido en <strong>Compras ↔ Finanzas → Pagos solicitados</strong>, registra la factura en Contabilidad UY y hace la transferencia desde la cuenta <strong>Santander UY USD</strong>. Cuando la registra, la OG queda pagada acá.</p>'
+    +'<div class="field"><label>Factura (CFE) en PDF *</label><input id="tu_file" type="file" accept=".pdf,image/*"></div>'
+    +'<div class="frow c2"><div class="field"><label>N° de CFE (serie y número) *</label><input id="tu_cfe" type="text" placeholder="Ej: A 123456" style="'+inp+'"></div>'
+    +'<div class="field"><label>Fecha de la factura *</label><input id="tu_fecha" type="date" value="'+hoy+'"></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Total de la factura (US$) *</label><input id="tu_total" type="number" step="0.01" min="0" value="'+disp.toFixed(2)+'" oninput="tuIvaSug()"></div>'
+    +'<div class="field"><label>IVA incluido (US$)</label><input id="tu_iva" type="number" step="0.01" min="0" value="'+(disp*22/122).toFixed(2)+'"><div style="font-size:11px;color:var(--muted);margin-top:3px">Por defecto 22% incluido en el total; corregilo si la factura dice otro.</div></div></div>'
+    +'<div class="frow c2"><div class="field"><label>Fecha requerida de pago</label><input id="tu_freq" type="date" value="'+hoy+'"></div>'
+    +'<div class="field"><label>Comentario para Finanzas</label><input id="tu_com" type="text" placeholder="Opcional"></div></div>'
+    +'<div id="tuMsg" style="font-size:12px;color:#b3261e;min-height:16px"></div>';
+  openModal('Pedir transferencia (Santander UY) · OG '+esc(o.numero), body,
+    '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" id="tu_btn" onclick="guardarTransfUY('+o.id+')">Pedir transferencia</button>', 'wide');
+}
+function tuIvaSug(){ const t=+(document.getElementById('tu_total')||{}).value||0, i=document.getElementById('tu_iva'); if(i) i.value=(t*22/122).toFixed(2); }
+async function guardarTransfUY(ogId){
+  const o=ogById(ogId); if(!o || !puedePedirArmado(o)) return;
+  const msg=document.getElementById('tuMsg'), btn=document.getElementById('tu_btn');
+  const f=((document.getElementById('tu_file')||{}).files||[])[0];
+  const cfe=(document.getElementById('tu_cfe').value||'').trim(), ffac=document.getElementById('tu_fecha').value;
+  const total=Math.round((+document.getElementById('tu_total').value||0)*100)/100, iva=Math.round((+document.getElementById('tu_iva').value||0)*100)/100;
+  const freq=document.getElementById('tu_freq').value||null, com=(document.getElementById('tu_com').value||'').trim();
+  const disp=ogTransfUYDisponible(o);
+  if(!f){ msg.textContent='Adjuntá la factura (CFE).'; return; }
+  if(!cfe){ msg.textContent='Poné el N° de CFE.'; return; }
+  if(!ffac){ msg.textContent='Poné la fecha de la factura.'; return; }
+  if(total<=0){ msg.textContent='El total tiene que ser mayor a 0.'; return; }
+  if(total>disp+ogTotal(o)*0.01+0.01){ msg.textContent='Supera lo disponible para pedir de la OG (US$ '+fmtNum(disp,2)+').'; return; }
+  if(iva<0 || iva>=total){ msg.textContent='El IVA tiene que ser menor que el total.'; return; }
+  const ahora=new Date().toISOString(), autor=(AUTH_USER&&AUTH_USER.email)||MI_NOMBRE||'';
+  const prov=(DIC.proveedores||[]).find(p=>p.codigo===o.proveedor_cod)||{};
+  const row={ tipo:'transferencia_uy', og_id:o.id, proveedor_cod:o.proveedor_cod||'', proveedor:o.proveedor||prov.razon||'', comprador:o.comprador||'',
+    proyecto_cod:o.clasif_og||'', nro_factura:cfe, monto:total, moneda:'USD', fac_fecha:ffac, iva, fecha_requerida:freq, rut_emisor:prov.cuit||null,
+    estado:'Pendiente', historial:[{fecha:ahora, autor, texto:com||'Pedido de transferencia por Santander UY (OG '+o.numero+')'}], creado_en:ahora, creado_por:autor };
+  try{
+    if(btn) btn.disabled=true; msg.style.color='var(--muted)'; msg.textContent='Subiendo la factura…';
+    const path='uy/'+o.id+'/'+Date.now()+'_'+f.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    if(!DEMO_MODE) await sbStorageUpload('facturas', path, f);
+    row.adjunto_path=path; row.adjunto_nombre=f.name;
+    if(DEMO_MODE){ row.id=Math.max(0,...(mem.solicitudes_pago||[]).map(s=>+s.id||0))+1; mem.solicitudes_pago=mem.solicitudes_pago||[]; mem.solicitudes_pago.unshift(row); }
+    else{ await sbFetch('/compras_solicitudes_pago',{method:'POST',body:JSON.stringify(row)}); await reloadDB(); }
+    closeModal(); toast('Transferencia pedida a Finanzas (Pagos solicitados)'); renderComprasKeepScroll();
+  }catch(e){
+    if(btn) btn.disabled=false; msg.style.color='#b3261e';
+    const m=String(e&&e.message||e);
+    msg.textContent=/tipo|og_id|fac_fecha|fecha_requerida|column/i.test(m)?'Falta correr sql/2026-11_transferencias_uy.sql en Supabase. ('+m+')':'Error: '+m;
+  }
+}
+window.openPedirTransfUY=openPedirTransfUY; window.tuIvaSug=tuIvaSug; window.guardarTransfUY=guardarTransfUY;
 async function verAdjuntoSolicitud(id){
   const s=(mem.solicitudes_pago||[]).find(x=>String(x.id)===String(id)); if(!s || !s.adjunto_path) return;
   try{
@@ -10811,7 +10885,7 @@ function proyectadoView(){
   const fmt2=x=>(+x||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const mfmt=(mon,v)=>(mon==='USD'?'US$ ':'$ ')+fmt2(v);
   const allItems=[];
-  (mem.ogs||[]).filter(o=>!o.anulada).forEach(o=>{ ogDetalleItems(o).forEach(x=>allItems.push(x)); });
+  (mem.ogs||[]).filter(o=>!o.anulada && !ogPagoUY(o)).forEach(o=>{ ogDetalleItems(o).forEach(x=>allItems.push(x)); });   // Santander UY: no sale de la caja
   xlfRegister('proy', { rows:()=>allItems, onChange:renderTesoreria,
     dateVal: x=>x.fechaPago,
     val:(x,col)=>{
@@ -12304,6 +12378,7 @@ function pgRepRecalc(){
 window.pgRepModo=pgRepModo; window.pgRepRecalc=pgRepRecalc;
 function openPago(ogId, modo){
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
+  if(ogPagoUY(o)){ toast('La OG '+o.numero+' se paga por transferencia desde Santander UY: la pide el comprador a Finanzas.'); return; }
   if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
   const monPagoDef=ogMonedaPagoCode(o)||monOG;   // de qué caja sale la plata (Condición de compra + tilde USD), no la moneda pactada
   const pendPct=ogPendPagoPct(o); const pendMonto=_pgPendMonto(o, modo); const tot=ogTotal(o); const simbOG=monOG==='USD'?'US$ ':'$ ';
@@ -12798,6 +12873,9 @@ function openOG(id){
     +'<div class="field"><label>Moneda</label><select id="og_moneda"'+disSel+'>'+monOpts+'</select><div style="font-size:11px;color:var(--muted);margin-top:4px">Moneda en la que se pactó/ajusta el precio. No define en qué moneda se paga.</div></div></div>'
     +'<div class="frow c2" id="og_lugarPagoWrap" style="display:'+(pagoUsdShow?'grid':'none')+'"><div class="field"><label>Lugar de pago</label><select id="og_lugar_pago">'+lugarOpts+'</select></div>'
     +'<div class="field"><label>Dirección (si elegiste "Otra")</label><input id="og_lugar_pago_txt" type="text" value="'+esc(cur.lugar_pago_txt||'')+'" placeholder="Escribí la ubicación…"></div></div>'
+    +'<div class="field"><label>Se paga desde</label><select id="og_pago_desde"><option value="">Caja (Tesorería registra el pago)</option>'
+      +'<option value="santander_uy"'+(cur.pago_desde==='santander_uy'?' selected':'')+'>Santander UY — transferencia de Finanzas (solo OG en US$)</option></select>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:4px">Santander UY: el comprador pide la transferencia a Finanzas con la factura (CFE) adjunta; no pasa por la caja ni por los asientos de Compras (el asiento lo hace Contabilidad UY).</div></div>'
     +'<div class="field"><label>Tipo de cambio (pesos por USD)</label><input id="og_tc" type="number" step="0.01" value="'+esc(cur.tc_pesos!=null?cur.tc_pesos:(usdProm(tcDiaAnterior(cur.fecha||hoy))!=null?usdProm(tcDiaAnterior(cur.fecha||hoy)):(usdProm({compra:USD_COMPRA,venta:USD_VENTA})||'')))+'"'+dis+'><div id="og_tcNote" style="font-size:11px;color:var(--muted);margin-top:4px">'+ogTcNoteInner(cur.fecha||hoy)+'</div></div>'
     +'<div id="ogAnticipoBox" style="display:'+(antShow?'block':'none')+'"><div class="frow c2"><div class="field"><label>% de anticipo</label><input id="og_antpct" type="number" min="0" max="100" value="'+esc(cur.anticipo_pct!=null?cur.anticipo_pct:'')+'"'+dis+'></div>'
     +'<div class="field"><label>Método de anticipo</label><select id="og_antmet"'+disSel+'>'+metOpts+'</select></div></div></div>'
@@ -13198,6 +13276,12 @@ async function saveOG(id){
     desvio:gv('og_desvio'), desvio_txt:gv('og_desvio_txt'), alcance:gv('og_alcance'), observaciones:gv('og_obs'),
     items };
   obj.monto_total = items.length ? items.reduce((a,it)=>a+(it.cant*it.precio_unit),0) : (gv('og_monto')===''?null:+gv('og_monto'));
+  { // Se paga desde (Santander UY: solo OG en dólares). Solo se manda si se usa, para no romper si falta la columna.
+    const pd=(document.getElementById('og_pago_desde')||{}).value||'';
+    const ogPrev=isNew?null:ogById(id);
+    if(pd==='santander_uy' && obj.moneda!=='Extranjera'){ alert('"Se paga desde Santander UY" es solo para OG en dólares (Moneda: Extranjera).'); return; }
+    if(pd || (ogPrev && ogPrev.pago_desde)) obj.pago_desde = pd || null;
+  }
   // Una OG nueva no puede cargarse contra la obra de un proyecto Cerrado en Gestión de Proyectos
   // (editar una OG ya existente de ese proyecto sí se permite: certificar/pagar lo ya comprado no
   // es "comprar más"). Match por N° de obra, mismo criterio que gpOGsDelProyecto.
