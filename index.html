@@ -439,7 +439,8 @@ window.closeModal=closeModal;
 
 function fmtDateCorta(v){ if(!v) return '—'; const p=String(v).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0].slice(2):v; }   // dd/mm/aa
 function fmtDate(v){ if(!v) return '—'; const p=String(v).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v; }
-function fmtMoney(v){ return (v==null||v==='')?'—':'$'+(+v||0).toLocaleString('es-AR'); }
+// Montos siempre con 2 decimales (redondeo al más cercano), ej. $1.234,50 — pedido de Micaela (nov 2026)
+function fmtMoney(v){ return (v==null||v==='')?'—':'$'+(+v||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 /* Antigüedad a partir de un AAAAMM (ej. '201905' -> '6 años 2 m'). */
 function edadAAAAMM(s){
   if(!/^\d{6}$/.test(String(s||''))) return '';
@@ -8657,7 +8658,7 @@ function itemTotal(it){ const bruto=(+it.cant||0)*(+it.precio_unit||0); return b
 // Prefijo de moneda según el select de la OG en edición: Corriente=$, Extranjera=USD
 function ogMonedaSym(){ const el=document.getElementById('og_moneda'); return (el && el.value==='Extranjera') ? 'US$ ' : '$ '; }
 // Importe formateado es-AR con 3 decimales y prefijo de moneda (para totales de renglón y total OG)
-function fmtImporte(v){ return ogMonedaSym()+(+v||0).toLocaleString('es-AR',{minimumFractionDigits:3,maximumFractionDigits:3}); }
+function fmtImporte(v){ return ogMonedaSym()+(+v||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Parseo tolerante: acepta "1.000.000,50" (AR) o "1000000.5" (plano). Devuelve número o null.
 function parseNum(s){ s=String(s==null?'':s).trim(); if(s==='') return null; s=s.replace(/[^\d.,-]/g,''); if(s==='') return null; if(s.indexOf(',')>=0) s=s.replace(/\./g,'').replace(',','.'); const n=parseFloat(s); return isNaN(n)?null:n; }
 // Formato es-AR con cantidad fija de decimales; '' si viene vacío.
@@ -9251,7 +9252,7 @@ async function _renderComprasImpl(){
         +'<td style="color:var(--muted)">'+(o.clasif_og?('<strong>'+esc(o.clasif_og)+'</strong>'+(clasifDesc(o.clasif_og)&&clasifDesc(o.clasif_og)!==o.clasif_og?'<span style="font-size:11px"> · '+esc(clasifDesc(o.clasif_og))+'</span>':'')):esc(o.objeto||''))+'</td>'
         +'<td style="color:var(--muted)">'+(o.solp!=null&&o.solp!==''?esc(o.solp):'—')+'</td>'
         +'<td style="font-size:11px;color:var(--muted)">'+(nItems?nItems+' renglón'+(nItems>1?'es':''):'—')+(nCert?' · '+nCert+' cert.':'')+'</td>'
-        +'<td><strong>'+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+ogTotal(o).toLocaleString('es-AR')+'</strong></td>'
+        +'<td><strong>'+(ogMonedaCode(o)==='USD'?'US$ ':'$ ')+fmtNum(ogTotal(o),2)+'</strong></td>'
         +'<td style="min-width:110px">'+pbar(ogAcumPct(o.id))+'</td>'
         +'<td>'+badge(ogEstado(o))+'</td>'
         +'<td>'+(ogTienePendiente(o)?'<span class="badge b-ambar">Con pendientes</span>':'<span class="badge b-verde">Sin pendientes</span>')
@@ -9721,7 +9722,7 @@ function renderTesoreria(){
   const kpis='<div class="kpi-grid">'
     +'<div class="kpi"><div class="kpi-label">A pagar (liberado)</div><div class="kpi-val">'+fmtMoney(totalAPagar)+'</div><div class="kpi-sub">'+cola.length+' OG en cola'+(adel.length?' · + '+adel.length+' adelanto'+(adel.length>1?'s':'')+' pedido'+(adel.length>1?'s':''):'')+'</div></div>'
     +'<div class="kpi"><div class="kpi-label">CAJA PESOS PROY</div><div class="kpi-val">'+fmtMoney(cajaSaldo('ARS'))+'</div><div class="kpi-sub">saldo actual</div></div>'
-    +'<div class="kpi"><div class="kpi-label">CAJA DOLARES PROY</div><div class="kpi-val">US$ '+(cajaSaldo('USD')).toLocaleString('es-AR',{maximumFractionDigits:2})+'</div><div class="kpi-sub">saldo actual</div></div>'
+    +'<div class="kpi"><div class="kpi-label">CAJA DOLARES PROY</div><div class="kpi-val">US$ '+(cajaSaldo('USD')).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="kpi-sub">saldo actual</div></div>'
     +'<div class="kpi"><div class="kpi-label">Pagado en el mes ($)</div><div class="kpi-val">'+fmtMoney(pagadoMesArs)+'</div><div class="kpi-sub">CAJA PESOS</div></div>'
     +'</div>';
   const tabs='<div class="mtabs" style="margin:4px 0 14px">'
@@ -12356,7 +12357,7 @@ function pgRepInit(o, modo, pendMonto){
   return window._pgRep;
 }
 function pgRepHtml(o, R, simb){
-  const f2=v=>simb+(+v||0).toLocaleString('es-AR',{maximumFractionDigits:2});
+  const f2=v=>simb+(+v||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const filas=o.items.map((it,i)=>'<tr><td style="text-align:left">'+(i+1)+' · '+esc(it.articulo||it.cod_art||'')+(it.hito?'<div style="font-size:10.5px;color:var(--muted)">'+esc(String(it.hito).slice(0,60))+'</div>':'')+'</td>'
     +'<td style="text-align:right">'+f2(R.tot[i])+'</td><td style="text-align:right"><strong>'+f2(R.tope[i])+'</strong></td>'
     +'<td><input id="pg_r_'+i+'" type="number" step="0.01" min="0" value="'+R.amt[i]+'" oninput="pgRepRecalc()" '+(R.tope[i]<=0.005?'disabled ':'')+'style="width:100%;text-align:right;border:1px solid var(--line-strong);border-radius:7px;padding:5px 6px;font-size:12px"></td>'
@@ -12380,7 +12381,7 @@ function pgRepRecalc(){
   R.amt=R.amt.map((_,i)=>{ const el=document.getElementById('pg_r_'+i); const v=el?(+el.value||0):0;
     const a = R.modo==='pct' ? R.tot[i]*v/100 : (R.modo==='uni' ? R.unit[i]*v : v);
     return Math.round(Math.max(0,a)*100)/100; });
-  R.amt.forEach((a,i)=>{ const c=document.getElementById('pg_rimp_'+i); if(c) c.textContent=simb+a.toLocaleString('es-AR',{maximumFractionDigits:2}); });
+  R.amt.forEach((a,i)=>{ const c=document.getElementById('pg_rimp_'+i); if(c) c.textContent=simb+a.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); });
   const imp=document.getElementById('pg_imp'); if(imp) imp.value=R.amt.reduce((a,v)=>a+v,0).toFixed(2);
   pgCalc();
 }
@@ -12403,9 +12404,9 @@ function openPago(ogId, modo){
     ? '<br><span style="color:var(--olive-deep)">Anticipo '+(+o.anticipo_pct||0)+'% · método '+(o.anticipo_metodo||'—')+(o.anticipo_metodo==='B'?' (recupera primero)':' (proporcional)')+'</span>'
     : (COND_SIN_CAJA.includes(o.condicion) ? '<br><span style="color:var(--olive-deep)">'+esc(o.condicion)+' · no impacta la caja (cancelación por compensación)</span>' : '');
   const body='<div style="background:#f3f1e8;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px">'
-    +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||'')+'<br>Total: '+simbOG+tot.toLocaleString('es-AR')+' ('+(monOG==='USD'?'dólares':'pesos')+') · Certificado: '+ogLiberadoPct(o).toFixed(0)+'% · Ya pagado: '+ogPagadoPct(o).toFixed(0)+'% · <strong>Pagable ahora: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+' ('+pendPct.toFixed(1).replace('.0','')+'%)</strong>'+antInfo+'</div>'
+    +'<strong>OG '+esc(o.numero)+'</strong> · '+esc(o.proveedor||'')+'<br>Total: '+simbOG+fmtNum(tot,2)+' ('+(monOG==='USD'?'dólares':'pesos')+') · Certificado: '+ogLiberadoPct(o).toFixed(0)+'% · Ya pagado: '+ogPagadoPct(o).toFixed(0)+'% · <strong>Pagable ahora: '+simbOG+pendMonto.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' ('+pendPct.toFixed(1).replace('.0','')+'%)</strong>'+antInfo+'</div>'
     +repHtml
-    +'<div class="frow c2"><div class="field"><label>Importe a pagar ('+(monOG==='USD'?'US$':'$')+', moneda de la OG)</label><input id="pg_imp" type="number" step="0.01" value="'+impInicial.toFixed(2)+'"'+(repOn?' readonly style="background:#f3f1e8"':'')+' oninput="pgCalc()"><div style="font-size:11px;color:var(--muted);margin-top:3px">Máx pendiente: '+simbOG+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+'</div></div>'
+    +'<div class="frow c2"><div class="field"><label>Importe a pagar ('+(monOG==='USD'?'US$':'$')+', moneda de la OG)</label><input id="pg_imp" type="number" step="0.01" value="'+impInicial.toFixed(2)+'"'+(repOn?' readonly style="background:#f3f1e8"':'')+' oninput="pgCalc()"><div style="font-size:11px;color:var(--muted);margin-top:3px">Máx pendiente: '+simbOG+pendMonto.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
     +'<div class="field"><label>Fecha de pago</label><input id="pg_fecha" type="date" value="'+hoy+'" onchange="pgFechaChanged()"></div></div>'
     +'<div class="frow c2"><div class="field"><label>Moneda de pago</label><select id="pg_moneda" onchange="pgCalc()"><option value="ARS"'+(monPagoDef==='ARS'?' selected':'')+'>Pesos (CAJA PESOS PROY)</option><option value="USD"'+(monPagoDef==='USD'?' selected':'')+'>Dólares (CAJA DOLARES PROY)</option></select></div>'
     +'<div class="field"><label>Medio de pago</label><select id="pg_medio"><option>Efectivo</option><option>Transferencia</option><option>Cheque</option></select></div></div>'
@@ -12447,8 +12448,8 @@ function pgCalc(){
   const conv = monOG!==monPago;
   document.getElementById('pg_tcField').style.display = '';   // TC siempre visible
   if(conv){
-    if(monOG==='USD'&&monPago==='ARS'){ importe=montoOG*tc; nota='US$ '+montoOG.toLocaleString('es-AR',{maximumFractionDigits:2})+' × '+tc+' = '; }
-    else if(monOG==='ARS'&&monPago==='USD'){ importe= tc? montoOG/tc : 0; nota='$ '+montoOG.toLocaleString('es-AR')+' ÷ '+tc+' = '; }
+    if(monOG==='USD'&&monPago==='ARS'){ importe=montoOG*tc; nota='US$ '+montoOG.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' × '+tc+' = '; }
+    else if(monOG==='ARS'&&monPago==='USD'){ importe= tc? montoOG/tc : 0; nota='$ '+fmtNum(montoOG,2)+' ÷ '+tc+' = '; }
   }
   const caja=CAJAS[monPago]; const simb=monPago==='USD'?'US$ ':'$ ';
   const pct=ogTotal(o)? montoOG/ogTotal(o)*100 : 0;
@@ -12458,12 +12459,12 @@ function pgCalc(){
   let ajusteTxt='';
   if(Math.abs(diffPend)>0.01 && Math.abs(diffPend)<=tolMonto){
     ajusteTxt = redondear
-      ? '<br><span style="color:var(--olive-deep)">Redondeo de caja: pagás '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{maximumFractionDigits:2})+' '+(diffPend>0?'de más':'de menos')+' respecto de lo pendiente — se carga como <strong>Small Balance</strong> contra Gastos varios Taller (52000005) y la OG queda saldada.</span>'
-      : '<br><span style="color:var(--olive-deep)">Pago parcial: quedan '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{maximumFractionDigits:2})+' pendientes para un pago posterior (no se ajusta la caja).</span>';
+      ? '<br><span style="color:var(--olive-deep)">Redondeo de caja: pagás '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+(diffPend>0?'de más':'de menos')+' respecto de lo pendiente — se carga como <strong>Small Balance</strong> contra Gastos varios Taller (52000005) y la OG queda saldada.</span>'
+      : '<br><span style="color:var(--olive-deep)">Pago parcial: quedan '+simbOG+Math.abs(diffPend).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' pendientes para un pago posterior (no se ajusta la caja).</span>';
   } else if(diffPend>tolMonto){
     ajusteTxt='<br><span style="color:#b4554e">Supera lo pendiente en más del 1% de la OG — no se va a poder registrar así.</span>';
   }
-  document.getElementById('pg_result').innerHTML='Equivale al <strong>'+pct.toFixed(1).replace('.0','')+'%</strong> de la OG.<br>Sale de <strong>'+caja.nombre+'</strong> ('+caja.cod+')<br>Importe: '+nota+'<strong>'+simb+importe.toLocaleString('es-AR',{maximumFractionDigits:2})+'</strong>'+ajusteTxt;
+  document.getElementById('pg_result').innerHTML='Equivale al <strong>'+pct.toFixed(1).replace('.0','')+'%</strong> de la OG.<br>Sale de <strong>'+caja.nombre+'</strong> ('+caja.cod+')<br>Importe: '+nota+'<strong>'+simb+importe.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong>'+ajusteTxt;
   window._pgImporte=importe;
 }
 window.pgCalc=pgCalc;
@@ -12478,7 +12479,7 @@ async function savePago(ogId, modo){
   if(montoOG<=0){ toast('Ingresá un importe mayor a 0'); return; }
   const diffPend=montoOG-pendMonto;               // + = pagó de más, - = pagó de menos
   const tolMonto=ogTotal(o)*0.01;                 // tolerancia de redondeo de caja: 1% de la OG
-  if(diffPend>tolMonto){ toast('El importe supera lo pendiente en más del 1% de la OG ('+(monOG==='USD'?'US$ ':'$ ')+pendMonto.toLocaleString('es-AR',{maximumFractionDigits:2})+')'); return; }
+  if(diffPend>tolMonto){ toast('El importe supera lo pendiente en más del 1% de la OG ('+(monOG==='USD'?'US$ ':'$ ')+pendMonto.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+')'); return; }
   const redondear=(document.getElementById('pg_redondear')||{}).checked;
   // Dentro de tolerancia (≤1% de la OG) y si el tesorero tildó "Redondear": se registra el monto real
   // con el ajuste aparte (Small Balance) y la OG queda saldada; si no, es un pago parcial genuino y el
@@ -12497,7 +12498,7 @@ async function savePago(ogId, modo){
   if(repOn){
     const tope=pgTopeRenglon(o, modo), amt=window._pgRep.amt; repObj={};
     for(let i=0;i<amt.length;i++){
-      if(amt[i]>tope[i]+tolMonto+0.01){ toast('Renglón '+(i+1)+' ('+(o.items[i].articulo||o.items[i].cod_art||'')+'): supera lo disponible ('+(monOG==='USD'?'US$ ':'$ ')+tope[i].toLocaleString('es-AR',{maximumFractionDigits:2})+').'); return; }
+      if(amt[i]>tope[i]+tolMonto+0.01){ toast('Renglón '+(i+1)+' ('+(o.items[i].articulo||o.items[i].cod_art||'')+'): supera lo disponible ('+(monOG==='USD'?'US$ ':'$ ')+tope[i].toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+').'); return; }
       if(amt[i]>0.004) repObj[i]=amt[i];
     }
     if(!Object.keys(repObj).length){ toast('Elegí qué renglón pagás: todos están en 0.'); return; }
@@ -12613,7 +12614,7 @@ function arqueoView(){
     const egresos=pagos.reduce((a,p)=>a+(+p.importe_pago||0),0);
     const repuesto=ings.reduce((a,i)=>a+(+i.importe||0),0);
     const saldo=ini+repuesto-egresos;
-    const simb=mon==='USD'?'US$ ':'$ '; const fmt=v=>simb+(+v||0).toLocaleString('es-AR',{maximumFractionDigits:2});
+    const simb=mon==='USD'?'US$ ':'$ '; const fmt=v=>simb+(+v||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
     const movs=movsOf(mon).filter(m=>xlfPass('arqueo',m));   // el saldo/egresos/reposiciones de arriba siempre son sobre TODO (no se filtran); el filtro solo acota qué movimientos se listan abajo
     const rows=movs.length?movs.map(m=>{
       const pos=m.imp>=0; const col=pos?'#1a7a3a':'var(--bad)';
@@ -12680,7 +12681,7 @@ async function guardarIngresoCaja(){
       if(row && row.id!=null){ mem.ingresos=mem.ingresos||[]; const i=mem.ingresos.findIndex(r=>String(r.id)===String(row.id)); if(i>=0) mem.ingresos[i]=row; else mem.ingresos.push(row); }
       else await reloadDB();
     }
-    closeModal(); toast('Ingreso registrado: '+(mon==='USD'?'US$ ':'$ ')+importe.toLocaleString('es-AR'));
+    closeModal(); toast('Ingreso registrado: '+(mon==='USD'?'US$ ':'$ ')+fmtNum(importe,2));
     renderTesoreria();
   }catch(e){
     const em=String(e.message||e);
@@ -12950,7 +12951,7 @@ function renderOGItems(){
         +'<td style="text-align:right">'+fmtNum(it.cant,2)+'</td>'
         +'<td>'+esc(it.um||'')+'</td>'
         +'<td style="font-size:10px;color:var(--muted)">'+(it.cert_modo==='unid'?'Unid':'%')+'</td>'
-        +'<td style="text-align:right">'+ogMonedaSym()+fmtNum(it.precio_unit,3)+'</td>'
+        +'<td style="text-align:right">'+ogMonedaSym()+fmtNum(it.precio_unit,2)+'</td>'
         +'<td style="text-align:right;font-size:10px;color:var(--muted)">'+(it.bonif_pct?fmtNum(it.bonif_pct,2)+'%':'—')+'</td>'
         +'<td id="ogit_'+i+'">'+fmtImporte(itemTotal(it))+'</td>'
         +'<td><input type="date" value="'+esc(it.fecha_entrega||'')+'" oninput="OG_ITEMS['+i+'].fecha_entrega=this.value" title="No afecta lo ya certificado: se puede cargar/corregir igual" style="width:100%;'+inp+'"></td>'
@@ -12968,7 +12969,7 @@ function renderOGItems(){
       +'<td><input type="text" inputmode="decimal" value="'+fmtNum(it.cant,2)+'" onfocus="this.value=(OG_ITEMS['+i+'].cant!=null?String(OG_ITEMS['+i+'].cant):\'\')" oninput="OG_ITEMS['+i+'].cant=parseNum(this.value);updateOGTotal()" onblur="this.value=fmtNum(OG_ITEMS['+i+'].cant,2)" style="width:100%;text-align:right;'+inp+'"></td>'
       +'<td><select onchange="OG_ITEMS['+i+'].um=this.value" style="width:100%;text-align:center;text-align-last:center;padding-left:2px;padding-right:2px;'+inp+'">'+UM_LIST.map(u=>'<option'+(u===(it.um||'UNI')?' selected':'')+'>'+u+'</option>').join('')+'</select></td>'
       +'<td><select onchange="OG_ITEMS['+i+'].cert_modo=this.value" style="width:100%;text-align:center;text-align-last:center;padding-left:2px;padding-right:2px;'+inp+'" title="Cómo se certifica este renglón: por % del renglón o por unidades"><option value="pct"'+(it.cert_modo!=='unid'?' selected':'')+'>%</option><option value="unid"'+(it.cert_modo==='unid'?' selected':'')+'>Unid</option></select></td>'
-      +'<td><input type="text" inputmode="decimal" value="'+ogMonedaSym()+fmtNum(it.precio_unit,3)+'" onfocus="this.value=(OG_ITEMS['+i+'].precio_unit!=null?String(OG_ITEMS['+i+'].precio_unit):\'\')" oninput="OG_ITEMS['+i+'].precio_unit=parseNum(this.value);updateOGTotal()" onblur="this.value=(OG_ITEMS['+i+'].precio_unit!=null?ogMonedaSym()+fmtNum(OG_ITEMS['+i+'].precio_unit,3):\'\')" style="width:100%;text-align:right;'+inp+'"></td>'
+      +'<td><input type="text" inputmode="decimal" value="'+ogMonedaSym()+fmtNum(it.precio_unit,2)+'" onfocus="this.value=(OG_ITEMS['+i+'].precio_unit!=null?String(OG_ITEMS['+i+'].precio_unit):\'\')" oninput="OG_ITEMS['+i+'].precio_unit=parseNum(this.value);updateOGTotal()" onblur="this.value=(OG_ITEMS['+i+'].precio_unit!=null?ogMonedaSym()+fmtNum(OG_ITEMS['+i+'].precio_unit,2):\'\')" style="width:100%;text-align:right;'+inp+'"></td>'
       +'<td><input type="text" inputmode="decimal" value="'+(it.bonif_pct?fmtNum(it.bonif_pct,2):'')+'" placeholder="0" title="Bonificación de este renglón (%)" onfocus="this.value=(OG_ITEMS['+i+'].bonif_pct?String(OG_ITEMS['+i+'].bonif_pct):\'\')" oninput="OG_ITEMS['+i+'].bonif_pct=parseNum(this.value)||0;updateOGTotal()" onblur="this.value=(OG_ITEMS['+i+'].bonif_pct?fmtNum(OG_ITEMS['+i+'].bonif_pct,2):\'\')" style="width:100%;text-align:right;'+inp+'"></td>'
       +'<td id="ogit_'+i+'" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtImporte(itemTotal(it))+'</td>'
       +'<td><input type="date" value="'+esc(it.fecha_entrega||'')+'" oninput="OG_ITEMS['+i+'].fecha_entrega=this.value" style="width:100%;'+inp+'"></td>'
@@ -13312,7 +13313,7 @@ async function saveOG(id){
         const nuevoTotal=(obj.monto_total||0)*(1-(+obj.bonif_pct||0)/100);
         if(nuevoTotal < pagado-0.01){
           const simb=ogMonedaCode(ogOriginal)==='USD'?'US$ ':'$ ';
-          alert('Esta OG ya tiene '+simb+pagado.toLocaleString('es-AR',{maximumFractionDigits:2})+' pagado (anticipo u otro pago registrado). No se puede bajar el total por debajo de ese monto.\n\nSi sobra saldo sin certificar, cerralo con el botón "Cerrar saldo" del renglón (o de la OG) en vez de eliminarlo o reducirlo, o dejá el total en al menos '+simb+pagado.toLocaleString('es-AR',{maximumFractionDigits:2})+'.');
+          alert('Esta OG ya tiene '+simb+pagado.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+' pagado (anticipo u otro pago registrado). No se puede bajar el total por debajo de ese monto.\n\nSi sobra saldo sin certificar, cerralo con el botón "Cerrar saldo" del renglón (o de la OG) en vez de eliminarlo o reducirlo, o dejá el total en al menos '+simb+pagado.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})+'.');
           return;
         }
       }
