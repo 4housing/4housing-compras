@@ -9680,8 +9680,10 @@ window.opToggleAll=opToggleAll; window.exportAsientoSelTango=exportAsientoSelTan
 /* ==================== TESORERÍA ==================== */
 function renderTesoreria(){
   const ogs=(mem.ogs||[]).slice();
-  const cola=ogs.filter(o=>!o.anulada && ogPendPagoPct(o)>0.01);   // anulada: no se paga nada por ella
-  const totalAPagar=cola.reduce((a,o)=>a+ (ogTotal(o)*ogPendPagoPct(o)/100), 0);
+  // Cola: lo liberado sin pagar que NO cubre ya una OP armada (esa ya salió de la caja y figura arriba,
+  // en "OP armadas, esperando liberación": si no, se contaría dos veces). Anulada: no se paga nada por ella.
+  const cola=ogs.filter(o=>!o.anulada && _pgPendMonto(o)>0.01);
+  const totalAPagar=cola.reduce((a,o)=>a+_pgPendMonto(o), 0);
   const hoyMes=new Date().toISOString().slice(0,7);
   const pagadoMesArs=cajaMovs('ARS').filter(p=>(p.fecha||'').slice(0,7)===hoyMes).reduce((a,p)=>a+(+p.importe_pago||0),0);
   const tab=TES_TAB;
@@ -11214,7 +11216,7 @@ function colaView(colaAll){
   // Tinte de fila según de qué caja sale la plata (no la moneda pactada): así el tesorero distingue de un vistazo.
   const TINTE={USD:'#f0f8f0', ARS:'#eef3fa'};
   COLA_ROWS=cola.map(o=>{
-    const mon=ogMonedaCode(o); const pend=ogTotal(o)*ogPendPagoPct(o)/100;
+    const mon=ogMonedaCode(o); const pend=_pgPendMonto(o);   // liberado sin pagar, menos lo que ya cubre una OP armada
     const monPago=ogMonedaPagoCode(o);
     const tc=(o.tc_pesos!=null && o.tc_pesos!=='')?+o.tc_pesos:null;
     // Pendiente en cada moneda (equivalencia informativa). ARS estimado con el TC de la OG (el tesorero puede cambiarlo al pagar).
