@@ -10673,8 +10673,37 @@ window.xlfOpenDate=xlfOpenDate; window.xlfDateApply=xlfDateApply; window.xlfDate
 // si las dos salieran de cálculos separados, cualquier diferencia de criterio hace que dejen de
 // coincidir apenas una OG tiene renglones con fechas de entrega distintas.
 function ogDetalleItems(o){
+  // ad = adelanto pedido por Compras (sin certificar) que Tesorería todavía no pagó: va en su propia columna
+  // ("Pago adelantado"), con la fecha requerida del pedido, y se descuenta de "sin certificar"/"pend. liberar".
+  const rows=_ogDetalleItemsBase(o);
+  rows.forEach(x=>{ x.ad=0; });
+  let falta=ogPedidoRestante(o);
+  if(falta<=0.01) return rows;
+  const hoy=new Date().toISOString().slice(0,10), mon=ogMonedaCode(o);
+  const det=Array.isArray(o.pago_pedido_detalle)?o.pago_pedido_detalle:[];
+  const conItems=!!(o.items&&o.items.length);
+  const ctx=conItems?_pedidoCtx(o):null;
+  const pedidos=det.length ? det.map(d=>({idx:conItems?d.idx:null, monto:ctx?ogPedidoRenglonFalta(o,d,ctx):(+d.monto||0), fecha:d.fecha||o.pago_pedido_fecha||null}))
+                           : [{idx:null, monto:falta, fecha:o.pago_pedido_fecha||null}];
+  const out=rows.slice();
+  pedidos.forEach(pd=>{
+    let a=Math.min(pd.monto, falta); if(a<=0.01) return;
+    // se toma de las filas de ese renglón (o de toda la OG): primero "sin certificar", después "pend. liberar"
+    let tomado=0;
+    out.filter(x=>!x.adelanto && (pd.idx==null || x.idx===pd.idx)).forEach(x=>{
+      ['sc','cl'].forEach(k=>{ const q=Math.min(x[k], a-tomado); if(q>0){ x[k]-=q; tomado+=q; } });
+    });
+    if(tomado<=0.01) return;
+    falta-=tomado;
+    const fp=pd.fecha?fridayOf(new Date(pd.fecha+'T00:00:00')).toISOString().slice(0,10):null;
+    out.push({ o, mon, idx:pd.idx, sc:0, cl:0, lp:0, ad:tomado, fechaEntrega:null, fechaPago:fp, fechaReq:pd.fecha, atrasado:!!(pd.fecha && pd.fecha<hoy), adelanto:true });
+  });
+  return out.filter(x=>x.sc+x.cl+x.lp+x.ad>0.005);
+}
+function _ogDetalleItemsBase(o){
   const mon=ogMonedaCode(o);
-  const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o), cerrado=ogCerradoMonto(o);
+  // Lo pagado por adelantado (OP "Armada") ya salió de la caja: para la proyección cuenta como pagado
+  const total=ogTotal(o), cert=ogAcumMonto(o), lib=ogLiberado(o), pag=ogPagado(o)+ogArmadoMonto(o), cerrado=ogCerradoMonto(o);
   const hoy=new Date().toISOString().slice(0,10);
   // El pago (por anticipo) puede haberse cobrado ANTES de que haya nada liberado — o incluso antes de
   // certificar. Primero se resta de "liberado por pagar" (lo normal); lo que sobra se resta de
@@ -10707,14 +10736,13 @@ function ogDetalleItems(o){
   let excedente=Math.max(0,pag-lib);   // lo que el pago cubre más allá de lo liberado
   const usoCl=Math.min(excedente,sumCl0); excedente-=usoCl;
   const usoSc=Math.min(excedente,sumSc0);
-  // Liberado por pagar de la OG repartido entre renglones según lo liberado y no pagado de cada uno
-  // (pagado por renglón sin las OP armadas, que acá no cuentan como pagadas); si no hay base, según lo liberado.
+  // Liberado por pagar de la OG repartido entre renglones según lo liberado y no pagado (ni adelantado) de cada uno;
+  // si no hay base, según lo liberado.
   const lpOG=Math.max(0, lib-pag);
   let lpRen=items.map(()=>0);
   if(lpOG>0.005){
-    const pagRen=pgPagadoRenglon(o), armRen=items.map(()=>0);
-    armadasOf(o.id).forEach(p=>{ if(p.reparto&&typeof p.reparto==='object') Object.keys(p.reparto).forEach(k=>{ if(armRen[k]!=null) armRen[k]+=(+p.reparto[k]||0); }); });
-    let w=items.map((x,i)=>Math.max(0, x.itLib-((pagRen[i]||0)-armRen[i])));
+    const pagRen=pgPagadoRenglon(o);   // incluye los adelantos con reparto por renglón
+    let w=items.map((x,i)=>Math.max(0, x.itLib-(pagRen[i]||0)));
     if(w.reduce((a,v)=>a+v,0)<=0.005) w=items.map(x=>x.itLib);
     const sw=w.reduce((a,v)=>a+v,0);
     if(sw>0.005) lpRen=w.map(v=>lpOG*v/sw);
@@ -10727,7 +10755,7 @@ function ogDetalleItems(o){
     let lp=lpRen[i]||0;
     if(!fe){ lpSinFecha+=lp; lp=0; }   // sin fecha de entrega: lo liberado va a la línea "pagar ya"
     if(sc+cl+lp<=0.005) return;
-    out.push({ o, mon, sc, cl, lp,
+    out.push({ o, mon, idx:i, sc, cl, lp,
       fechaEntrega:fe,
       fechaPago: fe ? fridayOf(new Date(fe+'T00:00:00')).toISOString().slice(0,10) : null,
       atrasado: !!(fe && fe<hoy) });
@@ -10747,8 +10775,8 @@ window.setProySemana=setProySemana; window.setProySit=setProySit; window.proyRap
 function _viernesSemana(){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+((5-d.getDay()+7)%7)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function _proyPeriodo(items){ if(!PROY_SEMANA) return items; const vie=_viernesSemana(); return items.filter(x=>x.liberadoYa || x.atrasado || (x.fechaPago && x.fechaPago<=vie)); }
 function _proySituacion(items){
-  const k={cert:'sc', lib:'cl', ok:'lp'}[PROY_SIT]; if(!k) return items;
-  return items.filter(x=>(+x[k]||0)>0.005).map(x=>Object.assign({}, x, {sc:k==='sc'?x.sc:0, cl:k==='cl'?x.cl:0, lp:k==='lp'?x.lp:0}));
+  const k={cert:'sc', lib:'cl', ok:'lp', ade:'ad'}[PROY_SIT]; if(!k) return items;
+  return items.filter(x=>(+x[k]||0)>0.005).map(x=>Object.assign({}, x, {sc:k==='sc'?x.sc:0, cl:k==='cl'?x.cl:0, lp:k==='lp'?x.lp:0, ad:k==='ad'?(x.ad||0):0}));
 }
 // Botones; cada situación muestra cuánto hay en el período elegido (para ver de un vistazo qué falta y qué está autorizado)
 function _proyChipsHtml(itemsPeriodo){
@@ -10771,7 +10799,8 @@ function _proyChipsHtml(itemsPeriodo){
       opt(!PROY_SIT,"setProySit('')",'Todas','Todas las situaciones')
       +opt(PROY_SIT==='cert',"setProySit('cert')",lbl(PROY_SIT==='cert','Pendiente de certificar','sc'),'Falta certificar')
       +opt(PROY_SIT==='lib',"setProySit('lib')",lbl(PROY_SIT==='lib','Pendiente de liberar','cl'),'Certificado, falta que el comprador lo libere')
-      +opt(PROY_SIT==='ok',"setProySit('ok')",lbl(PROY_SIT==='ok','OK para pagar','lp'),'Certificado y liberado: se puede pagar ya'))
+      +opt(PROY_SIT==='ok',"setProySit('ok')",lbl(PROY_SIT==='ok','OK para pagar','lp'),'Certificado y liberado: se puede pagar ya')
+      +opt(PROY_SIT==='ade',"setProySit('ade')",lbl(PROY_SIT==='ade','Adelantos pedidos','ad'),'Compras pidió pagar por adelantado (sin certificar) y todavía no se pagó'))
     +'</div>';
 }
 function proyectadoView(){
@@ -10797,14 +10826,14 @@ function proyectadoView(){
   // de la misma OG caen en la misma fecha estimada, se muestran juntos.
   const grupos={};
   items.forEach(x=>{
-    const k=x.o.id+'||'+(x.fechaPago||'')+(x.liberadoYa?'|LIB':'');
-    const g=(grupos[k]=grupos[k]||{o:x.o, mon:x.mon, sc:0, cl:0, lp:0, fechaPago:x.fechaPago, atrasado:false, liberadoYa:!!x.liberadoYa});
-    g.sc+=x.sc; g.cl+=x.cl; g.lp+=x.lp; if(x.atrasado) g.atrasado=true;
+    const k=x.o.id+'||'+(x.fechaPago||'')+(x.liberadoYa?'|LIB':'')+(x.adelanto?'|ADE':'');
+    const g=(grupos[k]=grupos[k]||{o:x.o, mon:x.mon, sc:0, cl:0, lp:0, ad:0, fechaPago:x.fechaPago, fechaReq:x.fechaReq||null, atrasado:false, liberadoYa:!!x.liberadoYa, adelanto:!!x.adelanto});
+    g.sc+=x.sc; g.cl+=x.cl; g.lp+=x.lp; g.ad+=(x.ad||0); if(x.atrasado) g.atrasado=true;
   });
   const detail=Object.values(grupos);
-  const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
-  detail.forEach(d=>{ tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp; });
-  const totalUSD=tot.USD.sc+tot.USD.cl+tot.USD.lp, totalARS=tot.ARS.sc+tot.ARS.cl+tot.ARS.lp;
+  const tot={ARS:{sc:0,cl:0,lp:0,ad:0}, USD:{sc:0,cl:0,lp:0,ad:0}};
+  detail.forEach(d=>{ tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp; tot[d.mon].ad+=d.ad; });
+  const totalUSD=tot.USD.sc+tot.USD.cl+tot.USD.lp+tot.USD.ad, totalARS=tot.ARS.sc+tot.ARS.cl+tot.ARS.lp+tot.ARS.ad;
   if(!detail.length){
     // Si el vacío viene de un filtro ("Solo mis OG" o ▾), mostrar cómo sacarlo: si no, el botón desaparece y no hay forma de volver.
     const mias=TES_SOLO_MIAS && !!MI_NOMBRE, filt=xlfHasAny('proy'), rap=PROY_SEMANA||!!PROY_SIT;
@@ -10815,27 +10844,27 @@ function proyectadoView(){
     // los botones de período/situación siguen visibles para poder cambiarlos
     return '<div class="card">'+chipsHtml+'<div class="empty">'+msg+'</div>'+(btns?'<div style="padding:0 16px 16px;text-align:center">'+btns+'</div>':'')+'</div>';
   }
-  const COL={sc:'#c9c49f', cl:'#5f7a4e', lp:'#37432c'};   // colores de las 3 situaciones
+  const COL={sc:'#c9c49f', cl:'#5f7a4e', lp:'#37432c', ad:'#d9a441'};   // colores de las 4 situaciones
   // Torta SVG dibujada a mano (sin librería). Devuelve '' si no hay total.
-  function donut(sc,cl,lp){
-    const total=sc+cl+lp; if(total<=0) return '<div style="width:104px;height:104px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;text-align:center">sin saldo</div>';
+  function donut(sc,cl,lp,ad){
+    ad=ad||0; const total=sc+cl+lp+ad; if(total<=0) return '<div style="width:104px;height:104px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;text-align:center">sin saldo</div>';
     const C=2*Math.PI*46; const seg=v=>v/total*C;
-    const L1=seg(sc), L2=seg(cl), L3=seg(lp);
+    const L1=seg(sc), L2=seg(cl), L3=seg(lp), L4=seg(ad);
     const arc=(len,off,color)=>'<circle cx="60" cy="60" r="46" fill="none" stroke="'+color+'" stroke-width="16" stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+off.toFixed(2)+'" transform="rotate(-90 60 60)"></circle>';
     return '<svg viewBox="0 0 120 120" width="104" height="104" role="img" aria-label="Desglose por situación">'
       +'<circle cx="60" cy="60" r="46" fill="none" stroke="#e6e3d5" stroke-width="16"></circle>'
-      +(sc>0?arc(L1,0,COL.sc):'')+(cl>0?arc(L2,-L1,COL.cl):'')+(lp>0?arc(L3,-(L1+L2),COL.lp):'')
+      +(sc>0?arc(L1,0,COL.sc):'')+(cl>0?arc(L2,-L1,COL.cl):'')+(lp>0?arc(L3,-(L1+L2),COL.lp):'')+(ad>0?arc(L4,-(L1+L2+L3),COL.ad):'')
       +'</svg>';
   }
   function card(titulo,mon,b){
-    const total=b.sc+b.cl+b.lp; const simb=mon==='USD'?'US$ ':'$ ';
+    const total=b.sc+b.cl+b.lp+b.ad; const simb=mon==='USD'?'US$ ':'$ ';
     const leg=(color,txt,val)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="width:10px;height:10px;border-radius:2px;background:'+color+';display:inline-block"></span>'+txt+' <strong style="margin-left:auto;color:var(--olive-ink)">'+(val>0?simb+fmt2(val):'—')+'</strong></div>';
     return '<div style="background:var(--cream);border:1px solid var(--line);border-radius:12px;padding:16px 18px">'
       +'<div style="font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">'+titulo+'</div>'
       +'<div style="font-size:28px;font-weight:700;color:var(--olive-ink);margin:2px 0 12px">'+(total>0?simb+fmt2(total):simb+'0,00')+'</div>'
-      +'<div style="display:flex;align-items:center;gap:14px">'+donut(b.sc,b.cl,b.lp)
+      +'<div style="display:flex;align-items:center;gap:14px">'+donut(b.sc,b.cl,b.lp,b.ad)
       +'<div style="font-size:12px;line-height:1.5;color:var(--ink);flex:1">'
-      +leg(COL.sc,'Sin certificar',b.sc)+leg(COL.cl,'Cert. pend. liberar',b.cl)+leg(COL.lp,'Liberado por pagar',b.lp)
+      +leg(COL.sc,'Sin certificar',b.sc)+leg(COL.cl,'Cert. pend. liberar',b.cl)+leg(COL.lp,'Liberado por pagar',b.lp)+leg(COL.ad,'Adelantos pedidos',b.ad)
       +'</div></div></div>';
   }
   const resumen='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
@@ -10844,7 +10873,9 @@ function proyectadoView(){
   PROY_DETAIL=detail;
   const drows=detail.sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})||(b.liberadoYa-a.liberadoYa)||String(a.fechaPago||'').localeCompare(String(b.fechaPago||''))).map(d=>{
     const o=d.o, mon=d.mon;
-    const fechaTxt = d.liberadoYa
+    const fechaTxt = d.adelanto
+      ? '<span style="'+(d.atrasado?'color:#b4554e;font-weight:700':'color:#9a6b12;font-weight:600')+'">'+(d.fechaPago?fmtDate(d.fechaPago):'Sin fecha')+'</span><div style="font-size:10.5px;color:#9a6b12">adelanto pedido'+(d.fechaReq?' p/ '+fmtDate(d.fechaReq).slice(0,5):'')+'</div>'
+      : d.liberadoYa
       ? '<span style="color:#b4554e;font-weight:700">Liberado — pagar ya</span>'
       : (d.fechaPago
         ? '<span'+(d.atrasado?' style="color:#b4554e;font-weight:700"':'')+'>'+fmtDate(d.fechaPago)+'</span>'
@@ -10861,19 +10892,21 @@ function proyectadoView(){
       +'<td style="text-align:right">'+(d.sc?mfmt(mon,d.sc):'—')+'</td>'
       +'<td style="text-align:right">'+(d.cl?mfmt(mon,d.cl):'—')+'</td>'
       +'<td style="text-align:right">'+(d.lp?mfmt(mon,d.lp):'—')+'</td>'
-      +'<td style="text-align:right"><strong>'+mfmt(mon,d.sc+d.cl+d.lp)+'</strong></td></tr>';
+      +'<td style="text-align:right'+(d.ad?';color:#9a6b12;font-weight:600':'')+'">'+(d.ad?mfmt(mon,d.ad):'—')+'</td>'
+      +'<td style="text-align:right"><strong>'+mfmt(mon,d.sc+d.cl+d.lp+d.ad)+'</strong></td></tr>';
   }).join('');
   const footRows=['ARS','USD'].map(mon=>{
-    const b=tot[mon]; const t=b.sc+b.cl+b.lp; if(t<=0.005) return '';
+    const b=tot[mon]; const t=b.sc+b.cl+b.lp+b.ad; if(t<=0.005) return '';
     return '<tr style="border-top:2px solid var(--line-strong);font-weight:700"><td colspan="6" style="text-align:right">Total mostrado ('+(mon==='USD'?'US$':'$')+')</td>'
       +'<td style="text-align:right">'+(b.sc?mfmt(mon,b.sc):'—')+'</td>'
       +'<td style="text-align:right">'+(b.cl?mfmt(mon,b.cl):'—')+'</td>'
       +'<td style="text-align:right">'+(b.lp?mfmt(mon,b.lp):'—')+'</td>'
+      +'<td style="text-align:right">'+(b.ad?mfmt(mon,b.ad):'—')+'</td>'
       +'<td style="text-align:right">'+mfmt(mon,t)+'</td></tr>';
   }).join('');
   const detalle='<div class="card" style="margin-top:14px"><div class="card-h"><h3>Detalle por OG</h3><span class="meta">Montos en la moneda de cada OG. Filtrá con ▾ (la fecha de pago se puede filtrar por rango) — el total de abajo se ajusta al filtro.</span>'+xlfClearAllBtn('proy')+_tesMiasBtn('margin-left:8px')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportProyectadoExcel()">Exportar Excel</button></div>'
     +chipsHtml
-    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Comprador','comp')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+xlfTh('proy','Fecha est. pago','__fecha__')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
+    +'<table class="grid" style="font-size:12.5px"><thead><tr>'+xlfTh('proy','OG','og')+xlfTh('proy','Proveedor','prov')+xlfTh('proy','Comprador','comp')+xlfTh('proy','Clasif.','clasif')+xlfTh('proy','Moneda','moneda')+xlfTh('proy','Fecha est. pago','__fecha__')+'<th style="text-align:right">Sin certificar</th><th style="text-align:right">Cert. pend. liberar</th><th style="text-align:right">Liberado por pagar</th><th style="text-align:right" title="Adelantos que pidió Compras (sin certificar) y Tesorería todavía no pagó">Adelanto pedido</th><th style="text-align:right">Total pend.</th></tr></thead><tbody>'+drows+'</tbody><tfoot>'+footRows+'</tfoot></table></div>';
   return resumen+detalle+proyeccionSemanalHtml(items);
 }
 window.proyectadoView=proyectadoView;
@@ -10892,29 +10925,29 @@ function exportProyectadoExcel(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
   if(!PROY_DETAIL.length){ toast('No hay OG con saldo pendiente para exportar.'); return; }
   const r2=x=>Math.round((+x||0)*100)/100;
-  const aoa=[['OG','Proveedor','Comprador','Clasificación','Moneda','Fecha est. pago','Sin certificar','Cert. pend. liberar','Liberado por pagar','Total pendiente']];
-  const tot={ARS:{sc:0,cl:0,lp:0}, USD:{sc:0,cl:0,lp:0}};
+  const aoa=[['OG','Proveedor','Comprador','Clasificación','Moneda','Fecha est. pago','Sin certificar','Cert. pend. liberar','Liberado por pagar','Pagos adelantados','Total pendiente']];
+  const tot={ARS:{sc:0,cl:0,lp:0,ad:0}, USD:{sc:0,cl:0,lp:0,ad:0}};
   PROY_DETAIL.slice().sort((a,b)=>String(a.o.numero||'').localeCompare(String(b.o.numero||''),'es',{numeric:true})).forEach(d=>{
     const o=d.o;
-    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.comprador||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', d.liberadoYa?'Liberado — pagar ya':(d.fechaPago?fmtDate(d.fechaPago):'Sin fecha'), r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.sc+d.cl+d.lp)]);
-    tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp;
+    aoa.push([o.numero||'', o.proveedor_cod||o.proveedor||'', o.comprador||'', o.clasif_og||'', d.mon==='USD'?'Dólares':'Pesos', d.liberadoYa?'Liberado — pagar ya':(d.fechaPago?fmtDate(d.fechaPago):'Sin fecha')+(d.adelanto?' (adelanto)':''), r2(d.sc)||'', r2(d.cl)||'', r2(d.lp)||'', r2(d.ad)||'', r2(d.sc+d.cl+d.lp+d.ad)]);
+    tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp; tot[d.mon].ad+=d.ad;
   });
   aoa.push([]);
   const monFila=aoa.map(r=>r[4]==='Dólares'?'USD':'ARS');   // formato de número de cada fila según su moneda
   ['ARS','USD'].forEach(mon=>{
-    const b=tot[mon]; const t=b.sc+b.cl+b.lp; if(t<=0.005) return;
+    const b=tot[mon]; const t=b.sc+b.cl+b.lp+b.ad; if(t<=0.005) return;
     // 6 columnas de texto (OG … Fecha est. pago) antes de los montos: el total queda debajo de su columna
-    aoa.push(['Total ('+(mon==='USD'?'US$':'$')+')','','','','','', r2(b.sc)||'', r2(b.cl)||'', r2(b.lp)||'', r2(t)]);
+    aoa.push(['Total ('+(mon==='USD'?'US$':'$')+')','','','','','', r2(b.sc)||'', r2(b.cl)||'', r2(b.lp)||'', r2(b.ad)||'', r2(t)]);
     monFila.push(mon);
   });
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   // Formato: montos con $ / US$ y 2 decimales, anchos de columna y filtro en los títulos
   const fmt={ARS:'"$" #,##0.00;-"$" #,##0.00', USD:'"US$" #,##0.00;-"US$" #,##0.00'};
-  for(let r=1;r<aoa.length;r++) for(let c=6;c<=9;c++){
+  for(let r=1;r<aoa.length;r++) for(let c=6;c<=10;c++){
     const cell=ws[XLSX.utils.encode_cell({r,c})]; if(cell && typeof cell.v==='number') cell.z=fmt[monFila[r]];
   }
-  ws['!cols']=[8,12,26,13,9,18,16,18,18,16].map(w=>({wch:w}));
-  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(1,PROY_DETAIL.length),c:9}})};
+  ws['!cols']=[8,12,26,13,9,22,16,18,18,18,16].map(w=>({wch:w}));
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(1,PROY_DETAIL.length),c:10}})};
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Proyectado');
   XLSX.writeFile(wb, 'Tesoreria_Proyectado_'+new Date().toISOString().slice(0,10)+'.xlsx');
@@ -10935,7 +10968,7 @@ function proyeccionSemanal(items){
     const o=x.o;
     if(!ogMonedaPagoCode(o)) return;   // compensación: no mueve caja, no entra en la previsión de caja
     const mon=x.mon==='USD'?'USD':'ARS';
-    const pend=x.sc+x.cl+x.lp;
+    const pend=x.sc+x.cl+x.lp+(x.ad||0);
     if(pend<=0.005) return;
     if(x.atrasado){ add('atrasado', mon, pend); return; }
     if(!x.fechaPago){ add('sinfecha', mon, pend); return; }
