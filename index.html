@@ -11306,9 +11306,9 @@ function colaView(colaLib, colaAdel){
     let mUSD=null, mARS=null;
     if(mon==='USD'){ mUSD=pend; mARS = tc? pend*tc : null; }
     else { mARS=pend; mUSD = tc? pend/tc : null; }
-    return {o, tipo, key:o.id+'|'+tipo, mon, monPago, tc, mUSD, mARS};
+    return {o, tipo, key:o.id+'|'+tipo, mon, monPago, tc, mUSD, mARS, pend};
   });
-  const rows=COLA_ROWS.map(({o,tipo,key,mon,monPago,tc,mUSD,mARS})=>{
+  const rows=COLA_ROWS.map(({o,tipo,key,mon,monPago,tc,mUSD,mARS,pend})=>{
     const pagadoPct=ogPagadoPct(o), esAdel=tipo==='adel';
     const trStyle = ' style="'+(monPago && TINTE[monPago] ? 'background:'+TINTE[monPago]+';' : '')+(esAdel?'box-shadow:inset 4px 0 0 #d9a441':'')+'"';
     const sit = esAdel
@@ -11319,7 +11319,7 @@ function colaView(colaLib, colaAdel){
     // Monto que efectivamente sale de la caja (en la moneda de pago) — el que suma al total a erogar.
     const montoPago = monPago==='USD'?mUSD:monPago==='ARS'?mARS:null;
     return '<tr'+trStyle+'>'
-      +'<td><input type="checkbox" class="colachk" value="'+key+'" data-tipo="'+tipo+'" data-monpago="'+(monPago||'')+'" data-monto="'+(montoPago!=null?montoPago:'')+'" checked onchange="colaRecalcTotal()"></td>'
+      +'<td><input type="checkbox" class="colachk" value="'+key+'" data-tipo="'+tipo+'" data-monpago="'+(monPago||'')+'" data-mon="'+mon+'" data-pend="'+pend+'" data-monto="'+(montoPago!=null?montoPago:'')+'" checked onchange="colaRecalcTotal()"></td>'
       +'<td><strong>'+esc(o.numero)+'</strong></td>'
       +'<td style="font-size:11px;color:var(--muted)">'+esc(o.proveedor_cod||o.proveedor||'')+'</td>'
       +'<td style="font-size:11px">'+esc(o.comprador?ogxName(o.comprador):'—')+'</td>'
@@ -11339,7 +11339,7 @@ function colaView(colaLib, colaAdel){
         ? (canPago()?'<button class="btn sm" style="white-space:nowrap" onclick="openPago('+o.id+',\'armada\')">Pagar adelanto</button><button class="btn ghost sm" style="white-space:nowrap;color:#b3261e" onclick="askAnularPedido('+o.id+')">Anular</button>':'')
         : '<button class="btn sm" onclick="openPago('+o.id+')">Registrar pago</button>')+'</div></td></tr>';
   }).join('') || '<tr><td colspan="15" style="color:var(--muted);padding:14px">Nada coincide con los filtros.</td></tr>';
-  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Todo lo que hay que pagar: <strong>Liberado — OK para pagar</strong> (certificado y liberado) y <strong>Adelanto pedido — sin certificar</strong> (lo pidió Compras antes de certificar; borde ámbar). Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span>'+_tesMiasBtn('margin-left:auto')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
+  return '<div class="card"><div class="card-h"><h3>Pagos pendientes'+demoTag+'</h3><span class="meta">Todo lo que hay que pagar: <strong>Liberado — OK para pagar</strong> (certificado y liberado) y <strong>Adelanto pedido — sin certificar</strong> (lo pidió Compras antes de certificar; borde ámbar). Fila verde = sale de la caja dólares, fila azul = sale de la caja pesos. El Monto ARS es estimado con el TC de la OG. El total de abajo suma cada OG en la moneda en que se pactó: lo pedido en dólares, en US$; lo pedido en pesos, en $ (sin convertir). Destildá lo que no vas a pagar hoy: el total de abajo se ajusta solo. Filtrá con ▾ (ej. por Proveedor).</span>'+_tesMiasBtn('margin-left:auto')+'<button class="btn ghost sm" style="margin-left:8px" onclick="exportColaPorProveedor()">Exportar Excel (por proveedor)</button><button class="btn ghost sm" style="margin-left:8px" onclick="exportAsientoTodas()">Exportar asiento (CAJA)</button><button class="btn sm" style="margin-left:8px" onclick="exportAsientoTango()">Exportar asiento (Tango)</button>'+xlfClearAllBtn('cola')+'</div>'
     +'<table class="grid" style="font-size:12.5px"><thead><tr><th style="width:1%"><input type="checkbox" id="colaSelAll" checked onchange="colaToggleAll(this)"></th>'+xlfTh('cola','OG','og')+xlfTh('cola','Proveedor','prov')+xlfTh('cola','Comprador','comp')+xlfTh('cola','Clasif.','clasif')+xlfTh('cola','Situación','sit')+xlfTh('cola','Certificó','certificador')+xlfTh('cola','Cond. compra','condicion')+xlfTh('cola','Moneda pactada','moneda')+xlfTh('cola','Se paga en','monpago')+xlfTh('cola','Lugar de pago','lugar')+'<th style="text-align:right">TC (OG)</th><th style="text-align:right">Monto USD</th><th style="text-align:right">Monto ARS</th><th style="text-align:right">Acciones</th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div id="colaTotalBar" style="padding:14px 20px;border-top:1px solid var(--line);background:#f8f7f1;font-size:13px">'+colaTotalBarInner()+'</div></div>';
 }
@@ -11347,12 +11347,13 @@ function colaToggleAll(cb){ document.querySelectorAll('.colachk').forEach(c=>{ c
 window.colaToggleAll=colaToggleAll;
 // Arma el texto del total a erogar a partir de una lista de {monpago, monto}. nTot = cantidad total de filas (marcadas o no).
 function colaTotalHtml(items, nTot){
+  // Sin mezclar monedas: cada fila suma en la moneda en que se pactó la OG (lo pedido en dólares, en dólares;
+  // lo pedido en pesos, en pesos), sin convertir. Las compensaciones no mueven caja y no suman.
   let ars=0, usd=0, sinTc=0; const por={lib:{ars:0,usd:0}, adel:{ars:0,usd:0}};
   items.forEach(it=>{
     if(!it.monpago) return;                          // compensación: no mueve caja
-    if(it.monto==null){ sinTc++; return; }            // sin TC cargado: no se puede convertir, se avisa aparte
-    const b=por[it.tipo==='adel'?'adel':'lib'];
-    if(it.monpago==='USD'){ usd+=(+it.monto||0); b.usd+=(+it.monto||0); } else if(it.monpago==='ARS'){ ars+=(+it.monto||0); b.ars+=(+it.monto||0); }
+    const b=por[it.tipo==='adel'?'adel':'lib'], v=+it.pend||0;
+    if(it.mon==='USD'){ usd+=v; b.usd+=v; } else { ars+=v; b.ars+=v; }
   });
   const f2=x=>x.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const parte=(t,b)=>t+': $ '+f2(b.ars)+(b.usd>0.005?' · US$ '+f2(b.usd):'');
@@ -11362,14 +11363,14 @@ function colaTotalHtml(items, nTot){
 }
 // Total inicial (todo tildado por default): se calcula directo de COLA_ROWS, sin depender del DOM.
 function colaTotalBarInner(){
-  const items=COLA_ROWS.map(r=>({ tipo:r.tipo, monpago:r.monPago, monto:r.monPago==='USD'?r.mUSD:r.monPago==='ARS'?r.mARS:null }));
+  const items=COLA_ROWS.map(r=>({ tipo:r.tipo, monpago:r.monPago, mon:r.mon, pend:r.pend }));
   return colaTotalHtml(items, COLA_ROWS.length);
 }
 // Recalcula el total a erogar sumando lo tildado (lee el DOM directo, sin re-renderizar toda la tabla).
 function colaRecalcTotal(){
   const bar=document.getElementById('colaTotalBar'); if(!bar) return;
   const chks=[...document.querySelectorAll('.colachk')];
-  const items=chks.filter(c=>c.checked).map(c=>({ tipo:c.dataset.tipo, monpago:c.dataset.monpago, monto:c.dataset.monto===''?null:+c.dataset.monto }));
+  const items=chks.filter(c=>c.checked).map(c=>({ tipo:c.dataset.tipo, monpago:c.dataset.monpago, mon:c.dataset.mon, pend:+c.dataset.pend||0 }));
   bar.innerHTML=colaTotalHtml(items, chks.length);
 }
 window.colaRecalcTotal=colaRecalcTotal;
