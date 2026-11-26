@@ -16589,6 +16589,59 @@ window.solpRefrescar=solpRefrescar;
 
 // Vuelve la tabla a su ancho natural (borra el ancho guardado por el usuario para esta tabla, en
 // localStorage y en compras_ui_prefs) — "Auto-ajustar columnas".
+/* ===== Excel "amigables": todo Excel que baja la app sale con ancho de columnas ajustado, filtro en los
+   títulos y montos con separador de miles y 2 decimales — sin tener que tocarlo cada vez. Se aplica una sola
+   vez, envolviendo XLSX.writeFile. No pisa lo que cada export ya define (anchos, filtro o formato propios).
+   No se toca lo que se importa en Tango (asientos) ni las plantillas de carga. Inmovilizar filas/columnas no
+   se puede: la librería (SheetJS 0.18.5, versión gratuita) no lo escribe. ===== */
+const XLSX_NO_TOCAR=/^(Asiento|Plantilla)/i;
+const XLSX_COL_MONTO=/(monto|importe|total|precio|saldo|pesos|usd|ars|\$|pagad|pendiente|certific|liberad|adelant|costo|subtotal|debe|haber|valor|equiv|erogad)/i;
+const XLSX_COL_NO_MONTO=/(%|pct|porc|cant|unid|n°|nro|n[uú]mero|año|per[ií]odo|c[oó]d|\bid\b|\bop\b|\bog\b|d[ií]as?\b|semana|orden)/i;
+function xlsxAmigable(wb){
+  (wb.SheetNames||[]).forEach(nom=>{
+    const ws=wb.Sheets[nom]; if(!ws || !ws['!ref']) return;
+    const rg=XLSX.utils.decode_range(ws['!ref']);
+    const txt=(r,c)=>{ const cell=ws[XLSX.utils.encode_cell({r,c})]; return cell&&cell.v!=null&&cell.v!==''?cell:null; };
+    // fila de títulos: la primera (de las 5 primeras) con al menos 2 textos
+    let hr=rg.s.r;
+    for(let r=rg.s.r;r<=Math.min(rg.e.r,rg.s.r+4);r++){ let n=0; for(let c=rg.s.c;c<=rg.e.c;c++){ const x=txt(r,c); if(x&&typeof x.v==='string') n++; } if(n>=2){ hr=r; break; } }
+    const head=[]; for(let c=rg.s.c;c<=rg.e.c;c++){ const x=txt(hr,c); head[c]=x?String(x.v):''; }
+    // formato de montos (solo celdas numéricas sin formato propio)
+    for(let c=rg.s.c;c<=rg.e.c;c++){
+      const h=head[c]||''; const esMonto=XLSX_COL_MONTO.test(h) && !XLSX_COL_NO_MONTO.test(h);
+      for(let r=hr+1;r<=rg.e.r;r++){
+        const cell=ws[XLSX.utils.encode_cell({r,c})]; if(!cell || cell.t!=='n' || cell.z) continue;
+        if(esMonto || (Math.abs(cell.v)>=1000 && !Number.isInteger(cell.v) && !XLSX_COL_NO_MONTO.test(h))) cell.z='#,##0.00';
+      }
+    }
+    // anchos según el contenido (si el export no los definió)
+    if(!ws['!cols']){
+      const w=[];
+      for(let c=rg.s.c;c<=rg.e.c;c++){
+        let m=String(head[c]||'').length;
+        for(let r=hr+1;r<=Math.min(rg.e.r,hr+3000);r++){
+          const cell=ws[XLSX.utils.encode_cell({r,c})]; if(!cell||cell.v==null) continue;
+          const t=cell.t==='n' ? (cell.z==='#,##0.00' ? (+cell.v).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) : String(cell.v)) : String(cell.v);
+          m=Math.max(m, t.length);
+        }
+        w[c]={wch:Math.max(6, Math.min(60, m+2))};
+      }
+      ws['!cols']=w;
+    }
+    // filtro en la fila de títulos (si el export no lo definió y hay datos debajo)
+    if(!ws['!autofilter'] && rg.e.r>hr) ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:hr,c:rg.s.c},e:{r:rg.e.r,c:rg.e.c}})};
+  });
+  return wb;
+}
+(function(){
+  if(typeof XLSX==='undefined' || !XLSX.writeFile || XLSX.__amigable) return;
+  const orig=XLSX.writeFile;
+  XLSX.writeFile=function(wb, fname, opts){
+    try{ if(!XLSX_NO_TOCAR.test(String(fname||''))) xlsxAmigable(wb); }catch(e){ console.warn('xlsxAmigable', e); }   // si falla, el Excel sale igual que antes
+    return orig.call(this, wb, fname, opts);
+  };
+  XLSX.__amigable=true;
+})();
 function tblAutofit(sel){
   const table=document.querySelector(sel); if(!table) return;
   const sig=colResizeSig(table);
