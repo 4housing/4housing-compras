@@ -8753,6 +8753,11 @@ function ogMonedaCode(og){ return og.moneda==='Extranjera' ? 'USD' : 'ARS'; }   
 // Moneda en la que efectivamente se PAGA (de qué caja sale la plata): la define la Condición de compra
 // + el tilde "pago_usd", no la Moneda de la OG (se puede pactar en dólares y pagar su equivalente en pesos, o al revés).
 // null = la condición no mueve caja (compensación): no hay "moneda de pago".
+// Pago de una transferencia Santander UY (lo registra la base al marcarlo Pagada Finanzas): no sale de la caja y su
+// asiento lo arma Contabilidad UY → no va a los asientos de Compras.
+const CTA_SANTANDER_UY_USD={cod:'11120025', nombre:'Santander UY USD'};
+function pagoSinAsiento(p){ return !!p && (p.medio==='Transferencia Santander UY' || String(p.caja_cod||'')===CTA_SANTANDER_UY_USD.cod); }
+function pagoCajaNombre(p){ if(String(p&&p.caja_cod||'')===CTA_SANTANDER_UY_USD.cod) return CTA_SANTANDER_UY_USD.nombre; const c=CAJAS[p&&p.moneda_pago]; return c?c.nombre:((p&&p.moneda_pago)||''); }
 // OG que se paga por transferencia desde la cuenta Santander UY (la gestiona Finanzas; no pasa por la caja de Tesorería)
 function ogPagoUY(og){ return !!og && og.pago_desde==='santander_uy'; }
 // Pedidos de transferencia UY de una OG (los que no están cancelados)
@@ -9650,7 +9655,7 @@ function ogsFiltradas(){
 }
 function exportAsientoExcel(){
   if(typeof XLSX==='undefined'){ toast('Para exportar necesitás conexión (se carga la librería).'); return; }
-  const rows=asientoRows(ogsFiltradas());
+  const rows=asientoRows(ogsFiltradas().filter(o=>!ogPagoUY(o)));   // Santander UY: el asiento lo hace Contabilidad UY
   const ws=XLSX.utils.aoa_to_sheet(rows);
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Asiento');
   XLSX.writeFile(wb, 'Asiento_OG_'+new Date().toISOString().slice(0,10)+'.xlsx');
@@ -9665,6 +9670,8 @@ function _selPagosToOgs(){
   let pagos=(mem.pagos||[]).filter(p=>ids.includes(String(p.id)));
   const nArm=pagos.filter(pagoArmado).length;
   if(nArm){ toast(nArm+' pago'+(nArm>1?'s':'')+' adelantado'+(nArm>1?'s':'')+' sin certificar: no se exporta'+(nArm>1?'n':'')+' (su asiento va cuando se certifique y libere).'); pagos=pagos.filter(p=>!pagoArmado(p)); if(!pagos.length) return null; }
+  const nUY=pagos.filter(pagoSinAsiento).length;
+  if(nUY){ toast(nUY+' transferencia'+(nUY>1?'s':'')+' Santander UY: no se exporta'+(nUY>1?'n':'')+' (el asiento lo arma Contabilidad UY).'); pagos=pagos.filter(p=>!pagoSinAsiento(p)); if(!pagos.length) return null; }
   const byOg={};
   pagos.forEach(p=>{ const og=ogById(p.og_id)||(mem.ogs||[]).find(o=>String(o.numero)===String(p.numero));
     if(og){ (byOg[og.id]=byOg[og.id]||{og,pagos:[]}).pagos.push(p); } });
@@ -11115,7 +11122,7 @@ function opColVal(p,col){
   if(col==='comprador') return o.comprador||'';
   if(col==='lugar') return pagoLugarPago(p)||ogLugarPago(o)||'(sin lugar)';   // el que se cargó al registrar ESTE pago; si es viejo y no lo tiene, el default de la OG
   if(col==='medio') return p.medio||'';
-  if(col==='caja') return (CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:p.moneda_pago)||'';
+  if(col==='caja') return pagoCajaNombre(p)||'';
   if(col==='asiento') return p._anulada?'Anulada':(pagoArmado(p)?'Adelanto (falta certificar)':((p.asiento_num&&String(p.asiento_num).trim())?'Registrado':'Pendiente'));
   return '';
 }
@@ -11219,7 +11226,7 @@ function opsView(){
     let mUSD=null, mARS=null;
     if(mon==='USD'){ mUSD=imp; mARS = tc? imp*tc : null; }
     else { mARS=imp; mUSD = tc? imp/tc : null; }
-    const caja=CAJAS[mon]?CAJAS[mon].nombre:mon;
+    const caja=pagoCajaNombre(p)||mon;
     const hueco=huecos[parseInt(p.op_numero,10)]?filaHueco(huecos[parseInt(p.op_numero,10)]):'';
     if(p._anulada){
       const a=p._anulada, tach='text-decoration:line-through;';
@@ -11525,13 +11532,14 @@ function openImputacion(ogId){
 function impSetOG(ogId,i,field,val){ const o=ogById(ogId); o.items[i].imp=o.items[i].imp||{}; o.items[i].imp[field]=val; }
 function exportAsientoOG(ogId){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const o=ogById(ogId); const rows=asientoRows([o]);
+  const o=ogById(ogId); if(ogPagoUY(o)){ toast('La OG se paga desde Santander UY: el asiento lo arma Contabilidad UY.'); return; }
+  const rows=asientoRows([o]);
   const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Asiento');
   XLSX.writeFile(wb,'Asiento_OG_'+(o.numero||'')+'.xlsx'); toast('Asiento generado');
 }
 function exportAsientoTodas(){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const rows=asientoRows((mem.ogs||[]).filter(o=>!o.anulada));
+  const rows=asientoRows((mem.ogs||[]).filter(o=>!o.anulada && !ogPagoUY(o)));   // Santander UY: el asiento lo hace Contabilidad UY
   const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Asiento');
   XLSX.writeFile(wb,'Asiento_OG_'+new Date().toISOString().slice(0,10)+'.xlsx'); toast('Asiento generado');
 }
@@ -11709,7 +11717,8 @@ function asientoTangoSheets(ogs, opByOg){
 }
 function exportAsientoTango(ogId){
   if(typeof XLSX==='undefined'){ toast('Necesitás conexión para exportar.'); return; }
-  const ogs = ogId!=null ? [ogById(ogId)] : (mem.ogs||[]).filter(o=>!o.anulada).filter(ogxPass);
+  if(ogId!=null && ogPagoUY(ogById(ogId))){ toast('La OG se paga desde Santander UY: el asiento lo arma Contabilidad UY.'); return; }
+  const ogs = ogId!=null ? [ogById(ogId)] : (mem.ogs||[]).filter(o=>!o.anulada && !ogPagoUY(o)).filter(ogxPass);
   if(!ogs.length){ toast('No hay OG para exportar.'); return; }
   const s=asientoTangoSheets(ogs);
   if(_asientoBloqueaSinCuenta(s)) return;
@@ -11964,7 +11973,7 @@ function exportPagoOP(pagoId){
   campo(14,y,'SOLP:', o.solp!=null&&o.solp!==''?String(o.solp):'—'); campo(110,y,'Comprador:', o.comprador||'—'); y+=6;
   campo(14,y,'Lugar de pago:', pagoLugarPago(p)||ogLugarPago(o)||'—'); y+=6;
   campo(14,y,'Centro de costo:', clasifTxt); y+=6;
-  const cajaNom=CAJAS[p.moneda_pago]?CAJAS[p.moneda_pago].nombre:(p.moneda_pago||'—');
+  const cajaNom=pagoCajaNombre(p)||'—';
   campo(14,y,'Medio de pago:', p.medio||'—'); campo(110,y,'Caja / cuenta:', cajaNom); y+=6;
   campo(14,y,'% de la OG:', p.pct!=null?fmtNum(p.pct,1)+'%':'—'); if(p.tc) campo(110,y,'Tipo de cambio:', '$ '+fmtNum(p.tc,2)+' / US$'); y+=10;
 
