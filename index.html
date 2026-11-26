@@ -341,6 +341,10 @@ table.grid.usub td,table.grid.usub th{padding:6px 11px;font-size:11.5px;}
 .mstrip-lbl span{width:20px;}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Excel: xlsx-js-style (fork de SheetJS 0.18.5 que escribe colores) solo para GENERAR descargas; se guarda en
+     XLSX_STYLE antes de cargar la librería original, que sigue siendo XLSX para todo lo demás (leer archivos, etc.) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
+<script>window.XLSX_STYLE=(typeof XLSX!=='undefined')?XLSX:null;</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
@@ -16591,16 +16595,25 @@ window.solpRefrescar=solpRefrescar;
 // Vuelve la tabla a su ancho natural (borra el ancho guardado por el usuario para esta tabla, en
 // localStorage y en compras_ui_prefs) — "Auto-ajustar columnas".
 /* ===== Excel "amigables": todo Excel que baja la app sale con ancho de columnas ajustado, filtro en los
-   títulos y montos con separador de miles y 2 decimales — sin tener que tocarlo cada vez. Se aplica una sola
+   títulos, montos con separador de miles y 2 decimales, títulos en color, filas de total resaltadas y la
+   primera fila (títulos) y primera columna inmovilizadas — sin tener que tocarlo cada vez. Se aplica una sola
    vez, envolviendo XLSX.writeFile. No pisa lo que cada export ya define (anchos, filtro o formato propios).
-   No se toca lo que se importa en Tango (asientos) ni las plantillas de carga. Inmovilizar filas/columnas no
-   se puede: la librería (SheetJS 0.18.5, versión gratuita) no lo escribe. ===== */
+   No se toca lo que se importa en Tango (asientos) ni las plantillas de carga.
+   Colores: los escribe xlsx-js-style (XLSX_STYLE). Inmovilizar: ninguna de las dos librerías lo escribe, así
+   que se agrega el <pane> en el XML de cada hoja antes de descargar. Si algo falla, sale como antes. ===== */
 const XLSX_NO_TOCAR=/^(Asiento|Plantilla)/i;
 const XLSX_COL_MONTO=/(monto|importe|total|precio|saldo|pesos|usd|ars|\$|pagad|pendiente|certific|liberad|adelant|costo|subtotal|debe|haber|valor|equiv|erogad)/i;
 const XLSX_COL_NO_MONTO=/(%|pct|porc|cant|unid|n°|nro|n[uú]mero|año|per[ií]odo|c[oó]d|\bid\b|\bop\b|\bog\b|d[ií]as?\b|semana|orden)/i;
+const XLSX_EST={
+  head:{font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'4F6B3A'}},alignment:{horizontal:'center',vertical:'center',wrapText:true},border:{bottom:{style:'thin',color:{rgb:'2F3F22'}}}},
+  tot:{font:{bold:true},fill:{fgColor:{rgb:'EEF2E6'}},border:{top:{style:'thin',color:{rgb:'4F6B3A'}}}},
+  totUsd:{font:{bold:true,color:{rgb:'9A6B12'}},fill:{fgColor:{rgb:'FBF1E0'}}},
+  adel:{font:{bold:true,color:{rgb:'9A6B12'}},fill:{fgColor:{rgb:'FBF1E0'}}}
+};
 function xlsxAmigable(wb){
+  const vistas=[];   // por hoja: fila de títulos (para inmovilizar debajo de ella)
   (wb.SheetNames||[]).forEach(nom=>{
-    const ws=wb.Sheets[nom]; if(!ws || !ws['!ref']) return;
+    const ws=wb.Sheets[nom]; vistas.push(null); if(!ws || !ws['!ref']) return;
     const rg=XLSX.utils.decode_range(ws['!ref']);
     const txt=(r,c)=>{ const cell=ws[XLSX.utils.encode_cell({r,c})]; return cell&&cell.v!=null&&cell.v!==''?cell:null; };
     // fila de títulos: la primera (de las 5 primeras) con al menos 2 textos
@@ -16631,14 +16644,53 @@ function xlsxAmigable(wb){
     }
     // filtro en la fila de títulos (si el export no lo definió y hay datos debajo)
     if(!ws['!autofilter'] && rg.e.r>hr) ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:hr,c:rg.s.c},e:{r:rg.e.r,c:rg.e.c}})};
+    // colores: títulos en verde; filas "Total…/Subtotal…" resaltadas (las de dólares en ámbar); columna de adelantos en ámbar
+    const put=(r,c,st)=>{ const a=XLSX.utils.encode_cell({r,c}); if(!ws[a]) ws[a]={t:'s',v:''}; if(!ws[a].s) ws[a].s=st; };
+    let hayTitulos=false; for(let c=rg.s.c;c<=rg.e.c;c++) if(head[c]) hayTitulos=true;
+    if(hayTitulos){ for(let c=rg.s.c;c<=rg.e.c;c++) put(hr,c,XLSX_EST.head); ws['!rows']=ws['!rows']||[]; if(!ws['!rows'][hr]) ws['!rows'][hr]={hpt:30}; }
+    const colAdel=[]; for(let c=rg.s.c;c<=rg.e.c;c++) if(/adelant/i.test(head[c]||'')) colAdel.push(c);
+    for(let r=hr+1;r<=rg.e.r;r++){
+      let lab=''; for(let c=rg.s.c;c<=rg.e.c && !lab;c++){ const x=txt(r,c); if(x && typeof x.v==='string') lab=x.v; else if(x) break; }
+      if(/^\s*(sub)?total/i.test(lab)){ const st=/US\$|USD|d[oó]lar/i.test(lab)?XLSX_EST.totUsd:XLSX_EST.tot; for(let c=rg.s.c;c<=rg.e.c;c++) put(r,c,st); continue; }
+      colAdel.forEach(c=>{ const cell=ws[XLSX.utils.encode_cell({r,c})]; if(cell && cell.t==='n' && !cell.s) cell.s=XLSX_EST.adel; });
+    }
+    vistas[vistas.length-1]={hr};
   });
-  return wb;
+  return vistas;
+}
+// Agrega "inmovilizar paneles" (fila de títulos + primera columna) en el XML de cada hoja del .xlsx ya armado.
+function xlsxInmovilizar(lib, buf, vistas){
+  const CFB=lib&&lib.CFB; if(!CFB) return buf;
+  const z=CFB.read(new Uint8Array(buf),{type:'array'}); let n=0;
+  z.FileIndex.forEach((f,i)=>{
+    const m=/xl\/worksheets\/sheet(\d+)\.xml$/.exec(z.FullPaths[i]); if(!m || !f.content) return;
+    const v=vistas[+m[1]-1]; if(!v) return;
+    const y=v.hr+1, tl='B'+(y+1);
+    const pane='<sheetView workbookViewId="0"><pane xSplit="1" ySplit="'+y+'" topLeftCell="'+tl+'" activePane="bottomRight" state="frozen"/><selection pane="topRight"/><selection pane="bottomLeft"/><selection pane="bottomRight" activeCell="'+tl+'" sqref="'+tl+'"/></sheetView>';
+    const x=new TextDecoder('utf-8').decode(f.content), x2=x.replace('<sheetView workbookViewId="0"/>',pane);
+    if(x2!==x){ CFB.utils.cfb_add(z, z.FullPaths[i], new TextEncoder().encode(x2)); n++; }
+  });
+  return n ? CFB.write(z,{fileType:'zip',type:'array'}) : buf;
 }
 (function(){
   if(typeof XLSX==='undefined' || !XLSX.writeFile || XLSX.__amigable) return;
   const orig=XLSX.writeFile;
   XLSX.writeFile=function(wb, fname, opts){
-    try{ if(!XLSX_NO_TOCAR.test(String(fname||''))) xlsxAmigable(wb); }catch(e){ console.warn('xlsxAmigable', e); }   // si falla, el Excel sale igual que antes
+    if(XLSX_NO_TOCAR.test(String(fname||''))) return orig.call(this, wb, fname, opts);   // asientos / plantillas: como siempre
+    let vistas=null;
+    try{ vistas=xlsxAmigable(wb); }catch(e){ console.warn('xlsxAmigable', e); }
+    // Con colores e inmovilizado (XLSX_STYLE); si no está cargada o algo falla, la descarga de siempre
+    const ST=window.XLSX_STYLE;
+    if(ST && ST.write && /\.xlsx$/i.test(String(fname||''))){
+      try{
+        let buf=ST.write(wb,{type:'array',bookType:'xlsx'});
+        try{ if(vistas) buf=xlsxInmovilizar(ST, buf, vistas); }catch(e){ console.warn('xlsxInmovilizar', e); }
+        const url=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+        const a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click();
+        setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+        return;
+      }catch(e){ console.warn('Excel con estilos', e); }
+    }
     return orig.call(this, wb, fname, opts);
   };
   XLSX.__amigable=true;
