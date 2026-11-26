@@ -10887,12 +10887,23 @@ function exportProyectadoExcel(){
     tot[d.mon].sc+=d.sc; tot[d.mon].cl+=d.cl; tot[d.mon].lp+=d.lp;
   });
   aoa.push([]);
+  const monFila=aoa.map(r=>r[4]==='Dólares'?'USD':'ARS');   // formato de número de cada fila según su moneda
   ['ARS','USD'].forEach(mon=>{
     const b=tot[mon]; const t=b.sc+b.cl+b.lp; if(t<=0.005) return;
-    aoa.push(['Total ('+mon+')','','','','', r2(b.sc)||'', r2(b.cl)||'', r2(b.lp)||'', r2(t)]);
+    // 6 columnas de texto (OG … Fecha est. pago) antes de los montos: el total queda debajo de su columna
+    aoa.push(['Total ('+(mon==='USD'?'US$':'$')+')','','','','','', r2(b.sc)||'', r2(b.cl)||'', r2(b.lp)||'', r2(t)]);
+    monFila.push(mon);
   });
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  // Formato: montos con $ / US$ y 2 decimales, anchos de columna y filtro en los títulos
+  const fmt={ARS:'"$" #,##0.00;-"$" #,##0.00', USD:'"US$" #,##0.00;-"US$" #,##0.00'};
+  for(let r=1;r<aoa.length;r++) for(let c=6;c<=9;c++){
+    const cell=ws[XLSX.utils.encode_cell({r,c})]; if(cell && typeof cell.v==='number') cell.z=fmt[monFila[r]];
+  }
+  ws['!cols']=[8,12,26,13,9,18,16,18,18,16].map(w=>({wch:w}));
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(1,PROY_DETAIL.length),c:9}})};
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Proyectado');
+  XLSX.utils.book_append_sheet(wb, ws, 'Proyectado');
   XLSX.writeFile(wb, 'Tesoreria_Proyectado_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 window.exportProyectadoExcel=exportProyectadoExcel;
