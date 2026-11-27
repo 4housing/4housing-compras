@@ -9596,7 +9596,11 @@ function asientoRows(ogs, opByOg){
       const ajusteAgree = pago ? (+pago.ajuste_redondeo||0) : 0;     // redondeo de caja (positivo = pagó de más, negativo = de menos), en la moneda pactada
       const pctGasto = ajusteAgree ? pct-(ajusteAgree/ogTotal(o)*100) : pct;  // % que corresponde al gasto real de la OG, sin el redondeo
       const opByOgLey = pago ? {[o.id]:pago.op_numero} : opByOg;
-      const fecha=o.fecha?fmtDate(o.fecha):'';
+      // Fecha = la del PAGO de esta OP (como en el asiento de Tango); sin pago puntual (asiento de la OG entera), la de la OG
+      const fecha=(pago&&pago.fecha)?fmtDate(pago.fecha):(o.fecha?fmtDate(o.fecha):'');
+      // N° de asiento de Tango que se cargó en Órdenes de pago para esta OP (y la marca de enviado)
+      const nroAsi=(pago&&pago.asiento_num!=null&&String(pago.asiento_num).trim())?String(pago.asiento_num).trim():'';
+      const marcaAsi=r=>{ if(nroAsi){ r[26]='✓'; r[27]=nroAsi; } return r; };
       // Moneda del asiento: la que el tesorero indicó al emitir esta OP (pago.moneda_pago), no la moneda pactada de la OG.
       const pgReal=pago||pagosOf(o.id)[0];
       const monAgree=ogMonedaCode(o);
@@ -9623,7 +9627,7 @@ function asientoRows(ogs, opByOg){
         r[20]=esOG?(o.objeto||''):((it.articulo||'')||o.objeto||'');
         r[21]=0; r[22]=imp; r[23]=-imp;                 // INGRESO / EGRESO / MOVIMIENTO
         r[25]=_leyRenglon(o, esOG?null:it, opByOgLey);   // LEYENDA: OP - COD PROV - PROYECTO - OG
-        rows.push(r);
+        rows.push(marcaAsi(r));
       });
       if(ajuste){
         // ajuste por redondeo de caja al cerrar el pago (dentro de la tolerancia del 1%): Small Balance
@@ -9635,7 +9639,7 @@ function asientoRows(ogs, opByOg){
         ar[20]='Small Balance';
         ar[21]=0; ar[22]=ajuste; ar[23]=-ajuste;
         ar[25]=_leyRenglon(o, null, opByOgLey);
-        rows.push(ar);
+        rows.push(marcaAsi(ar));
       }
       // contrapartida por OG (caja según la moneda en que se pagó esta OP; si no hay pago, CAJA PESOS 2), por el importe efectivamente pagado
       const tot=aMonPago(ogTotal(o)*pct/100);
@@ -9645,7 +9649,7 @@ function asientoRows(ogs, opByOg){
       cr[14]=o.proveedor_cod||''; cr[15]=o.proveedor||''; cr[19]=o.numero||'';
       cr[20]='Contrapartida OG '+(o.numero||''); cr[21]=tot; cr[22]=0; cr[23]=tot;
       cr[25]=_leyCaja(o, opByOgLey);
-      rows.push(cr);
+      rows.push(marcaAsi(cr));
     });
   });
   return rows;
