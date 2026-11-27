@@ -12472,9 +12472,34 @@ function pgCalc(){
   window._pgImporte=importe;
 }
 window.pgCalc=pgCalc;
+// Antes de emitir una OP: ¿alguien registró un pago de esta OG desde que se cargó la pantalla? (dos personas pagando
+// la misma OG a la vez → OP duplicada). Trae los pagos de la OG de la base; si hay alguno que no teníamos, actualiza
+// los datos y frena. Sin conexión o en demo, no bloquea.
+async function _pagoOGCambio(o){
+  if(DEMO_MODE || !o) return false;
+  let frescos;
+  try{ frescos=await sbFetch('/compras_pagos?og_id=eq.'+o.id+'&select=*'); }catch(e){ return false; }
+  if(!Array.isArray(frescos)) return false;
+  const tengo=new Set((mem.pagos||[]).filter(p=>String(p.og_id)===String(o.id)).map(p=>String(p.id)));
+  const nuevos=frescos.filter(p=>!tengo.has(String(p.id)));
+  const borrados=[...tengo].filter(id=>!frescos.some(p=>String(p.id)===id));
+  if(!nuevos.length && !borrados.length) return false;
+  mem.pagos=(mem.pagos||[]).filter(p=>String(p.og_id)!==String(o.id)).concat(frescos);
+  closeModal();
+  const quien=nuevos.map(p=>'OP '+(p.op_numero||'')+(p.registrado_por?' ('+String(p.registrado_por).split('@')[0]+')':'')).join(', ');
+  openModal('La OG '+esc(o.numero)+' cambió mientras la tenías abierta',
+    '<div style="padding:12px 14px;border:1px solid #b3261e;border-radius:10px;background:#fdecea;color:#7a1c14;font-size:13.5px;line-height:1.55">'
+    +(nuevos.length?'Otra persona ya registró un pago de esta OG: <strong>'+esc(quien)+'</strong>.':'Se eliminó un pago de esta OG.')
+    +'<br><strong>No se emitió la OP</strong> para no duplicarla.</div>'
+    +'<div style="font-size:12.5px;color:var(--muted);margin-top:10px">Ya se actualizaron los datos de esta OG: revisá lo pendiente antes de volver a pagar. Para traer todo lo último, recargá la página.</div>',
+    '<button class="btn" onclick="closeModal()">Entendido</button>');
+  renderTesoreria();
+  return true;
+}
 async function savePago(ogId, modo){
   if(!canPago()){ toast('Solo el tesorero puede registrar pagos.'); return; }
   const o=ogById(ogId); const monOG=ogMonedaCode(o);
+  if(await _pagoOGCambio(o)) return;   // alguien pagó (o anuló) esta OG recién: no duplicar
   if(o && !(o.items&&o.items.length)){ toast('No se puede registrar un pago: la OG '+o.numero+' no tiene renglones con artículo. Avisá a Sistemas.'); return; }
   const repOn = !!(window._pgRep && window._pgOG && String(window._pgOG.id)===String(o.id) && o.items && o.items.length>1);
   if(repOn) pgRepRecalc();   // el importe del pago es la suma de lo elegido por renglón
