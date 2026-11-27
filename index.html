@@ -2586,7 +2586,9 @@ function idxVarMes(ns, periodo, campo, valor){
   if(a==null || b==null || !isFinite(a) || !isFinite(b) || a===0) return null;
   return (b/a-1)*100;
 }
-function idxVarTxt(v){ return v==null ? '' : '<div style="font-size:10.5px;color:'+(v<0?'#b3261e':'var(--muted)')+'" title="Variación respecto del mes anterior">'+(v>0?'+':'')+fmtNum(v,2)+'%</div>'; }
+// Variación con 1 decimal, como la publican el CAC / INDEC (el valor exacto queda en el tooltip)
+function idxVarPct(v){ const r=Math.round(v*10)/10; return (r>0?'+':'')+fmtNum(r,1)+'%'; }
+function idxVarTxt(v){ return v==null ? '' : '<div style="font-size:10.5px;color:'+(v<0?'#b3261e':'var(--muted)')+'" title="Variación respecto del mes anterior (exacta: '+(v>0?'+':'')+fmtNum(v,4)+'%). Se muestra con 1 decimal, como la publica la fuente.">'+idxVarPct(v)+'</div>'; }
 // Período escrito en números: acepta 2026/11, 2026-11, 202611, 11/2026, 11-2026. Devuelve AAAAMM o null.
 function idxParsePeriodo(t){
   t=String(t||'').trim(); let y, m, x;
@@ -2652,7 +2654,7 @@ function idxPrevVar(ns){
     const raw=(document.getElementById('idx_c_'+c.k)||{}).value;
     const v = (per && raw!=='' && raw!=null) ? idxVarMes(ns, per, c.k, +raw) : null;
     box.innerHTML = v==null ? (per && raw!=='' ? 'Sin dato de '+idxPeriodoFmt(idxPerAnterior(per))+' para comparar' : '')
-      : 'Variación vs '+idxPeriodoFmt(idxPerAnterior(per))+': <strong style="color:'+(v<0?'#b3261e':'var(--olive-deep)')+'">'+(v>0?'+':'')+fmtNum(v,2)+'%</strong>';
+      : 'Variación vs '+idxPeriodoFmt(idxPerAnterior(per))+': <strong style="color:'+(v<0?'#b3261e':'var(--olive-deep)')+'">'+idxVarPct(v)+'</strong> <span style="color:var(--muted)">(exacta '+(v>0?'+':'')+fmtNum(v,2)+'%)</span>';
   });
 }
 window.idxPrevVar=idxPrevVar;
