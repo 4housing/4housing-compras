@@ -2576,6 +2576,27 @@ function renderIndices(){
   C().innerHTML = banner + idxEvolucionHtml() + tabs + (idxEsDolar(IDX_TAB) ? idxDolarTabBody(IDX_TAB) : idxTabBody(IDX_TAB));
 }
 window.renderIndices=renderIndices;
+// Período anterior (AAAAMM): el mes calendario previo, ej. 202601 → 202512
+function idxPerAnterior(p){ p=+p; const y=Math.floor(p/100), m=p%100; return m>1 ? p-1 : (y-1)*100+12; }
+// Variación % contra el mes anterior de un campo (o del índice ponderado si campo == null). null si falta alguno.
+function idxVarMes(ns, periodo, campo, valor){
+  const prev=(DIC['idx_'+ns]||[]).find(r=>+r.periodo===idxPerAnterior(periodo)); if(!prev) return null;
+  const a = campo==null ? idxCalculado(ns, prev) : (prev[campo]!=null&&prev[campo]!==''?+prev[campo]:null);
+  const b = valor;
+  if(a==null || b==null || !isFinite(a) || !isFinite(b) || a===0) return null;
+  return (b/a-1)*100;
+}
+function idxVarTxt(v){ return v==null ? '' : '<div style="font-size:10.5px;color:'+(v<0?'#b3261e':'var(--muted)')+'" title="Variación respecto del mes anterior">'+(v>0?'+':'')+fmtNum(v,2)+'%</div>'; }
+// Período escrito en números: acepta 2026/11, 2026-11, 202611, 11/2026, 11-2026. Devuelve AAAAMM o null.
+function idxParsePeriodo(t){
+  t=String(t||'').trim(); let y, m, x;
+  if((x=t.match(/^(\d{4})\s*[\/\-.\s]\s*(\d{1,2})$/))){ y=+x[1]; m=+x[2]; }
+  else if((x=t.match(/^(\d{1,2})\s*[\/\-.\s]\s*(\d{4})$/))){ m=+x[1]; y=+x[2]; }
+  else if((x=t.match(/^(\d{4})(\d{2})$/))){ y=+x[1]; m=+x[2]; }
+  else return null;
+  if(m<1 || m>12 || y<1990 || y>2100) return null;
+  return y*100+m;
+}
 function idxTabBody(ns){
   const def=IDX_DEF[ns];
   const rows=(DIC['idx_'+ns]||[]).slice().sort((a,b)=>b.periodo-a.periodo);
@@ -2589,8 +2610,11 @@ function idxTabBody(ns){
   const cols = indiceTh + def.campos.map(c=>'<th style="text-align:right">'+esc(c.label)+(def.pesos&&def.pesos[c.k]!=null?' <span style="color:var(--muted);font-weight:400">('+(def.pesos[c.k]*100).toFixed(0)+'%)</span>':'')+'</th>').join('');
   const rowsHtml = rows.map(r=>{
     const iv = def.pesos ? idxCalculado(ns,r) : null;
-    const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+(iv!=null?fmtNum(iv,2):'—')+'</strong></td>' : '';
-    const tds = indiceTd + def.campos.map(c=>'<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(r[c.k]!=null&&r[c.k]!==''?(c.pct?fmtNum(r[c.k]*100,2)+'%':fmtNum(r[c.k],2)):'—')+'</td>').join('');
+    const indiceTd = def.pesos ? '<td style="text-align:right;background:#eef2e6"><strong>'+(iv!=null?fmtNum(iv,2):'—')+'</strong>'+idxVarTxt(iv!=null?idxVarMes(ns, r.periodo, null, iv):null)+'</td>' : '';
+    // Debajo de cada valor, la variación % contra el mes anterior (para controlar contra la fuente al cargar)
+    const tds = indiceTd + def.campos.map(c=>{ const has=r[c.k]!=null&&r[c.k]!=='';
+      return '<td style="text-align:right'+(def.pesos?';color:var(--muted)':'')+'">'+(has?(c.pct?fmtNum(r[c.k]*100,2)+'%':fmtNum(r[c.k],2)):'—')
+        +(has&&!c.pct?idxVarTxt(idxVarMes(ns, r.periodo, c.k, +r[c.k])):'')+'</td>'; }).join('');
     return '<tr><td>'+idxPeriodoFmt(r.periodo)+'</td>'+tds
       +'<td><div class="row-actions"><button class="iconbtn" title="Editar" onclick="openIdxRow(\''+ns+'\','+r.periodo+')">'+ICO.edit+'</button>'
       +'<button class="iconbtn del" title="Eliminar" onclick="askIdxDelete(\''+ns+'\','+r.periodo+')">'+ICO.del+'</button></div></td></tr>';
@@ -2603,21 +2627,39 @@ function idxTabBody(ns){
 function openIdxRow(ns, periodo){
   const def=IDX_DEF[ns];
   const cur = periodo!=null ? (DIC['idx_'+ns]||[]).find(r=>+r.periodo===+periodo) : null;
-  const periodoVal = cur ? String(cur.periodo).slice(0,4)+'-'+String(cur.periodo).slice(4,6) : '';
+  // Período en números (AAAA/MM). Para uno nuevo se sugiere el que falta cargar (o el siguiente al último).
+  const ult=(DIC['idx_'+ns]||[]).reduce((a,r)=>Math.max(a,+r.periodo||0),0);
+  const sug = cur ? +cur.periodo : (idxFaltante(ns) || (ult ? (ult%100===12 ? (Math.floor(ult/100)+1)*100+1 : ult+1) : null));
+  const periodoVal = sug ? idxPeriodoFmt(sug) : '';
   // Campos pct:true (ej. Sueldos %): en la base van como fracción (0,0282) y se cargan/ven como porcentaje (2,82).
   const camposHtml = def.campos.map(c=>{ const raw=cur&&cur[c.k]!=null&&cur[c.k]!==''?+cur[c.k]:null; const v=raw==null?'':(c.pct?+(raw*100).toFixed(6):raw);
-    return '<div class="field"><label>'+esc(c.label)+(c.pct?' — en %':'')+'</label><input id="idx_c_'+c.k+'" type="number" step="0.0001" value="'+v+'"'+(c.pct?' placeholder="ej. 2,82"':'')+'></div>'; }).join('');
-  const body='<div class="field"><label>Período</label><input id="idx_periodo" type="month" value="'+periodoVal+'"'+(cur?' readonly style="background:#f3f1e8"':'')+'></div>'
+    return '<div class="field"><label>'+esc(c.label)+(c.pct?' — en %':'')+'</label><input id="idx_c_'+c.k+'" type="number" step="0.0001" value="'+v+'"'+(c.pct?' placeholder="ej. 2,82"':'')+' oninput="idxPrevVar(\''+ns+'\')">'
+      +(c.pct?'':'<div id="idx_v_'+c.k+'" style="font-size:11.5px;color:var(--muted);margin-top:3px;min-height:15px"></div>')+'</div>'; }).join('');
+  const body='<div class="field"><label>Período (AAAA/MM)</label><input id="idx_periodo" type="text" inputmode="numeric" placeholder="ej. 2026/11" value="'+esc(periodoVal)+'" oninput="idxPrevVar(\''+ns+'\')"'+(cur?' readonly style="background:#f3f1e8"':'')+'>'
+    +'<div id="idx_per_msg" style="font-size:11.5px;color:var(--muted);margin-top:3px;min-height:15px"></div></div>'
     +'<div class="frow c2">'+camposHtml+'</div>';
   openModal((cur?'Editar':'Cargar período')+' · '+esc(def.nombre), body,
     '<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarIdxRow(\''+ns+'\''+(cur?(','+cur.periodo):',null')+')">Guardar</button>');
+  idxPrevVar(ns);
 }
 window.openIdxRow=openIdxRow;
+// Mientras se carga: el período interpretado y la variación % de cada valor contra el mes anterior (para controlar)
+function idxPrevVar(ns){
+  const def=IDX_DEF[ns], per=idxParsePeriodo((document.getElementById('idx_periodo')||{}).value);
+  const msg=document.getElementById('idx_per_msg');
+  if(msg) msg.innerHTML = per ? 'Período '+idxPeriodoFmt(per)+' · se compara contra '+idxPeriodoFmt(idxPerAnterior(per)) : '<span style="color:#b3261e">Escribí el período como AAAA/MM (ej. 2026/11)</span>';
+  def.campos.forEach(c=>{ const box=document.getElementById('idx_v_'+c.k); if(!box) return;
+    const raw=(document.getElementById('idx_c_'+c.k)||{}).value;
+    const v = (per && raw!=='' && raw!=null) ? idxVarMes(ns, per, c.k, +raw) : null;
+    box.innerHTML = v==null ? (per && raw!=='' ? 'Sin dato de '+idxPeriodoFmt(idxPerAnterior(per))+' para comparar' : '')
+      : 'Variación vs '+idxPeriodoFmt(idxPerAnterior(per))+': <strong style="color:'+(v<0?'#b3261e':'var(--olive-deep)')+'">'+(v>0?'+':'')+fmtNum(v,2)+'%</strong>';
+  });
+}
+window.idxPrevVar=idxPrevVar;
 function guardarIdxRow(ns, periodoOrig){
   const def=IDX_DEF[ns];
-  const pv=(document.getElementById('idx_periodo').value||'').trim();
-  if(!pv){ toast('Elegí un período'); return; }
-  const periodo=+pv.replace('-','');
+  const periodo=idxParsePeriodo(document.getElementById('idx_periodo').value);
+  if(!periodo){ toast('Escribí el período como AAAA/MM (ej. 2026/11)'); return; }
   if(periodoOrig==null && (DIC['idx_'+ns]||[]).some(r=>+r.periodo===periodo)){ toast('Ya existe ese período. Editalo desde la lista.'); return; }
   const fields={};
   def.campos.forEach(c=>{ const v=document.getElementById('idx_c_'+c.k).value; fields[c.k]=v===''?null:(c.pct?+(+v/100).toFixed(8):+v); });
